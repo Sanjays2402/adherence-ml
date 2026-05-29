@@ -137,6 +137,25 @@ export class AdherenceClient {
     return this.req("POST", `/v1/predict${q}`, req);
   }
 
+  predictBatch(
+    items: PredictRequest[],
+    modelName = "default",
+  ): Promise<{
+    model_version: string | null;
+    n_users: number;
+    n_ok: number;
+    n_failed: number;
+    results: Array<{
+      user_id: string;
+      ok: boolean;
+      response: PredictResponse | null;
+      error: string | null;
+    }>;
+  }> {
+    const q = `?model_name=${encodeURIComponent(modelName)}`;
+    return this.req("POST", `/v1/predict/batch${q}`, { items });
+  }
+
   cohortRisk(
     payload: { events?: DoseHistoryEvent[]; synthetic?: { n_users?: number; n_days?: number; seed?: number } },
     opts: { modelName?: string; topUsers?: number } = {},

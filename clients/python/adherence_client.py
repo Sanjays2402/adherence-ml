@@ -55,6 +55,17 @@ class AdherenceClient:
             "POST", f"/v1/predict?model_name={model_name}", json=body
         )
 
+    def predict_batch(
+        self,
+        items: Iterable[dict[str, Any]],
+        model_name: str = "default",
+    ) -> dict[str, Any]:
+        return self._req(
+            "POST",
+            f"/v1/predict/batch?model_name={model_name}",
+            json={"items": list(items)},
+        )
+
     def cohort_risk(
         self,
         events: Iterable[dict[str, Any]] | None = None,

@@ -1,6 +1,107 @@
 {
   "components": {
     "schemas": {
+      "BatchPredictItem": {
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "response": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PredictResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "ok"
+        ],
+        "title": "BatchPredictItem",
+        "type": "object"
+      },
+      "BatchPredictRequest": {
+        "properties": {
+          "items": {
+            "description": "One PredictRequest per user. Capped at 2000 per call.",
+            "items": {
+              "$ref": "#/components/schemas/PredictRequest"
+            },
+            "maxItems": 2000,
+            "minItems": 1,
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "BatchPredictRequest",
+        "type": "object"
+      },
+      "BatchPredictResponse": {
+        "properties": {
+          "model_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
+          },
+          "n_failed": {
+            "title": "N Failed",
+            "type": "integer"
+          },
+          "n_ok": {
+            "title": "N Ok",
+            "type": "integer"
+          },
+          "n_users": {
+            "title": "N Users",
+            "type": "integer"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/BatchPredictItem"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "model_version",
+          "n_users",
+          "n_ok",
+          "n_failed",
+          "results"
+        ],
+        "title": "BatchPredictResponse",
+        "type": "object"
+      },
       "CohortBucket": {
         "properties": {
           "key": {
@@ -1471,6 +1572,92 @@
           }
         },
         "summary": "Predict",
+        "tags": [
+          "predict"
+        ]
+      }
+    },
+    "/v1/predict/batch": {
+      "post": {
+        "description": "Score upcoming doses for many users in one call.\n\nDesigned for Med-Tracker's nightly cron: send {items: [PredictRequest, ...]}\nand get back per-user predictions + reason codes. Errors are isolated to\nthe offending user (the batch keeps going).",
+        "operationId": "predict_batch_v1_predict_batch_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "model_name",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "Model Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchPredictRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchPredictResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Predict Batch",
         "tags": [
           "predict"
         ]

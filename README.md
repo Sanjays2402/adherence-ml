@@ -58,6 +58,7 @@ Response includes `miss_probability`, `risk_tier` (low/medium/high), and human-r
 | --- | --- | --- | --- |
 | GET  | `/healthz`, `/livez` | none | redis + db + model checks |
 | POST | `/v1/predict` | service | per-dose miss probability + reasons |
+| POST | `/v1/predict/batch` | service | score many users in one call (Med-Tracker nightly cron) |
 | POST | `/v1/train`, `/v1/train/async` | admin | retrain on synthetic or supplied events |
 | GET  | `/v1/explain/global` | viewer | gain + mean \|SHAP\| per feature, ranked |
 | GET  | `/v1/explain/sample` | viewer | raw SHAP for N synthetic doses |
