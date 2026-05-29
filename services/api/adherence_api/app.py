@@ -9,7 +9,17 @@ from adherence_common.settings import get_settings
 from adherence_common.telemetry import init_tracing
 from adherence_common.version import __version__
 from adherence_api.middleware import RequestIdMiddleware
-from adherence_api.routes import admin, drift as drift_route, health, plots, predict, train, webhooks
+from adherence_api.routes import (
+    admin,
+    cohort,
+    drift as drift_route,
+    explain as explain_route,
+    health,
+    plots,
+    predict,
+    train,
+    webhooks,
+)
 
 log = get_logger(__name__)
 
@@ -34,6 +44,8 @@ def create_app() -> FastAPI:
             {"name": "health", "description": "Liveness / readiness"},
             {"name": "admin", "description": "Auth and model management"},
             {"name": "webhooks", "description": "Outbound webhook callbacks"},
+            {"name": "explain", "description": "Global model explainability (SHAP + gain)"},
+            {"name": "cohort", "description": "Population-level risk aggregations"},
         ],
     )
 
@@ -58,5 +70,7 @@ def create_app() -> FastAPI:
     app.include_router(plots.router)
     app.include_router(admin.router)
     app.include_router(webhooks.router)
+    app.include_router(explain_route.router)
+    app.include_router(cohort.router)
     log.info("api ready", version=__version__)
     return app
