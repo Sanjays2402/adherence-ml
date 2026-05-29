@@ -1,0 +1,8 @@
+artifact_location: file:///private/tmp/adherence-ml/mlruns_sample/102272856948918487
+creation_time: 1780050852082
+experiment_id: '102272856948918487'
+last_update_time: 1780050852082
+lifecycle_stage: active
+name: adherence-ml
+trace_location: null
+workspace: default

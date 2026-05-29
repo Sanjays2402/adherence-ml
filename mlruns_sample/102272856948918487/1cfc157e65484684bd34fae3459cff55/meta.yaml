@@ -1,0 +1,14 @@
+artifact_uri: file:///private/tmp/adherence-ml/mlruns_sample/102272856948918487/1cfc157e65484684bd34fae3459cff55/artifacts
+end_time: 1780050894126
+entry_point_name: ''
+experiment_id: '102272856948918487'
+lifecycle_stage: active
+run_id: 1cfc157e65484684bd34fae3459cff55
+run_name: train_default
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1780050867829
+status: 3
+tags: []
+user_id: sanjay

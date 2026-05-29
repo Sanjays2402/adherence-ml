@@ -1,0 +1,46 @@
+[
+  {
+    "name": "default",
+    "version": "20260529-033454",
+    "path": "models/registry/default__20260529-033454.joblib",
+    "created_at": 1780050894.008982,
+    "metrics": {
+      "auc_raw": 0.7175764799980549,
+      "auc_calibrated": 0.7175764799980549,
+      "n_train": 749712.0,
+      "n_valid": 187428.0,
+      "pos_rate_train": 0.20027824017756152,
+      "pos_rate_valid": 0.2092483513669249,
+      "auc": 0.7175764799980549,
+      "pr_auc": 0.38655524895791077,
+      "brier": 0.14903390023707583,
+      "ece": 0.01074632479527589,
+      "auc_cv_mean": 0.7154879863611235,
+      "auc_cv_folds": 3.0,
+      "train_seconds": 41.92305016517639
+    },
+    "feature_columns": [
+      "hour_sin",
+      "hour_cos",
+      "dow_sin",
+      "dow_cos",
+      "is_weekend",
+      "time_bucket_idx",
+      "dose_class_idx",
+      "dose_strength_mg",
+      "streak_taken",
+      "streak_missed",
+      "recent_miss_rate_7d",
+      "recent_miss_rate_24h",
+      "recent_late_rate_7d",
+      "doses_today_so_far",
+      "doses_yesterday",
+      "minutes_since_last_dose",
+      "minutes_since_last_taken",
+      "sleep_window_proxy",
+      "n_classes_user",
+      "user_n_doses_history"
+    ],
+    "notes": "trainer.pipeline"
+  }
+]
