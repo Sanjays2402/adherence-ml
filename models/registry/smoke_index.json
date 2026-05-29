@@ -1,0 +1,44 @@
+[
+  {
+    "name": "smoke",
+    "version": "20260529-033358",
+    "path": "models/registry/smoke__20260529-033358.joblib",
+    "created_at": 1780050838.8880908,
+    "metrics": {
+      "auc_raw": 0.7126803343357273,
+      "auc_calibrated": 0.7126803343357273,
+      "n_train": 37728.0,
+      "n_valid": 9432.0,
+      "pos_rate_train": 0.2044635284139101,
+      "pos_rate_valid": 0.19094571670907548,
+      "auc": 0.7126803343357273,
+      "pr_auc": 0.3720112870620773,
+      "brier": 0.13961947736505798,
+      "ece": 0.0092594323940759,
+      "train_seconds": 2.43489933013916
+    },
+    "feature_columns": [
+      "hour_sin",
+      "hour_cos",
+      "dow_sin",
+      "dow_cos",
+      "is_weekend",
+      "time_bucket_idx",
+      "dose_class_idx",
+      "dose_strength_mg",
+      "streak_taken",
+      "streak_missed",
+      "recent_miss_rate_7d",
+      "recent_miss_rate_24h",
+      "recent_late_rate_7d",
+      "doses_today_so_far",
+      "doses_yesterday",
+      "minutes_since_last_dose",
+      "minutes_since_last_taken",
+      "sleep_window_proxy",
+      "n_classes_user",
+      "user_n_doses_history"
+    ],
+    "notes": "trainer.pipeline"
+  }
+]
