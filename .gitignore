@@ -1,0 +1,40 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# ML artifacts
+mlruns/
+!mlruns_sample/
+models/registry/*.joblib
+models/registry/*.pkl
+data/generated/
+data/processed/
+*.parquet
+!data/samples/*.parquet
+*.log
+
+# Node
+node_modules/
+.next/
+out/
+.turbo/
+
+# Editor
+.idea/
+.vscode/
+.DS_Store
+
+# Env
+.env
+.env.local
+!.env.example
