@@ -1,0 +1,1749 @@
+{
+  "components": {
+    "schemas": {
+      "CohortBucket": {
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "mean_miss_probability": {
+            "title": "Mean Miss Probability",
+            "type": "number"
+          },
+          "n_doses": {
+            "title": "N Doses",
+            "type": "integer"
+          },
+          "pct_high_risk": {
+            "title": "Pct High Risk",
+            "type": "number"
+          },
+          "pct_medium_risk": {
+            "title": "Pct Medium Risk",
+            "type": "number"
+          }
+        },
+        "required": [
+          "key",
+          "n_doses",
+          "mean_miss_probability",
+          "pct_high_risk",
+          "pct_medium_risk"
+        ],
+        "title": "CohortBucket",
+        "type": "object"
+      },
+      "CohortRiskResponse": {
+        "properties": {
+          "by_dose_class": {
+            "items": {
+              "$ref": "#/components/schemas/CohortBucket"
+            },
+            "title": "By Dose Class",
+            "type": "array"
+          },
+          "by_time_bucket": {
+            "items": {
+              "$ref": "#/components/schemas/CohortBucket"
+            },
+            "title": "By Time Bucket",
+            "type": "array"
+          },
+          "model_name": {
+            "title": "Model Name",
+            "type": "string"
+          },
+          "model_version": {
+            "title": "Model Version",
+            "type": "string"
+          },
+          "overall_mean_risk": {
+            "title": "Overall Mean Risk",
+            "type": "number"
+          },
+          "top_users": {
+            "description": "Users sorted by mean miss probability (highest first).",
+            "items": {
+              "$ref": "#/components/schemas/CohortBucket"
+            },
+            "title": "Top Users",
+            "type": "array"
+          },
+          "total_doses": {
+            "title": "Total Doses",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "model_name",
+          "model_version",
+          "total_doses",
+          "overall_mean_risk",
+          "by_dose_class",
+          "by_time_bucket",
+          "top_users"
+        ],
+        "title": "CohortRiskResponse",
+        "type": "object"
+      },
+      "DoseEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "dose_class": {
+            "default": "other",
+            "enum": [
+              "cardio",
+              "neuro",
+              "endocrine",
+              "psych",
+              "antibiotic",
+              "supplement",
+              "other"
+            ],
+            "title": "Dose Class",
+            "type": "string"
+          },
+          "dose_id": {
+            "title": "Dose Id",
+            "type": "string"
+          },
+          "dose_strength_mg": {
+            "default": 0.0,
+            "title": "Dose Strength Mg",
+            "type": "number"
+          },
+          "scheduled_at": {
+            "format": "date-time",
+            "title": "Scheduled At",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "taken",
+              "missed",
+              "skipped",
+              "late"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "taken_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Taken At"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "dose_id",
+          "scheduled_at",
+          "status"
+        ],
+        "title": "DoseEvent",
+        "type": "object"
+      },
+      "DosePrediction": {
+        "properties": {
+          "dose_id": {
+            "title": "Dose Id",
+            "type": "string"
+          },
+          "miss_probability": {
+            "title": "Miss Probability",
+            "type": "number"
+          },
+          "reasons": {
+            "items": {
+              "$ref": "#/components/schemas/ReasonCode"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "risk_tier": {
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ],
+            "title": "Risk Tier",
+            "type": "string"
+          },
+          "scheduled_at": {
+            "format": "date-time",
+            "title": "Scheduled At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "dose_id",
+          "scheduled_at",
+          "miss_probability",
+          "risk_tier"
+        ],
+        "title": "DosePrediction",
+        "type": "object"
+      },
+      "ExplainGlobalResponse": {
+        "properties": {
+          "features": {
+            "items": {
+              "$ref": "#/components/schemas/FeatureImportance"
+            },
+            "title": "Features",
+            "type": "array"
+          },
+          "model_name": {
+            "title": "Model Name",
+            "type": "string"
+          },
+          "model_version": {
+            "title": "Model Version",
+            "type": "string"
+          },
+          "sample_size": {
+            "title": "Sample Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "model_name",
+          "model_version",
+          "sample_size",
+          "features"
+        ],
+        "title": "ExplainGlobalResponse",
+        "type": "object"
+      },
+      "ExplainSampleResponse": {
+        "properties": {
+          "model_name": {
+            "title": "Model Name",
+            "type": "string"
+          },
+          "model_version": {
+            "title": "Model Version",
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/ExplainSampleRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "model_name",
+          "model_version",
+          "rows"
+        ],
+        "title": "ExplainSampleResponse",
+        "type": "object"
+      },
+      "ExplainSampleRow": {
+        "properties": {
+          "feature_values": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Feature Values",
+            "type": "object"
+          },
+          "miss_probability": {
+            "title": "Miss Probability",
+            "type": "number"
+          },
+          "shap_values": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Shap Values",
+            "type": "object"
+          }
+        },
+        "required": [
+          "miss_probability",
+          "feature_values",
+          "shap_values"
+        ],
+        "title": "ExplainSampleRow",
+        "type": "object"
+      },
+      "FeatureImportance": {
+        "properties": {
+          "feature": {
+            "title": "Feature",
+            "type": "string"
+          },
+          "gain_lgb": {
+            "title": "Gain Lgb",
+            "type": "number"
+          },
+          "gain_xgb": {
+            "title": "Gain Xgb",
+            "type": "number"
+          },
+          "human": {
+            "title": "Human",
+            "type": "string"
+          },
+          "mean_abs_shap": {
+            "title": "Mean Abs Shap",
+            "type": "number"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "feature",
+          "human",
+          "gain_xgb",
+          "gain_lgb",
+          "mean_abs_shap",
+          "rank"
+        ],
+        "title": "FeatureImportance",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "properties": {
+          "db_ok": {
+            "title": "Db Ok",
+            "type": "boolean"
+          },
+          "model_loaded": {
+            "title": "Model Loaded",
+            "type": "boolean"
+          },
+          "redis_ok": {
+            "title": "Redis Ok",
+            "type": "boolean"
+          },
+          "status": {
+            "default": "ok",
+            "enum": [
+              "ok",
+              "degraded",
+              "down"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "model_loaded",
+          "redis_ok",
+          "db_ok"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      },
+      "PredictRequest": {
+        "properties": {
+          "history": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/DoseEvent"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "History"
+          },
+          "schedule": {
+            "items": {
+              "$ref": "#/components/schemas/ScheduledDose"
+            },
+            "title": "Schedule",
+            "type": "array"
+          },
+          "top_k_reasons": {
+            "default": 3,
+            "title": "Top K Reasons",
+            "type": "integer"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id"
+        ],
+        "title": "PredictRequest",
+        "type": "object"
+      },
+      "PredictResponse": {
+        "properties": {
+          "model_version": {
+            "title": "Model Version",
+            "type": "string"
+          },
+          "predictions": {
+            "items": {
+              "$ref": "#/components/schemas/DosePrediction"
+            },
+            "title": "Predictions",
+            "type": "array"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "model_version",
+          "predictions"
+        ],
+        "title": "PredictResponse",
+        "type": "object"
+      },
+      "ReasonCode": {
+        "properties": {
+          "contribution": {
+            "title": "Contribution",
+            "type": "number"
+          },
+          "feature": {
+            "title": "Feature",
+            "type": "string"
+          },
+          "human": {
+            "title": "Human",
+            "type": "string"
+          }
+        },
+        "required": [
+          "feature",
+          "contribution",
+          "human"
+        ],
+        "title": "ReasonCode",
+        "type": "object"
+      },
+      "ScheduledDose": {
+        "additionalProperties": false,
+        "properties": {
+          "dose_class": {
+            "default": "other",
+            "enum": [
+              "cardio",
+              "neuro",
+              "endocrine",
+              "psych",
+              "antibiotic",
+              "supplement",
+              "other"
+            ],
+            "title": "Dose Class",
+            "type": "string"
+          },
+          "dose_id": {
+            "title": "Dose Id",
+            "type": "string"
+          },
+          "dose_strength_mg": {
+            "default": 0.0,
+            "title": "Dose Strength Mg",
+            "type": "number"
+          },
+          "scheduled_at": {
+            "format": "date-time",
+            "title": "Scheduled At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "dose_id",
+          "scheduled_at"
+        ],
+        "title": "ScheduledDose",
+        "type": "object"
+      },
+      "TokenRequest": {
+        "properties": {
+          "role": {
+            "default": "viewer",
+            "title": "Role",
+            "type": "string"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject"
+        ],
+        "title": "TokenRequest",
+        "type": "object"
+      },
+      "TokenResponse": {
+        "properties": {
+          "expires_in": {
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "expires_in"
+        ],
+        "title": "TokenResponse",
+        "type": "object"
+      },
+      "TrainRequest": {
+        "properties": {
+          "n_days": {
+            "default": 60,
+            "title": "N Days",
+            "type": "integer"
+          },
+          "n_users": {
+            "default": 5000,
+            "title": "N Users",
+            "type": "integer"
+          },
+          "register_as": {
+            "default": "default",
+            "title": "Register As",
+            "type": "string"
+          },
+          "seed": {
+            "default": 42,
+            "title": "Seed",
+            "type": "integer"
+          },
+          "synthetic": {
+            "default": true,
+            "title": "Synthetic",
+            "type": "boolean"
+          }
+        },
+        "title": "TrainRequest",
+        "type": "object"
+      },
+      "TrainResponse": {
+        "properties": {
+          "metrics": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Metrics",
+            "type": "object"
+          },
+          "model_version": {
+            "title": "Model Version",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "model_version",
+          "metrics"
+        ],
+        "title": "TrainResponse",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Predicts which medication doses a user is likely to miss in the next 24 hours. Backed by XGBoost + LightGBM ensemble with SHAP explanations.",
+    "title": "adherence-ml",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/healthz": {
+      "get": {
+        "operationId": "healthz_healthz_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Healthz",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/livez": {
+      "get": {
+        "operationId": "livez_livez_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Livez Livez Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Livez",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/v1/admin/models": {
+      "get": {
+        "operationId": "list_models_v1_admin_models_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Models V1 Admin Models Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Models",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/token": {
+      "post": {
+        "operationId": "mint_token_v1_admin_token_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mint Token",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/cohort/risk": {
+      "post": {
+        "description": "Aggregate miss-risk over a cohort.\n\npayload may include:\n  events: list of DoseEvent dicts (used as the cohort).\n  synthetic: {\"n_users\": int, \"n_days\": int, \"seed\": int} to generate.\nIf neither is provided, defaults to a small synthetic cohort.",
+        "operationId": "cohort_risk_v1_cohort_risk_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "model_name",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "Model Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "top_users",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Top Users",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CohortRiskResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cohort Risk",
+        "tags": [
+          "cohort"
+        ]
+      }
+    },
+    "/v1/drift/check": {
+      "post": {
+        "description": "Compare live events against the training reference feature distribution.\n\npayload: {\"model_name\": \"default\", \"events\": [DoseEvent...]}",
+        "operationId": "drift_check_v1_drift_check_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Drift Check V1 Drift Check Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Drift Check",
+        "tags": [
+          "drift"
+        ]
+      }
+    },
+    "/v1/explain/global": {
+      "get": {
+        "operationId": "explain_global_v1_explain_global_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "model_name",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "Model Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "n_users",
+            "required": false,
+            "schema": {
+              "default": 400,
+              "maximum": 3000,
+              "minimum": 50,
+              "title": "N Users",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "n_days",
+            "required": false,
+            "schema": {
+              "default": 14,
+              "maximum": 60,
+              "minimum": 3,
+              "title": "N Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "seed",
+            "required": false,
+            "schema": {
+              "default": 7,
+              "title": "Seed",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExplainGlobalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Explain Global",
+        "tags": [
+          "explain"
+        ]
+      }
+    },
+    "/v1/explain/sample": {
+      "get": {
+        "description": "Return raw SHAP values for a few synthetic doses (debugging / audit).",
+        "operationId": "explain_sample_v1_explain_sample_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "model_name",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "Model Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "n",
+            "required": false,
+            "schema": {
+              "default": 5,
+              "maximum": 25,
+              "minimum": 1,
+              "title": "N",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "seed",
+            "required": false,
+            "schema": {
+              "default": 13,
+              "title": "Seed",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExplainSampleResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Explain Sample",
+        "tags": [
+          "explain"
+        ]
+      }
+    },
+    "/v1/plots/calibration.png": {
+      "get": {
+        "operationId": "calibration_plot_v1_plots_calibration_png_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "model_name",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "Model Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "n_users",
+            "required": false,
+            "schema": {
+              "default": 500,
+              "maximum": 5000,
+              "minimum": 50,
+              "title": "N Users",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "n_days",
+            "required": false,
+            "schema": {
+              "default": 14,
+              "maximum": 60,
+              "minimum": 3,
+              "title": "N Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "seed",
+            "required": false,
+            "schema": {
+              "default": 7,
+              "title": "Seed",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Calibration Plot",
+        "tags": [
+          "plots"
+        ]
+      }
+    },
+    "/v1/plots/importance.png": {
+      "get": {
+        "operationId": "importance_plot_v1_plots_importance_png_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "model_name",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "Model Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Importance Plot",
+        "tags": [
+          "plots"
+        ]
+      }
+    },
+    "/v1/predict": {
+      "post": {
+        "operationId": "predict_v1_predict_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "model_name",
+            "required": false,
+            "schema": {
+              "default": "default",
+              "title": "Model Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PredictRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PredictResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Predict",
+        "tags": [
+          "predict"
+        ]
+      }
+    },
+    "/v1/train": {
+      "post": {
+        "operationId": "train_v1_train_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrainRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrainResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Train",
+        "tags": [
+          "train"
+        ]
+      }
+    },
+    "/v1/train/async": {
+      "post": {
+        "operationId": "train_async_v1_train_async_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrainRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Train Async V1 Train Async Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Train Async",
+        "tags": [
+          "train"
+        ]
+      }
+    },
+    "/v1/webhooks/medtracker/event": {
+      "post": {
+        "operationId": "medtracker_event_v1_webhooks_medtracker_event_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Medtracker Event V1 Webhooks Medtracker Event Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Medtracker Event",
+        "tags": [
+          "webhooks"
+        ]
+      }
+    }
+  },
+  "tags": [
+    {
+      "description": "Inference endpoints",
+      "name": "predict"
+    },
+    {
+      "description": "Training control (admin)",
+      "name": "train"
+    },
+    {
+      "description": "Feature drift monitoring",
+      "name": "drift"
+    },
+    {
+      "description": "Calibration and importance plots",
+      "name": "plots"
+    },
+    {
+      "description": "Liveness / readiness",
+      "name": "health"
+    },
+    {
+      "description": "Auth and model management",
+      "name": "admin"
+    },
+    {
+      "description": "Outbound webhook callbacks",
+      "name": "webhooks"
+    },
+    {
+      "description": "Global model explainability (SHAP + gain)",
+      "name": "explain"
+    },
+    {
+      "description": "Population-level risk aggregations",
+      "name": "cohort"
+    }
+  ]
+}
