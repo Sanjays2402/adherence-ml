@@ -1,0 +1,57 @@
+replicaCount:
+  api: 2
+  worker: 1
+  trainer: 1
+
+image:
+  repository: ghcr.io/sanjays2402/adherence-ml
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 7421
+
+ingress:
+  enabled: false
+  className: nginx
+  hosts:
+    - host: adherence-ml.local
+      paths: ["/"]
+
+env:
+  ADHERENCE_LOG_LEVEL: INFO
+  ADHERENCE_LOG_FORMAT: json
+  ADHERENCE_DRIFT_PSI_THRESHOLD: "0.2"
+
+secrets:
+  jwtSecret: "change-me-in-prod-please-32bytes-min"
+  apiKeys: "admin:changeme-admin,service:changeme-svc,viewer:changeme-view"
+  dbUrl: "postgresql+psycopg://adherence:adherence@adherence-postgres:5432/adherence"
+  redisUrl: "redis://adherence-redis:6379/0"
+  mlflowTrackingUri: "http://adherence-mlflow:5000"
+
+resources:
+  api:
+    requests: { cpu: "200m", memory: "512Mi" }
+    limits:   { cpu: "1500m", memory: "2Gi" }
+  worker:
+    requests: { cpu: "200m", memory: "512Mi" }
+    limits:   { cpu: "1500m", memory: "2Gi" }
+  trainer:
+    requests: { cpu: "500m", memory: "1Gi" }
+    limits:   { cpu: "2",    memory: "4Gi" }
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+serviceAccount:
+  create: true
+  name: ""

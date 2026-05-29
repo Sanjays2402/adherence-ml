@@ -1,0 +1,11 @@
+env                = "prod"
+region             = "us-east-1"
+db_instance_class  = "db.r6g.large"
+desired_api        = 4
+desired_worker     = 2
+vpc_id             = "vpc-REPLACE"
+private_subnet_ids = ["subnet-REPLACE-a", "subnet-REPLACE-b", "subnet-REPLACE-c"]
+public_subnet_ids  = ["subnet-REPLACE-pub-a", "subnet-REPLACE-pub-b", "subnet-REPLACE-pub-c"]
+image_api          = "ghcr.io/sanjays2402/adherence-ml:0.1.0"
+image_worker       = "ghcr.io/sanjays2402/adherence-ml-worker:0.1.0"
+image_trainer      = "ghcr.io/sanjays2402/adherence-ml-trainer:0.1.0"

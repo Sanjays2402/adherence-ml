@@ -1,0 +1,9 @@
+apiVersion: v2
+name: adherence-ml
+description: Medication adherence prediction service
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords: [ml, healthcare, adherence]
+maintainers:
+  - name: adherence-ml maintainers

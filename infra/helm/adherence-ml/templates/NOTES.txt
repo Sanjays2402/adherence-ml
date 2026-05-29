@@ -1,0 +1,7 @@
+{{ include "adherence.fullname" . }} has been installed.
+
+Get the API endpoint:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "adherence.fullname" . }}-api {{ .Values.service.port }}:{{ .Values.service.port }}
+  curl http://localhost:{{ .Values.service.port }}/livez
+
+Mint a JWT via the admin endpoint using your admin API key.

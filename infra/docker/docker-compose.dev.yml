@@ -1,0 +1,78 @@
+name: adherence-ml-dev
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: adherence
+      POSTGRES_PASSWORD: adherence
+      POSTGRES_DB: adherence
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U adherence"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.16.2
+    command: >
+      mlflow server
+        --host 0.0.0.0
+        --port 5000
+        --backend-store-uri sqlite:////mlflow/mlflow.db
+        --default-artifact-root /mlflow/artifacts
+    ports: ["5000:5000"]
+    volumes: ["mlflow:/mlflow"]
+
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile
+    environment:
+      ADHERENCE_DB_URL: postgresql+psycopg://adherence:adherence@postgres:5432/adherence
+      ADHERENCE_REDIS_URL: redis://redis:6379/0
+      ADHERENCE_MLFLOW_TRACKING_URI: http://mlflow:5000
+      ADHERENCE_API_KEYS: admin:adm_dev,service:svc_dev,viewer:vwr_dev
+      ADHERENCE_JWT_SECRET: dev-jwt-secret-please-rotate-xxxxx
+    ports: ["7421:7421"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+      mlflow:   { condition: service_started }
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.worker
+    environment:
+      ADHERENCE_DB_URL: postgresql+psycopg://adherence:adherence@postgres:5432/adherence
+      ADHERENCE_REDIS_URL: redis://redis:6379/0
+      ADHERENCE_MLFLOW_TRACKING_URI: http://mlflow:5000
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+
+  trainer:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.trainer
+    environment:
+      ADHERENCE_DB_URL: postgresql+psycopg://adherence:adherence@postgres:5432/adherence
+      ADHERENCE_MLFLOW_TRACKING_URI: http://mlflow:5000
+    depends_on:
+      postgres: { condition: service_healthy }
+      mlflow:   { condition: service_started }
+
+volumes:
+  pgdata:
+  mlflow:

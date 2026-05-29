@@ -1,0 +1,20 @@
+# syntax=docker/dockerfile:1.7
+FROM python:3.11-slim AS builder
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential libgomp1 \
+  && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir uv==0.4.27
+WORKDIR /app
+COPY pyproject.toml uv.lock* README.md ./
+COPY packages ./packages
+COPY services ./services
+RUN uv venv && uv sync --no-dev
+
+FROM python:3.11-slim AS runtime
+ENV PATH="/app/.venv/bin:$PATH"
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
+  && rm -rf /var/lib/apt/lists/* \
+  && useradd -m -u 1001 adherence
+WORKDIR /app
+COPY --from=builder /app /app
+USER adherence
+CMD ["python", "-m", "adherence_trainer.scheduler"]

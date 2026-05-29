@@ -1,0 +1,13 @@
+.git
+.venv
+__pycache__
+.pytest_cache
+.mypy_cache
+.ruff_cache
+mlruns
+mlruns_sample
+node_modules
+web/.next
+web/out
+data/generated
+*.log

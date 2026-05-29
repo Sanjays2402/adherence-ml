@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "adherence.fullname" . }}-worker
+  labels: {{- include "adherence.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount.worker }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "adherence.name" . }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "adherence.name" . }}
+        app.kubernetes.io/component: worker
+    spec:
+      serviceAccountName: {{ include "adherence.serviceAccountName" . }}
+      containers:
+        - name: worker
+          image: "{{ .Values.image.repository }}-worker:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          envFrom:
+            - configMapRef: { name: {{ include "adherence.fullname" . }}-env }
+            - secretRef:    { name: {{ include "adherence.fullname" . }}-secrets }
+          resources: {{- toYaml .Values.resources.worker | nindent 12 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "adherence.fullname" . }}-trainer
+  labels: {{- include "adherence.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount.trainer }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "adherence.name" . }}
+      app.kubernetes.io/component: trainer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "adherence.name" . }}
+        app.kubernetes.io/component: trainer
+    spec:
+      serviceAccountName: {{ include "adherence.serviceAccountName" . }}
+      containers:
+        - name: trainer
+          image: "{{ .Values.image.repository }}-trainer:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          envFrom:
+            - configMapRef: { name: {{ include "adherence.fullname" . }}-env }
+            - secretRef:    { name: {{ include "adherence.fullname" . }}-secrets }
+          resources: {{- toYaml .Values.resources.trainer | nindent 12 }}
