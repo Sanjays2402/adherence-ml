@@ -59,11 +59,61 @@ resources:
     requests: { cpu: "500m", memory: "1Gi" }
     limits:   { cpu: "2",    memory: "4Gi" }
 
+# Horizontal Pod Autoscaling. Off by default so vanilla clusters and clusters
+# without metrics-server keep rendering cleanly. The api HPA scales on CPU
+# and (when enabled) memory utilization; the worker HPA scales on CPU only
+# (queue-depth metrics need an external adapter and are out of scope for the
+# default chart). Both HPAs ship a `behavior` block that biases scale-up
+# aggressive (fast traffic response) and scale-down conservative (5 minute
+# stabilization window, max 1 pod per minute) so the fleet does not flap
+# during diurnal load.
 autoscaling:
   enabled: false
   minReplicas: 2
   maxReplicas: 6
   targetCPUUtilizationPercentage: 70
+  # Memory target is optional. Set to 0 (or null) to omit the memory metric
+  # entirely, which is the right choice when the API workload is CPU-bound and
+  # working set is dominated by loaded model artifacts (steady, not bursty).
+  targetMemoryUtilizationPercentage: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+        - type: Pods
+          value: 4
+          periodSeconds: 30
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+      selectPolicy: Max
+  worker:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 75
+    behavior:
+      scaleUp:
+        stabilizationWindowSeconds: 0
+        policies:
+          - type: Pods
+            value: 2
+            periodSeconds: 30
+        selectPolicy: Max
+      scaleDown:
+        stabilizationWindowSeconds: 600
+        policies:
+          - type: Pods
+            value: 1
+            periodSeconds: 120
+        selectPolicy: Max
 
 podDisruptionBudget:
   enabled: true
