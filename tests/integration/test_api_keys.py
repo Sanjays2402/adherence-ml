@@ -1,0 +1,170 @@
+"""Tests for DB-backed API keys with scopes, expiry, revocation."""
+from __future__ import annotations
+
+import time
+
+import pytest
+from fastapi.testclient import TestClient
+
+from adherence_common.settings import reload_settings
+
+
+def _setup(tmp_path, monkeypatch):
+    monkeypatch.setenv("ADHERENCE_API_KEYS", "admin:adm,service:svc,viewer:vwr")
+    monkeypatch.setenv("ADHERENCE_JWT_SECRET", "x" * 32)
+    monkeypatch.setenv("ADHERENCE_MODEL_REGISTRY", str(tmp_path / "reg"))
+    monkeypatch.setenv("ADHERENCE_DB_URL", f"sqlite:///{tmp_path}/k.db")
+    monkeypatch.setenv("ADHERENCE_MLFLOW_TRACKING_URI", f"file:{tmp_path}/mlruns")
+    monkeypatch.setenv("ADHERENCE_RATE_LIMIT_ENABLED", "false")
+    reload_settings()
+    from adherence_common import db as db_mod
+    db_mod._engine.cache_clear()
+    db_mod._session_factory.cache_clear()
+
+
+def _client(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    from adherence_api.app import create_app
+    return TestClient(create_app())
+
+
+def test_create_list_use_revoke(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    admin = {"x-api-key": "adm"}
+
+    # Create
+    r = c.post(
+        "/v1/admin/api-keys",
+        json={"name": "svc-A", "role": "service", "scopes": ["predict"], "note": "ci bot"},
+        headers=admin,
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    plaintext = body["key"]
+    assert plaintext.startswith("ak_")
+    assert body["scopes"] == ["predict"]
+    assert body["key_prefix"] == plaintext[:12]
+
+    # Listing never returns plaintext
+    r = c.get("/v1/admin/api-keys", headers=admin)
+    assert r.status_code == 200
+    rows = r.json()
+    assert len(rows) == 1
+    assert "key" not in rows[0]
+    assert rows[0]["name"] == "svc-A"
+    assert rows[0]["revoked_at"] is None
+
+    # Use the new key against an endpoint that requires `service` role
+    r = c.get("/v1/webhooks/medtracker/recent?limit=5", headers={"x-api-key": plaintext})
+    assert r.status_code == 200, r.text
+
+    # Revoke and verify subsequent use 401s
+    r = c.post("/v1/admin/api-keys/svc-A/revoke", headers=admin)
+    assert r.status_code == 200
+    r = c.get("/v1/webhooks/medtracker/recent?limit=5", headers={"x-api-key": plaintext})
+    assert r.status_code == 401
+    assert "revoked" in r.json()["detail"]
+
+
+def test_duplicate_name_400(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    admin = {"x-api-key": "adm"}
+    r = c.post(
+        "/v1/admin/api-keys",
+        json={"name": "dup", "role": "viewer"}, headers=admin,
+    )
+    assert r.status_code == 201
+    r = c.post(
+        "/v1/admin/api-keys",
+        json={"name": "dup", "role": "viewer"}, headers=admin,
+    )
+    assert r.status_code == 400
+
+
+def test_invalid_role_rejected(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    r = c.post(
+        "/v1/admin/api-keys",
+        json={"name": "bad", "role": "superuser"},
+        headers={"x-api-key": "adm"},
+    )
+    assert r.status_code == 400
+
+
+def test_expired_key_is_rejected(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    from adherence_common import api_keys as ak
+    from datetime import datetime, timedelta
+    from adherence_common.db import session
+
+    plain, row = ak.create_key(name="exp", role="viewer", ttl_seconds=60)
+    # Force expiry in the past
+    with session() as s:
+        from adherence_common.api_keys import APIKeyRecord
+        from sqlalchemy import update
+        s.execute(
+            update(APIKeyRecord)
+            .where(APIKeyRecord.id == row.id)
+            .values(expires_at=datetime.utcnow() - timedelta(seconds=5))
+        )
+        s.commit()
+
+    with pytest.raises(Exception):
+        ak.resolve_db_key(plain)
+
+
+def test_unknown_key_returns_none(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    from adherence_common import api_keys as ak
+    assert ak.resolve_db_key("ak_not_a_real_key_at_all") is None
+
+
+def test_last_used_at_updates(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    from adherence_common import api_keys as ak
+    plain, row = ak.create_key(name="probe", role="viewer")
+    assert ak.list_keys()[0].last_used_at is None
+    ak.resolve_db_key(plain)
+    assert ak.list_keys()[0].last_used_at is not None
+
+
+def test_scope_gating_via_db_key(tmp_path, monkeypatch):
+    """Service key with scopes={"intervene"} can't use a scope it lacks
+    once an endpoint declares the requirement.
+    """
+    _setup(tmp_path, monkeypatch)
+    from adherence_api.app import create_app
+    from adherence_api.deps import require_scope
+    app = create_app()
+
+    @app.get("/v1/test/needs-predict")
+    def _ep(_p=__import__("fastapi").Depends(require_scope("predict"))):
+        return {"ok": True}
+
+    c = TestClient(app)
+    admin = {"x-api-key": "adm"}
+    rk = c.post(
+        "/v1/admin/api-keys",
+        json={"name": "narrow", "role": "service", "scopes": ["intervene"]},
+        headers=admin,
+    ).json()["key"]
+
+    r = c.get("/v1/test/needs-predict", headers={"x-api-key": rk})
+    assert r.status_code == 403
+    assert "predict" in r.json()["detail"]
+
+    # A key with the right scope passes
+    rk2 = c.post(
+        "/v1/admin/api-keys",
+        json={"name": "wide", "role": "service", "scopes": ["predict", "intervene"]},
+        headers=admin,
+    ).json()["key"]
+    r = c.get("/v1/test/needs-predict", headers={"x-api-key": rk2})
+    assert r.status_code == 200
+
+
+def test_env_keys_still_work(tmp_path, monkeypatch):
+    """Backwards compat: env-defined static keys must still authenticate."""
+    c = _client(tmp_path, monkeypatch)
+    r = c.get("/v1/admin/models", headers={"x-api-key": "adm"})
+    assert r.status_code == 200

@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from adherence_api.deps import SettingsDep, require_admin
+from adherence_common import api_keys as ak
 from adherence_common.auth import mint_jwt
 
 router = APIRouter(prefix="/v1/admin", tags=["admin"])
@@ -42,3 +43,82 @@ def list_models(_p=Depends(require_admin)) -> dict:
         }
         for i in items
     ]}
+
+
+# ---- API key management ---------------------------------------------------
+
+class APIKeyCreateIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=64)
+    role: str = Field(..., description="admin | service | viewer")
+    scopes: list[str] = Field(default_factory=list)
+    note: str | None = Field(None, max_length=512)
+    ttl_seconds: int | None = Field(None, ge=60, le=60 * 60 * 24 * 365 * 5)
+
+
+class APIKeyCreateOut(BaseModel):
+    id: int
+    name: str
+    role: str
+    scopes: list[str]
+    key: str = Field(..., description="Plaintext. Shown ONCE. Not recoverable.")
+    key_prefix: str
+    expires_at: str | None
+    created_at: str
+
+
+class APIKeyOut(BaseModel):
+    id: int
+    name: str
+    role: str
+    scopes: list[str]
+    key_prefix: str
+    note: str | None
+    created_by: str | None
+    created_at: str
+    expires_at: str | None
+    revoked_at: str | None
+    last_used_at: str | None
+
+
+def _key_row_to_out(row) -> APIKeyOut:
+    scopes = sorted(s for s in (row.scopes_csv or "").split(",") if s)
+    return APIKeyOut(
+        id=row.id, name=row.name, role=row.role, scopes=scopes,
+        key_prefix=row.key_prefix, note=row.note,
+        created_by=row.created_by,
+        created_at=row.created_at.isoformat(),
+        expires_at=row.expires_at.isoformat() if row.expires_at else None,
+        revoked_at=row.revoked_at.isoformat() if row.revoked_at else None,
+        last_used_at=row.last_used_at.isoformat() if row.last_used_at else None,
+    )
+
+
+@router.post("/api-keys", response_model=APIKeyCreateOut, status_code=201)
+def create_api_key(body: APIKeyCreateIn, p=Depends(require_admin)) -> APIKeyCreateOut:
+    try:
+        plain, row = ak.create_key(
+            name=body.name, role=body.role, scopes=body.scopes,
+            note=body.note, created_by=p.get("sub"), ttl_seconds=body.ttl_seconds,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    scopes = sorted(s for s in (row.scopes_csv or "").split(",") if s)
+    return APIKeyCreateOut(
+        id=row.id, name=row.name, role=row.role, scopes=scopes,
+        key=plain, key_prefix=row.key_prefix,
+        expires_at=row.expires_at.isoformat() if row.expires_at else None,
+        created_at=row.created_at.isoformat(),
+    )
+
+
+@router.get("/api-keys", response_model=list[APIKeyOut])
+def list_api_keys(_p=Depends(require_admin)) -> list[APIKeyOut]:
+    return [_key_row_to_out(r) for r in ak.list_keys()]
+
+
+@router.post("/api-keys/{name}/revoke")
+def revoke_api_key(name: str, p=Depends(require_admin)) -> dict:
+    ok = ak.revoke_key(name, by=p.get("sub"))
+    if not ok:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="api key not found")
+    return {"revoked": True, "name": name}
