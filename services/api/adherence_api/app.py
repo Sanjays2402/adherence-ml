@@ -21,6 +21,7 @@ from adherence_api.routes import (
     predict,
     train,
     webhooks,
+    interventions as interventions_route,
 )
 
 log = get_logger(__name__)
@@ -49,6 +50,7 @@ def create_app() -> FastAPI:
             {"name": "explain", "description": "Global model explainability (SHAP + gain)"},
             {"name": "cohort", "description": "Population-level risk aggregations"},
             {"name": "audit", "description": "Prediction audit log (admin)"},
+            {"name": "interventions", "description": "Recommended caregiver/app actions per dose"},
         ],
     )
 
@@ -77,5 +79,6 @@ def create_app() -> FastAPI:
     app.include_router(explain_route.router)
     app.include_router(cohort.router)
     app.include_router(audit_route.router)
+    app.include_router(interventions_route.router)
     log.info("api ready", version=__version__)
     return app
