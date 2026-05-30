@@ -126,6 +126,43 @@ export interface InterventionItem {
   suppress_reason: string | null;
 }
 
+export interface AuditRow {
+  id: number;
+  request_id: string;
+  route: string;
+  user_id: string;
+  caller: string;
+  caller_role: string;
+  model_name: string;
+  model_version: string;
+  n_doses: number;
+  mean_miss_prob: number | null;
+  max_miss_prob: number | null;
+  high_risk_count: number;
+  latency_ms: number | null;
+  ok: boolean;
+  error: string | null;
+  created_at: string;
+}
+
+export interface AuditListResponse {
+  n: number;
+  items: AuditRow[];
+}
+
+export interface AuditStatsResponse {
+  window_hours: number;
+  n_calls: number;
+  n_errors: number;
+  error_rate: number;
+  p50_latency_ms: number | null;
+  p95_latency_ms: number | null;
+  mean_miss_prob: number | null;
+  high_risk_calls: number;
+  by_model: Record<string, number>;
+  by_route: Record<string, number>;
+}
+
 export interface DeliveryOut {
   id: number;
   request_id: string;

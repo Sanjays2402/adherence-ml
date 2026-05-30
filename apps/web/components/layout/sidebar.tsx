@@ -9,6 +9,7 @@ import {
   Lightning,
   Pulse,
   UsersThree,
+  ClipboardText,
 } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 
@@ -18,6 +19,7 @@ const NAV = [
   { href: "/explain", label: "Explainer", icon: Lightbulb },
   { href: "/interventions", label: "Interventions", icon: Bell },
   { href: "/predict", label: "Predict", icon: Lightning },
+  { href: "/audit", label: "Audit", icon: ClipboardText },
 ];
 
 export default function Sidebar() {
