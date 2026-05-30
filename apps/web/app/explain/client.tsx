@@ -1,7 +1,7 @@
 "use client";
 
 import useSWR from "swr";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   BarChart,
   Bar,
@@ -23,15 +23,24 @@ import {
   Badge,
   Button,
   Input,
+  MonoChip,
+  RiskDot,
 } from "@/components/ui/primitives";
-import type { ExplainGlobalResponse, ExplainSampleResponse } from "@/lib/types";
-import { cn, fmtNum, fmtPct } from "@/lib/utils";
+import { ShapWaterfall, ShapLegend, ContributionBars } from "@/components/charts/shap";
+import type {
+  ExplainGlobalResponse,
+  ExplainSampleResponse,
+  ExplainSampleRow,
+} from "@/lib/types";
+import { cn, fmtPct, riskFromProb, riskRailClass } from "@/lib/utils";
 
-const fetcher = (url: string) => fetch(url).then(async (r) => {
-  const j = await r.json();
-  if (!r.ok) throw new Error(typeof j?.detail === "string" ? j.detail : r.statusText);
-  return j;
-});
+const fetcher = (url: string) =>
+  fetch(url).then(async (r) => {
+    const j = await r.json();
+    if (!r.ok)
+      throw new Error(typeof j?.detail === "string" ? j.detail : r.statusText);
+    return j;
+  });
 
 function GlobalChart({ data }: { data: ExplainGlobalResponse }) {
   const rows = data.features.slice(0, 15).map((f) => ({
@@ -42,15 +51,24 @@ function GlobalChart({ data }: { data: ExplainGlobalResponse }) {
   return (
     <div className="h-[420px] px-2 pt-3 pb-1">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart layout="vertical" data={rows} margin={{ left: 8, right: 16, top: 8, bottom: 4 }}>
+        <BarChart
+          layout="vertical"
+          data={rows}
+          margin={{ left: 8, right: 16, top: 8, bottom: 4 }}
+        >
           <CartesianGrid stroke="var(--color-border)" strokeDasharray="2 4" horizontal={false} />
-          <XAxis type="number" tick={{ fill: "var(--color-muted)", fontSize: 11 }} stroke="var(--color-border-strong)" />
+          <XAxis
+            type="number"
+            tick={{ fill: "var(--color-muted)", fontSize: 11 }}
+            stroke="var(--color-border-strong)"
+            tickFormatter={(v) => Number(v).toFixed(4)}
+          />
           <YAxis
             type="category"
             dataKey="feature"
-            tick={{ fill: "var(--color-muted)", fontSize: 11 }}
+            tick={{ fill: "var(--color-muted)", fontSize: 11, fontFamily: "var(--font-mono)" }}
             stroke="var(--color-border-strong)"
-            width={180}
+            width={200}
           />
           <Tooltip
             cursor={{ fill: "var(--color-border)" }}
@@ -59,12 +77,13 @@ function GlobalChart({ data }: { data: ExplainGlobalResponse }) {
               border: "1px solid var(--color-border-strong)",
               borderRadius: 6,
               fontSize: 12,
+              fontFamily: "var(--font-mono)",
             }}
             formatter={(v: number) => v.toFixed(5)}
           />
           <Bar dataKey="shap" radius={[0, 2, 2, 0]}>
             {rows.map((_, i) => (
-              <Cell key={i} fill="var(--color-accent)" fillOpacity={0.7} />
+              <Cell key={i} fill="var(--color-accent)" fillOpacity={0.75} />
             ))}
           </Bar>
         </BarChart>
@@ -73,69 +92,10 @@ function GlobalChart({ data }: { data: ExplainGlobalResponse }) {
   );
 }
 
-function SampleRow({ row, idx }: { row: ExplainSampleResponse["rows"][number]; idx: number }) {
-  const entries = Object.entries(row.shap_values)
-    .map(([feature, sv]) => ({
-      feature,
-      shap: sv,
-      value: row.feature_values[feature] ?? 0,
-    }))
-    .sort((a, b) => Math.abs(b.shap) - Math.abs(a.shap))
-    .slice(0, 8);
-  const maxAbs = Math.max(...entries.map((e) => Math.abs(e.shap)), 1e-9);
-  const p = row.miss_probability;
-  return (
-    <div className="border-b border-[var(--color-border)] last:border-b-0">
-      <div className="flex items-center justify-between px-4 py-2.5 bg-[var(--color-border)]/20">
-        <div className="text-sm">
-          Sample {idx + 1}
-          <span className="text-[var(--color-muted)] ml-2 text-xs">
-            miss probability
-          </span>
-        </div>
-        <Badge tone={p >= 0.7 ? "danger" : p >= 0.4 ? "warn" : "success"}>
-          {fmtPct(p)}
-        </Badge>
-      </div>
-      <div className="px-4 py-3 space-y-1.5">
-        {entries.map((e) => {
-          const pos = e.shap >= 0;
-          const w = (Math.abs(e.shap) / maxAbs) * 100;
-          return (
-            <div key={e.feature} className="text-xs grid grid-cols-[1fr_2fr_auto] items-center gap-3">
-              <div className="font-mono truncate text-[var(--color-muted)]" title={e.feature}>
-                {e.feature}
-              </div>
-              <div className="relative h-2 bg-[var(--color-border)]/40 rounded">
-                <div className="absolute top-0 bottom-0 left-1/2 w-px bg-[var(--color-border-strong)]" />
-                <div
-                  className={cn(
-                    "absolute top-0 bottom-0 rounded",
-                    pos ? "bg-[var(--color-danger)]/70" : "bg-[var(--color-success)]/70",
-                  )}
-                  style={{
-                    width: `${w / 2}%`,
-                    [pos ? "left" : "right"]: "50%",
-                  }}
-                />
-              </div>
-              <div className="tabular-nums text-right w-24">
-                <span className={pos ? "text-[var(--color-danger)]" : "text-[var(--color-success)]"}>
-                  {pos ? "+" : ""}{e.shap.toFixed(4)}
-                </span>
-                <span className="text-[var(--color-muted)] ml-1">({e.value.toFixed(2)})</span>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 export default function ExplainClient() {
   const [model, setModel] = useState("default");
-  const [nSamples, setNSamples] = useState(5);
+  const [nSamples, setNSamples] = useState(10);
+  const [selected, setSelected] = useState(0);
 
   const globalSWR = useSWR<ExplainGlobalResponse>(
     `/api/explain/global?model_name=${encodeURIComponent(model)}`,
@@ -146,20 +106,32 @@ export default function ExplainClient() {
     fetcher,
   );
 
+  const rows = sampleSWR.data?.rows ?? [];
+  const active: ExplainSampleRow | undefined = rows[selected];
+
+  const baseRate = useMemo(() => {
+    if (!rows.length) return 0.18;
+    const mean =
+      rows.reduce((acc, r) => acc + r.miss_probability, 0) / rows.length;
+    // proxy for population base rate; clamp to a sane range
+    return Math.min(0.6, Math.max(0.05, mean));
+  }, [rows]);
+
   return (
     <>
       <PageHeader
-        title="Explainer"
-        description="Global SHAP-based feature importance plus per-sample contributions. Positive contributions push the predicted miss probability up."
+        eyebrow="explainer // shap"
+        title="Prediction explainer"
+        description="SHAP attributions for the served model. Pick a scored dose on the left to see which features pushed its predicted miss probability up or down."
         actions={
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 text-xs text-[var(--color-muted)]">
-              <FunnelSimple weight="duotone" size={14} /> model
+            <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-[0.14em] text-[var(--color-muted)]">
+              <FunnelSimple weight="duotone" size={12} /> model
             </div>
             <Input
               value={model}
               onChange={(e) => setModel(e.target.value)}
-              className="w-32"
+              className="w-36"
             />
             <Button
               variant="ghost"
@@ -175,72 +147,186 @@ export default function ExplainClient() {
         }
       />
 
-      <div className="p-6 grid gap-6 lg:grid-cols-2">
-        <Card>
-          <CardHeader
-            title="Global feature importance"
-            hint="Mean absolute SHAP across a fresh synthetic sample."
-            right={
-              globalSWR.data ? (
-                <Badge tone="accent">v{globalSWR.data.model_version}</Badge>
-              ) : null
-            }
-          />
-          {globalSWR.error ? (
-            <div className="p-4">
-              <ErrorBox message={globalSWR.error.message} />
-            </div>
-          ) : !globalSWR.data ? (
-            <Skeleton className="h-[420px] m-4" />
-          ) : globalSWR.data.features.length === 0 ? (
-            <Empty title="No features" hint="Model returned an empty feature list." />
-          ) : (
-            <GlobalChart data={globalSWR.data} />
-          )}
-        </Card>
-
-        <Card>
-          <CardHeader
-            title="Per-sample contributions"
-            hint="Top features pushing each prediction up (red) or down (green)."
-            right={
-              <select
-                value={nSamples}
-                onChange={(e) => setNSamples(Number(e.target.value))}
-                className="rounded-md border border-[var(--color-border-strong)] bg-[var(--color-bg)] px-2 py-1 text-xs"
-              >
-                {[3, 5, 10, 15, 25].map((n) => (
-                  <option key={n} value={n}>{n} samples</option>
-                ))}
-              </select>
-            }
-          />
-          {sampleSWR.error ? (
-            <div className="p-4">
-              <ErrorBox message={sampleSWR.error.message} />
-            </div>
-          ) : !sampleSWR.data ? (
-            <Skeleton className="h-96 m-4" />
-          ) : sampleSWR.data.rows.length === 0 ? (
-            <Empty
-              icon={<Lightbulb weight="duotone" size={20} />}
-              title="No samples"
+      <div className="p-6 space-y-6">
+        {/* SIGNATURE: waterfall flanked by sample picker */}
+        <div className="grid gap-6 lg:grid-cols-[260px_1fr]">
+          <Card>
+            <CardHeader
+              title="Sample doses"
+              hint="Sorted by miss probability."
+              right={
+                <select
+                  value={nSamples}
+                  onChange={(e) => {
+                    setNSamples(Number(e.target.value));
+                    setSelected(0);
+                  }}
+                  className="rounded-md border border-[var(--color-border-strong)] bg-[var(--color-bg)] px-2 py-1 text-xs font-mono"
+                >
+                  {[5, 10, 15, 25, 50].map((n) => (
+                    <option key={n} value={n}>
+                      n={n}
+                    </option>
+                  ))}
+                </select>
+              }
             />
-          ) : (
-            <div className="max-h-[600px] overflow-y-auto scrollbar-thin">
-              {sampleSWR.data.rows.map((r, i) => (
-                <SampleRow key={i} row={r} idx={i} />
-              ))}
-            </div>
-          )}
-        </Card>
-      </div>
+            {sampleSWR.error ? (
+              <div className="p-4">
+                <ErrorBox message={sampleSWR.error.message} />
+              </div>
+            ) : !sampleSWR.data ? (
+              <div className="p-3 space-y-2">
+                <Skeleton className="h-8" />
+                <Skeleton className="h-8" />
+                <Skeleton className="h-8" />
+                <Skeleton className="h-8" />
+              </div>
+            ) : rows.length === 0 ? (
+              <Empty title="No samples" />
+            ) : (
+              <div className="max-h-[600px] overflow-y-auto scrollbar-thin">
+                {[...rows]
+                  .map((r, i) => ({ r, i }))
+                  .sort((a, b) => b.r.miss_probability - a.r.miss_probability)
+                  .map(({ r, i }) => {
+                    const tier = riskFromProb(r.miss_probability);
+                    const active = i === selected;
+                    return (
+                      <button
+                        key={i}
+                        onClick={() => setSelected(i)}
+                        className={cn(
+                          "w-full text-left px-3 py-2 border-b border-[var(--color-border)] last:border-b-0 flex items-center gap-2 transition-colors",
+                          riskRailClass(r.miss_probability),
+                          active
+                            ? "bg-[var(--color-accent-soft)]"
+                            : "hover:bg-[var(--color-border)]/30",
+                        )}
+                      >
+                        <RiskDot tier={tier} />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs font-mono">
+                            sample {String(i + 1).padStart(2, "0")}
+                          </div>
+                          <div className="text-[10px] font-mono uppercase tracking-[0.12em] text-[var(--color-muted)]">
+                            {tier} risk
+                          </div>
+                        </div>
+                        <div className="text-sm font-mono tabular-nums">
+                          {fmtPct(r.miss_probability, 0)}
+                        </div>
+                      </button>
+                    );
+                  })}
+              </div>
+            )}
+          </Card>
 
-      {globalSWR.data ? (
-        <div className="px-6 pb-6 text-xs text-[var(--color-muted)]">
-          Sample size {globalSWR.data.sample_size} doses. Showing top 15 of {globalSWR.data.features.length} features.
+          <Card>
+            <CardHeader
+              title="SHAP waterfall"
+              hint="Cumulative path from base rate to final prediction. Red bars increase predicted miss probability; emerald bars decrease it."
+              right={
+                <div className="flex items-center gap-2">
+                  {active ? (
+                    <Badge
+                      tone={
+                        active.miss_probability >= 0.7
+                          ? "danger"
+                          : active.miss_probability >= 0.4
+                            ? "warn"
+                            : "success"
+                      }
+                    >
+                      p {fmtPct(active.miss_probability)}
+                    </Badge>
+                  ) : null}
+                  <ShapLegend />
+                </div>
+              }
+            />
+            {!sampleSWR.data ? (
+              <Skeleton className="h-[480px] m-4" />
+            ) : !active ? (
+              <Empty
+                icon={<Lightbulb weight="duotone" size={20} />}
+                title="Pick a sample"
+              />
+            ) : (
+              <>
+                <ShapWaterfall row={active} baseRate={baseRate} topK={12} />
+                <div className="border-t border-[var(--color-border)] px-4 py-3 grid gap-4 md:grid-cols-3">
+                  <Stat label="base rate" value={fmtPct(baseRate)} />
+                  <Stat label="final p(miss)" value={fmtPct(active.miss_probability)} />
+                  <Stat
+                    label="net shap"
+                    value={Object.values(active.shap_values)
+                      .reduce((a, b) => a + b, 0)
+                      .toFixed(4)}
+                  />
+                </div>
+              </>
+            )}
+          </Card>
         </div>
-      ) : null}
+
+        <div className="grid gap-6 lg:grid-cols-2">
+          <Card>
+            <CardHeader
+              title="Global feature importance"
+              hint="Mean absolute SHAP over the latest sample window."
+              right={
+                globalSWR.data ? (
+                  <MonoChip>v{globalSWR.data.model_version}</MonoChip>
+                ) : null
+              }
+            />
+            {globalSWR.error ? (
+              <div className="p-4">
+                <ErrorBox message={globalSWR.error.message} />
+              </div>
+            ) : !globalSWR.data ? (
+              <Skeleton className="h-[420px] m-4" />
+            ) : globalSWR.data.features.length === 0 ? (
+              <Empty title="No features" hint="Model returned an empty feature list." />
+            ) : (
+              <GlobalChart data={globalSWR.data} />
+            )}
+          </Card>
+
+          <Card>
+            <CardHeader
+              title="Top contributions"
+              hint="Top features for the selected sample, signed and ranked."
+            />
+            {!active ? (
+              <Empty title="Pick a sample" />
+            ) : (
+              <div className="p-4">
+                <ContributionBars row={active} topK={10} />
+              </div>
+            )}
+          </Card>
+        </div>
+
+        {globalSWR.data ? (
+          <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-[var(--color-subtle)]">
+            sample size {globalSWR.data.sample_size} doses // showing top 15 of {globalSWR.data.features.length} features
+          </div>
+        ) : null}
+      </div>
     </>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div>
+      <div className="text-[10px] font-mono uppercase tracking-[0.14em] text-[var(--color-muted)]">
+        {label}
+      </div>
+      <div className="mt-0.5 text-base font-mono tabular-nums">{value}</div>
+    </div>
   );
 }
