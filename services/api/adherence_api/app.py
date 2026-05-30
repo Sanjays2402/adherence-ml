@@ -23,6 +23,7 @@ from adherence_api.routes import (
     webhooks,
     interventions as interventions_route,
     metrics as metrics_route,
+    outbound as outbound_route,
     policies as policies_route,
 )
 
@@ -84,6 +85,7 @@ def create_app() -> FastAPI:
     app.include_router(audit_route.router)
     app.include_router(interventions_route.router)
     app.include_router(metrics_route.router)
+    app.include_router(outbound_route.router)
     app.include_router(policies_route.router)
     log.info("api ready", version=__version__)
     return app

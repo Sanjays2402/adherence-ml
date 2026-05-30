@@ -180,6 +180,53 @@ class NotificationBudget(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class WebhookSubscription(Base):
+    """Outbound webhook subscription owned by a caller.
+
+    Used to push high-risk intervention recommendations (and other events)
+    to clinic / caregiver / Slack endpoints. Each subscription has a
+    shared HMAC secret used to sign payloads (header
+    ``X-Adherence-Signature: sha256=<hex>``) so receivers can verify the
+    request originated from this service.
+
+    ``event_types_csv`` is a comma-separated allowlist (e.g.
+    ``intervention.recommended,intervention.high_risk``). An empty value
+    means "all events".
+    """
+    __tablename__ = "webhook_subscriptions"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(64), nullable=False, unique=True, index=True)
+    url = Column(String(512), nullable=False)
+    secret = Column(String(128), nullable=False)
+    event_types_csv = Column(String(256), nullable=True)
+    active = Column(Integer, nullable=False, default=1)
+    created_by = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class WebhookDelivery(Base):
+    """One row per attempted outbound webhook POST.
+
+    Records the subscription, event type, request hash, attempt number,
+    HTTP status, latency, and final state (queued/success/failed). Lets
+    operators audit who got notified, find dropped deliveries, and replay
+    via /v1/webhooks/outbound/deliveries.
+    """
+    __tablename__ = "webhook_deliveries"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    subscription_id = Column(Integer, nullable=False, index=True)
+    event_type = Column(String(64), nullable=False, index=True)
+    payload_json = Column(JSON, nullable=False)
+    attempt = Column(Integer, nullable=False, default=0)
+    status_code = Column(Integer, nullable=True)
+    latency_ms = Column(Float, nullable=True)
+    error = Column(Text, nullable=True)
+    state = Column(String(16), nullable=False, default="queued", index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class TrainingRun(Base):
     __tablename__ = "training_runs"
     id = Column(Integer, primary_key=True, autoincrement=True)

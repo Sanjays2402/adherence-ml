@@ -16,6 +16,7 @@ from adherence_api.deps import require_admin, require_service
 from adherence_api.routes.predict import _caller_id  # reuse identity helper
 from adherence_common.audit import record as audit_record
 from adherence_common import deliveries as deliveries_mod
+from adherence_common import outbound as outbound_mod
 from adherence_common.errors import ModelNotFoundError
 from adherence_common.interventions import recommend, summary
 from adherence_common import prom as prom_metrics
@@ -212,6 +213,26 @@ def interventions_endpoint(
         ok=True, predictions=preds,
         extra={"n_interventions": len(out_ivs), "quiet_hours": qh_info},
     )
+    # Fan out high-risk actions to outbound webhook subscribers (best-effort).
+    high_actions = [
+        iv for iv in iv_dicts
+        if not iv.get("suppressed") and not iv.get("deferred_reason")
+        and float(iv.get("score", 0.0)) >= 0.75
+    ]
+    if high_actions:
+        try:
+            outbound_mod.dispatch(
+                "intervention.high_risk",
+                {
+                    "user_id": req.user_id,
+                    "request_id": rid,
+                    "model_version": str(res.get("model_version", "")),
+                    "actions": high_actions,
+                },
+            )
+        except Exception:  # pragma: no cover - never block request path
+            pass
+
     return InterventionResponse(
         user_id=req.user_id,
         model_version=str(res.get("model_version", "")),
