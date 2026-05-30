@@ -22,10 +22,16 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: {{ include "adherence.serviceAccountName" . }}
+      {{- with (include "adherence.podSecurityContext" .) }}
+      {{- . | nindent 6 }}
+      {{- end }}
       containers:
         - name: api
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with (include "adherence.containerSecurityContext" .) }}
+          {{- . | nindent 10 }}
+          {{- end }}
           ports:
             - containerPort: 7421
           envFrom:
@@ -41,6 +47,14 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 20
           resources: {{- toYaml .Values.resources.api | nindent 12 }}
+          {{- with (include "adherence.writableVolumeMounts" .) }}
+          volumeMounts:
+          {{- . | nindent 12 }}
+          {{- end }}
+      {{- with (include "adherence.writableVolumes" .) }}
+      volumes:
+      {{- . | nindent 8 }}
+      {{- end }}
 ---
 apiVersion: v1
 kind: Service

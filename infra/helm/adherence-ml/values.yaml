@@ -161,3 +161,46 @@ monitoring:
   serviceAnnotations:
     enabled: false
     path: /metrics
+
+# Pod and container security hardening, aligned with the Kubernetes Pod
+# Security Standards "restricted" profile (PSA v1.25+). Defaults are safe
+# for production and match what the Dockerfile already prepares:
+#
+#   * containers run as non-root uid 1001 (see infra/docker/Dockerfile)
+#   * read-only root filesystem (writable scratch comes from emptyDir mounts
+#     listed under `writableDirs` below)
+#   * all Linux capabilities dropped
+#   * privilege escalation disabled
+#   * seccomp profile defaults to the container runtime default
+#
+# Disable per environment by setting `securityContext.enabled=false` only if
+# you are running on a cluster that cannot honor these constraints (e.g. an
+# older PSP setup that requires privileged sidecars).
+securityContext:
+  enabled: true
+  pod:
+    runAsNonRoot: true
+    runAsUser: 1001
+    runAsGroup: 1001
+    fsGroup: 1001
+    seccompProfile:
+      type: RuntimeDefault
+  container:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 1001
+    runAsGroup: 1001
+    capabilities:
+      drop:
+        - ALL
+  # Tmpfs mounts attached to every component so a read-only root filesystem
+  # still has scratch space for /tmp and any framework caches. Each entry
+  # becomes an emptyDir volume + matching volumeMount on the container.
+  writableDirs:
+    - name: tmp
+      mountPath: /tmp
+      sizeLimit: 64Mi
+    - name: home-cache
+      mountPath: /home/adherence/.cache
+      sizeLimit: 64Mi

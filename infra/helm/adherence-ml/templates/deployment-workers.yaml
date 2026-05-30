@@ -16,14 +16,28 @@ spec:
         app.kubernetes.io/component: worker
     spec:
       serviceAccountName: {{ include "adherence.serviceAccountName" . }}
+      {{- with (include "adherence.podSecurityContext" .) }}
+      {{- . | nindent 6 }}
+      {{- end }}
       containers:
         - name: worker
           image: "{{ .Values.image.repository }}-worker:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with (include "adherence.containerSecurityContext" .) }}
+          {{- . | nindent 10 }}
+          {{- end }}
           envFrom:
             - configMapRef: { name: {{ include "adherence.fullname" . }}-env }
             - secretRef:    { name: {{ include "adherence.fullname" . }}-secrets }
           resources: {{- toYaml .Values.resources.worker | nindent 12 }}
+          {{- with (include "adherence.writableVolumeMounts" .) }}
+          volumeMounts:
+          {{- . | nindent 12 }}
+          {{- end }}
+      {{- with (include "adherence.writableVolumes" .) }}
+      volumes:
+      {{- . | nindent 8 }}
+      {{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -43,11 +57,25 @@ spec:
         app.kubernetes.io/component: trainer
     spec:
       serviceAccountName: {{ include "adherence.serviceAccountName" . }}
+      {{- with (include "adherence.podSecurityContext" .) }}
+      {{- . | nindent 6 }}
+      {{- end }}
       containers:
         - name: trainer
           image: "{{ .Values.image.repository }}-trainer:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with (include "adherence.containerSecurityContext" .) }}
+          {{- . | nindent 10 }}
+          {{- end }}
           envFrom:
             - configMapRef: { name: {{ include "adherence.fullname" . }}-env }
             - secretRef:    { name: {{ include "adherence.fullname" . }}-secrets }
           resources: {{- toYaml .Values.resources.trainer | nindent 12 }}
+          {{- with (include "adherence.writableVolumeMounts" .) }}
+          volumeMounts:
+          {{- . | nindent 12 }}
+          {{- end }}
+      {{- with (include "adherence.writableVolumes" .) }}
+      volumes:
+      {{- . | nindent 8 }}
+      {{- end }}
