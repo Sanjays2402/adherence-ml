@@ -14,6 +14,12 @@ spec:
       labels:
         app.kubernetes.io/name: {{ include "adherence.name" . }}
         app.kubernetes.io/component: api
+      {{- if .Values.monitoring.podAnnotations.enabled }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: {{ .Values.monitoring.podAnnotations.path | default "/metrics" | quote }}
+        prometheus.io/port: "7421"
+      {{- end }}
     spec:
       serviceAccountName: {{ include "adherence.serviceAccountName" . }}
       containers:
@@ -40,6 +46,12 @@ kind: Service
 metadata:
   name: {{ include "adherence.fullname" . }}-api
   labels: {{- include "adherence.labels" . | nindent 4 }}
+  {{- if .Values.monitoring.serviceAnnotations.enabled }}
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/path: {{ .Values.monitoring.serviceAnnotations.path | default "/metrics" | quote }}
+    prometheus.io/port: {{ .Values.service.port | quote }}
+  {{- end }}
 spec:
   type: {{ .Values.service.type }}
   ports:

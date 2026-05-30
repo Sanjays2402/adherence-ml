@@ -102,3 +102,50 @@ networkPolicy:
     # Ports opened for extraCIDRs entries (applies to all of them).
     extraPorts:
       - { protocol: TCP, port: 443 }
+
+# Prometheus monitoring integration.
+#
+# `serviceMonitor` and `prometheusRule` require the Prometheus Operator CRDs
+# (monitoring.coreos.com/v1) to be installed in the cluster. Disabled by
+# default so vanilla clusters render cleanly. The pod / service annotation
+# toggles target classic Prometheus setups that scrape via kubernetes_sd
+# annotations instead of the Operator.
+#
+# The api Service exposes a named "http" port that maps to containerPort
+# 7421. The /metrics text exposition is rendered by adherence_common.prom
+# and is auth-free by design (lock down with NetworkPolicy in prod).
+monitoring:
+  serviceMonitor:
+    enabled: false
+    # Override release namespace if the Operator watches a separate one.
+    namespace: ""
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    honorLabels: false
+    # Extra labels (e.g. release: kube-prometheus-stack) the Operator's
+    # serviceMonitorSelector matches on.
+    additionalLabels: {}
+    relabelings: []
+    metricRelabelings: []
+  prometheusRule:
+    enabled: false
+    namespace: ""
+    interval: 30s
+    additionalLabels: {}
+    thresholds:
+      errorRate: 0.05
+      errorRateFor: 10m
+      latencyP95Ms: 750
+      latencyFor: 10m
+      noTrafficFor: 15m
+      noModelFor: 10m
+      targetDownFor: 5m
+  podAnnotations:
+    # Adds prometheus.io/scrape annotations on api pods for classic
+    # kubernetes_sd scrape configs. Leave disabled if you use the Operator.
+    enabled: false
+    path: /metrics
+  serviceAnnotations:
+    enabled: false
+    path: /metrics
