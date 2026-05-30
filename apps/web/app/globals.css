@@ -1,21 +1,31 @@
 @import "tailwindcss";
 
 @theme {
-  --color-bg: #0a0a0a;
-  --color-surface: #111111;
-  --color-border: #1f1f1f;
-  --color-border-strong: #2a2a2a;
-  --color-fg: #ededed;
-  --color-muted: #8a8a8a;
-  --color-subtle: #4a4a4a;
-  --color-accent: #7c8cff;
-  --color-success: #4ade80;
-  --color-warn: #fbbf24;
-  --color-danger: #f87171;
-  --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Inter",
+  /* Dark-first ML observability palette. */
+  --color-bg: #0B1220;
+  --color-surface: #0F1A2E;
+  --color-surface-2: #131F36;
+  --color-border: #1C2A44;
+  --color-border-strong: #283A5A;
+  --color-fg: #E5E7EB;
+  --color-muted: #94A3B8;
+  --color-subtle: #475569;
+
+  /* Single electric blue accent. */
+  --color-accent: #3B82F6;
+  --color-accent-soft: rgba(59, 130, 246, 0.16);
+
+  /* Risk tiers and status. */
+  --color-high: #EF4444;     /* red-500 */
+  --color-mid: #F59E0B;      /* amber-500 */
+  --color-low: #10B981;      /* emerald-500 */
+  --color-danger: #EF4444;
+  --color-warn: #F59E0B;
+  --color-success: #10B981;
+
+  --font-sans: var(--font-sans), ui-sans-serif, -apple-system, BlinkMacSystemFont,
     "Segoe UI", Roboto, sans-serif;
-  --font-mono: ui-monospace, "JetBrains Mono", Menlo, Monaco, Consolas,
-    monospace;
+  --font-mono: var(--font-mono), ui-monospace, Menlo, Monaco, Consolas, monospace;
 }
 
 html,
@@ -23,7 +33,15 @@ body {
   background: var(--color-bg);
   color: var(--color-fg);
   font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
   -webkit-font-smoothing: antialiased;
+}
+
+/* Default tabular-nums for any element marked .num and for inputs of numeric data. */
+.num,
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
 }
 
 * {
@@ -31,9 +49,26 @@ body {
 }
 
 ::selection {
-  background: rgba(124, 140, 255, 0.25);
+  background: rgba(59, 130, 246, 0.32);
+  color: var(--color-fg);
 }
 
 .scrollbar-thin::-webkit-scrollbar { width: 8px; height: 8px; }
 .scrollbar-thin::-webkit-scrollbar-thumb { background: var(--color-border-strong); border-radius: 4px; }
 .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+
+/* Risk left-rail strip applied as a 3px inset shadow on the leading edge. */
+.rail-high { box-shadow: inset 3px 0 0 0 var(--color-high); }
+.rail-mid  { box-shadow: inset 3px 0 0 0 var(--color-mid); }
+.rail-low  { box-shadow: inset 3px 0 0 0 var(--color-low); }
+.rail-neutral { box-shadow: inset 3px 0 0 0 var(--color-border-strong); }
+
+/* Subtle grid background for hero strips. */
+.grid-bg {
+  background-image:
+    linear-gradient(var(--color-border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--color-border) 1px, transparent 1px);
+  background-size: 32px 32px;
+  background-position: -1px -1px;
+  background-color: var(--color-surface);
+}
