@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from adherence_common.constants import DEFAULT_RISK_THRESHOLDS
+from adherence_common.risk_policy import resolve as resolve_thresholds
 from adherence_common.logging import get_logger
 from adherence_explain.shap_wrapper import ShapExplainer, reason_codes_for_row
 from adherence_features.engineering import featurize_schedule
@@ -57,11 +58,13 @@ def predict_doses(
     for i, s in enumerate(sched):
         row = feats.iloc[i]
         reasons = reason_codes_for_row(row, shap_vals[i], model.feature_columns, top_k=top_k)
+        p = float(proba[i])
+        thr = resolve_thresholds(user_id, s.get("dose_class"))
         out.append({
             "dose_id": s["dose_id"],
             "scheduled_at": s["scheduled_at"],
-            "miss_probability": float(proba[i]),
-            "risk_tier": _risk_tier(float(proba[i])),
+            "miss_probability": p,
+            "risk_tier": thr.tier(p),
             "reasons": reasons,
         })
     return {"user_id": user_id, "model_version": art.version, "predictions": out}
