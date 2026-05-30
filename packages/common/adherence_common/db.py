@@ -4,7 +4,18 @@ from __future__ import annotations
 from datetime import datetime
 from functools import lru_cache
 
-from sqlalchemy import JSON, Column, DateTime, Float, Integer, String, Text, create_engine, inspect, text
+from sqlalchemy import (
+    JSON,
+    Column,
+    DateTime,
+    Float,
+    Integer,
+    String,
+    Text,
+    create_engine,
+    inspect,
+    text,
+)
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from adherence_common.settings import get_settings
@@ -63,6 +74,31 @@ class PredictionAudit(Base):
     # rows in id order and re-derive each row_hash to detect edits or deletes.
     prev_hash = Column(String(64), nullable=True)
     row_hash = Column(String(64), nullable=True, index=True)
+
+
+class AdminAuditLog(Base):
+    """One row per admin-plane action (token mint, api key create/revoke,
+    model rollback, retention sweep, GDPR erase, etc).
+
+    Distinct from ``prediction_audit`` (which records inference calls) so
+    that compliance can answer 'who changed what' without sifting through
+    high-volume prediction rows. ``target`` is a free-form resource id
+    (api key name, model name, user_id), ``action`` is a short verb
+    (``api_key.create``, ``model.rollback``, ``gdpr.erase``), ``details``
+    is a JSON blob of request-shaped context with secrets already redacted.
+    """
+    __tablename__ = "admin_audit_log"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(String(64), index=True, nullable=False, default="default")
+    request_id = Column(String(32), index=True, nullable=True)
+    action = Column(String(64), index=True, nullable=False)
+    target = Column(String(128), index=True, nullable=True)
+    caller = Column(String(64), index=True, nullable=False)
+    caller_role = Column(String(16), nullable=False)
+    ok = Column(Integer, nullable=False, default=1)
+    error = Column(Text, nullable=True)
+    details = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 
 class DoseOutcome(Base):

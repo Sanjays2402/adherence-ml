@@ -1,12 +1,13 @@
 """Admin endpoints: token mint, model listing."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from adherence_common import api_keys as ak
+from adherence_common.admin_audit import list_admin_actions, record_admin_action
+from adherence_common.auth import mint_jwt
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from adherence_api.deps import SettingsDep, require_admin
-from adherence_common import api_keys as ak
-from adherence_common.auth import mint_jwt
 
 router = APIRouter(prefix="/v1/admin", tags=["admin"])
 
@@ -26,11 +27,36 @@ class TokenResponse(BaseModel):
     expires_in: int
 
 
+def _rid(request: Request | None) -> str | None:
+    if request is None:
+        return None
+    return getattr(request.state, "request_id", None)
+
+
 @router.post("/token", response_model=TokenResponse)
-def mint_token(req: TokenRequest, settings: SettingsDep, _p=Depends(require_admin)) -> TokenResponse:
+def mint_token(
+    req: TokenRequest,
+    settings: SettingsDep,
+    request: Request,
+    p=Depends(require_admin),
+) -> TokenResponse:
     if req.role not in {"admin", "service", "viewer"}:
+        record_admin_action(
+            action="token.mint", principal=p, target=req.subject,
+            details={"role": req.role, "tenant": req.tenant},
+            ok=False, error="invalid role", request_id=_rid(request),
+        )
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid role")
     tok = mint_jwt(req.subject, req.role, settings, tenant=req.tenant)  # type: ignore[arg-type]
+    record_admin_action(
+        action="token.mint", principal=p, target=req.subject,
+        details={
+            "role": req.role,
+            "tenant": req.tenant or settings.default_tenant,
+            "ttl_seconds": settings.jwt_ttl_seconds,
+        },
+        request_id=_rid(request),
+    )
     return TokenResponse(token=tok, expires_in=settings.jwt_ttl_seconds)
 
 
@@ -106,7 +132,11 @@ def _key_row_to_out(row) -> APIKeyOut:
 
 
 @router.post("/api-keys", response_model=APIKeyCreateOut, status_code=201)
-def create_api_key(body: APIKeyCreateIn, p=Depends(require_admin)) -> APIKeyCreateOut:
+def create_api_key(
+    body: APIKeyCreateIn,
+    request: Request,
+    p=Depends(require_admin),
+) -> APIKeyCreateOut:
     try:
         plain, row = ak.create_key(
             name=body.name, role=body.role, scopes=body.scopes,
@@ -114,8 +144,23 @@ def create_api_key(body: APIKeyCreateIn, p=Depends(require_admin)) -> APIKeyCrea
             tenant_id=body.tenant_id,
         )
     except ValueError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        record_admin_action(
+            action="api_key.create", principal=p, target=body.name,
+            details={"role": body.role, "scopes": body.scopes, "tenant_id": body.tenant_id},
+            ok=False, error=str(exc), request_id=_rid(request),
+        )
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     scopes = sorted(s for s in (row.scopes_csv or "").split(",") if s)
+    record_admin_action(
+        action="api_key.create", principal=p, target=row.name,
+        details={
+            "role": row.role, "scopes": scopes,
+            "tenant_id": (row.tenant_id or "default"),
+            "key_prefix": row.key_prefix,
+            "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+        },
+        request_id=_rid(request),
+    )
     return APIKeyCreateOut(
         id=row.id, name=row.name, role=row.role, scopes=scopes,
         tenant_id=(row.tenant_id or "default"),
@@ -131,10 +176,22 @@ def list_api_keys(_p=Depends(require_admin)) -> list[APIKeyOut]:
 
 
 @router.post("/api-keys/{name}/revoke")
-def revoke_api_key(name: str, p=Depends(require_admin)) -> dict:
+def revoke_api_key(
+    name: str,
+    request: Request,
+    p=Depends(require_admin),
+) -> dict:
     ok = ak.revoke_key(name, by=p.get("sub"))
     if not ok:
+        record_admin_action(
+            action="api_key.revoke", principal=p, target=name,
+            ok=False, error="api key not found", request_id=_rid(request),
+        )
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="api key not found")
+    record_admin_action(
+        action="api_key.revoke", principal=p, target=name,
+        request_id=_rid(request),
+    )
     return {"revoked": True, "name": name}
 
 
@@ -158,7 +215,12 @@ class RollbackOut(BaseModel):
 
 
 @router.post("/models/{name}/rollback", response_model=RollbackOut)
-def rollback_model(name: str, body: RollbackIn, p=Depends(require_admin)) -> RollbackOut:
+def rollback_model(
+    name: str,
+    body: RollbackIn,
+    request: Request,
+    p=Depends(require_admin),
+) -> RollbackOut:
     """Revert a model alias to a previously registered version.
 
     Cheap inverse of promote: re-appends the chosen prior entry so it
@@ -166,8 +228,8 @@ def rollback_model(name: str, body: RollbackIn, p=Depends(require_admin)) -> Rol
     in-process inference cache so the next /v1/predict call serves the
     rolled-back model.
     """
-    from adherence_models.registry import ModelRegistry
     from adherence_common.errors import ModelNotFoundError
+    from adherence_models.registry import ModelRegistry
 
     reg = ModelRegistry()
     items = reg.list(name)
@@ -183,13 +245,23 @@ def rollback_model(name: str, body: RollbackIn, p=Depends(require_admin)) -> Rol
             reason=body.reason,
         )
     except ModelNotFoundError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     # Bust the inference cache so the rollback is immediately effective.
     try:
         from adherence_worker.inference import load_model as _lm
         _lm.cache_clear()
     except Exception:  # pragma: no cover
         pass
+    record_admin_action(
+        action="model.rollback", principal=p, target=name,
+        details={
+            "requested_to_version": body.to_version,
+            "rolled_back_to": art.version,
+            "previous_version": prev,
+            "reason": body.reason,
+        },
+        request_id=_rid(request),
+    )
     return RollbackOut(
         name=name,
         rolled_back_to=art.version,
@@ -233,7 +305,8 @@ class RetentionSweepOut(BaseModel):
 @router.post("/audit/retention", response_model=RetentionSweepOut)
 def sweep_retention(
     body: RetentionSweepIn,
-    _p=Depends(require_admin),
+    request: Request,
+    p=Depends(require_admin),
 ) -> RetentionSweepOut:
     """Delete rows past TTL across audit / outcome / delivery tables.
 
@@ -248,7 +321,25 @@ def sweep_retention(
             dry_run=body.dry_run,
         )
     except ValueError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        record_admin_action(
+            action="retention.sweep", principal=p, target=None,
+            details={"ttls_days": body.ttls_days, "tables": body.tables, "dry_run": body.dry_run},
+            ok=False, error=str(exc), request_id=_rid(request),
+        )
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    record_admin_action(
+        action="retention.sweep", principal=p, target=None,
+        details={
+            "ttls_days": body.ttls_days,
+            "tables": body.tables,
+            "dry_run": body.dry_run,
+            "results": [
+                {"table": r.table, "candidates": r.candidates, "deleted": r.deleted}
+                for r in rows
+            ],
+        },
+        request_id=_rid(request),
+    )
     return RetentionSweepOut(
         dry_run=body.dry_run,
         results=[
@@ -261,3 +352,48 @@ def sweep_retention(
             for r in rows
         ],
     )
+
+
+# ---- Admin audit log reader ---------------------------------------------
+
+class AdminAuditRow(BaseModel):
+    id: int
+    tenant_id: str
+    request_id: str | None
+    action: str
+    target: str | None
+    caller: str
+    caller_role: str
+    ok: bool
+    error: str | None
+    details: dict | list | str | int | float | bool | None = None
+    created_at: str | None
+
+
+@router.get("/audit/admin", response_model=list[AdminAuditRow])
+def read_admin_audit(
+    p=Depends(require_admin),
+    action: str | None = None,
+    caller: str | None = None,
+    tenant: str | None = None,
+    limit: int = 100,
+) -> list[AdminAuditRow]:
+    """Return recent admin-plane audit rows for the caller's tenant.
+
+    Admins may pass ``tenant=*`` for a cross-tenant read; any other value
+    is honoured as-is. Non-admin roles cannot reach this route (gated by
+    ``require_admin``).
+    """
+    caller_tenant = p.get("tenant") or "default"
+    if tenant is None:
+        tenant_filter: str | None = caller_tenant
+    elif tenant == "*":
+        tenant_filter = "*"
+    else:
+        if tenant != caller_tenant and p.get("role") != "admin":
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
+        tenant_filter = tenant
+    rows = list_admin_actions(
+        tenant_id=tenant_filter, action=action, caller=caller, limit=limit
+    )
+    return [AdminAuditRow(**r) for r in rows]
