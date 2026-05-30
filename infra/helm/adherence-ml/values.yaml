@@ -23,6 +23,9 @@ env:
   ADHERENCE_LOG_LEVEL: INFO
   ADHERENCE_LOG_FORMAT: json
   ADHERENCE_DRIFT_PSI_THRESHOLD: "0.2"
+  ADHERENCE_SENTRY_ENVIRONMENT: "prod"
+  ADHERENCE_SENTRY_TRACES_SAMPLE_RATE: "0.1"
+  ADHERENCE_SENTRY_PROFILES_SAMPLE_RATE: "0.0"
 
 secrets:
   jwtSecret: "change-me-in-prod-please-32bytes-min"
@@ -30,6 +33,8 @@ secrets:
   dbUrl: "postgresql+psycopg://adherence:adherence@adherence-postgres:5432/adherence"
   redisUrl: "redis://adherence-redis:6379/0"
   mlflowTrackingUri: "http://adherence-mlflow:5000"
+  # Leave empty to disable Sentry. Set to a DSN to ship errors and traces.
+  sentryDsn: ""
 
 resources:
   api:

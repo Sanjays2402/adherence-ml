@@ -10,6 +10,9 @@ stringData:
   ADHERENCE_DB_URL:     {{ .Values.secrets.dbUrl     | quote }}
   ADHERENCE_REDIS_URL:  {{ .Values.secrets.redisUrl  | quote }}
   ADHERENCE_MLFLOW_TRACKING_URI: {{ .Values.secrets.mlflowTrackingUri | quote }}
+{{- if .Values.secrets.sentryDsn }}
+  ADHERENCE_SENTRY_DSN: {{ .Values.secrets.sentryDsn | quote }}
+{{- end }}
 ---
 apiVersion: v1
 kind: ConfigMap

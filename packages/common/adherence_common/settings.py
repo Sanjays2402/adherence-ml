@@ -49,6 +49,21 @@ class Settings(BaseSettings):
     medtracker_base_url: str | None = None
     medtracker_api_key: str | None = None
 
+    # Sentry error tracking. Empty DSN disables shipping. Other knobs are still
+    # parsed so they can be set ahead of enabling Sentry without restart churn.
+    sentry_dsn: str | None = None
+    sentry_environment: str | None = None
+    sentry_release: str | None = None
+    sentry_traces_sample_rate: float = 0.0
+    sentry_profiles_sample_rate: float = 0.0
+
+    @field_validator("sentry_traces_sample_rate", "sentry_profiles_sample_rate")
+    @classmethod
+    def _validate_sample_rate(cls, v: float) -> float:
+        if v < 0.0 or v > 1.0:
+            raise ValueError("sample rate must be between 0.0 and 1.0")
+        return v
+
     # Intervention recommender
     intervention_cooldown_minutes: int = 120
     notification_default_daily_limit: int = 6
