@@ -3,10 +3,10 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -26,7 +26,28 @@ class Settings(BaseSettings):
     # NetworkPolicy + Service, not by bind address.
     api_host: str = "0.0.0.0"  # nosec B104
     api_port: int = 7421
-    api_cors_origins: list[str] = Field(default_factory=lambda: ["*"])
+    # CORS hardening. Defaults are permissive for local dev but the
+    # combination `allow_origins=["*"]` + `api_cors_allow_credentials=true`
+    # is rejected at boot (browsers reject it too, per the Fetch spec).
+    # In `env=prod`, wildcard origins / methods / headers are forbidden so
+    # a misconfigured deploy fails fast instead of silently exposing the
+    # API to any origin. Set explicit allowlists per environment via
+    # `ADHERENCE_API_CORS_ORIGINS="https://app.example.com,https://admin.example.com"`.
+    api_cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["*"])
+    api_cors_methods: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    )
+    api_cors_headers: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: [
+            "Authorization",
+            "Content-Type",
+            "X-API-Key",
+            "X-Request-ID",
+            "Idempotency-Key",
+        ]
+    )
+    api_cors_allow_credentials: bool = False
+    api_cors_max_age_seconds: int = 600
 
     jwt_secret: str = "change-me-please-32-bytes-min-xxxxxxxx"
     jwt_alg: str = "HS256"
@@ -102,6 +123,36 @@ class Settings(BaseSettings):
         if len(v) < 16:
             raise ValueError("jwt_secret must be at least 16 chars")
         return v
+
+    @field_validator("api_cors_origins", "api_cors_methods", "api_cors_headers", mode="before")
+    @classmethod
+    def _split_csv(cls, v):
+        # Allow comma-separated env strings: ADHERENCE_API_CORS_ORIGINS="a,b".
+        if isinstance(v, str):
+            return [item.strip() for item in v.split(",") if item.strip()]
+        return v
+
+    @model_validator(mode="after")
+    def _validate_cors(self) -> Settings:
+        origins = self.api_cors_origins or []
+        wildcard_origin = "*" in origins
+        # Browsers reject credentialed requests when allow_origin is "*";
+        # fail fast at boot rather than ship a broken config.
+        if wildcard_origin and self.api_cors_allow_credentials:
+            raise ValueError(
+                "api_cors_origins=['*'] is incompatible with api_cors_allow_credentials=true; "
+                "set explicit origins or disable credentials"
+            )
+        if self.env == "prod":
+            if wildcard_origin:
+                raise ValueError(
+                    "api_cors_origins must be an explicit allowlist in env=prod (got ['*'])"
+                )
+            if "*" in (self.api_cors_methods or []):
+                raise ValueError("api_cors_methods='*' is forbidden in env=prod")
+            if "*" in (self.api_cors_headers or []):
+                raise ValueError("api_cors_headers='*' is forbidden in env=prod")
+        return self
 
     @field_validator("model_registry")
     @classmethod

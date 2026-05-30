@@ -29,6 +29,15 @@ env:
   # Request body size cap (1 MiB). Tune via bodySizeLimit.maxBytes in values.
   ADHERENCE_BODY_SIZE_LIMIT_ENABLED: "true"
   ADHERENCE_MAX_BODY_BYTES: "1048576"
+  # CORS. In env=prod the settings validator rejects '*' origins/methods/headers,
+  # so override these with explicit allowlists per environment via `--set-string`
+  # or environment-specific values files. Defaults here keep dev clusters working.
+  ADHERENCE_ENV: "prod"
+  ADHERENCE_API_CORS_ORIGINS: "https://adherence.example.com"
+  ADHERENCE_API_CORS_METHODS: "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+  ADHERENCE_API_CORS_HEADERS: "Authorization,Content-Type,X-API-Key,X-Request-ID,Idempotency-Key"
+  ADHERENCE_API_CORS_ALLOW_CREDENTIALS: "false"
+  ADHERENCE_API_CORS_MAX_AGE_SECONDS: "600"
 
 secrets:
   jwtSecret: "change-me-in-prod-please-32bytes-min"

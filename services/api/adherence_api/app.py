@@ -96,8 +96,11 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=s.api_cors_origins,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=s.api_cors_methods,
+        allow_headers=s.api_cors_headers,
+        allow_credentials=s.api_cors_allow_credentials,
+        expose_headers=["X-Request-ID"],
+        max_age=s.api_cors_max_age_seconds,
     )
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(RateLimitMiddleware, settings=s)
