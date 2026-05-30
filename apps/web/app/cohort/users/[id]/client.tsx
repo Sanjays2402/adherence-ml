@@ -133,7 +133,7 @@ export default function UserDetailClient({
           sub={
             isErr(forecast)
               ? "forecast unavailable"
-              : `90% CI ${fmtPct(forecast.overall_adherence_ci_low)} – ${fmtPct(forecast.overall_adherence_ci_high)}`
+              : `90% CI ${fmtPct(forecast.overall_adherence_ci_low)} to ${fmtPct(forecast.overall_adherence_ci_high)}`
           }
         />
         <Stat

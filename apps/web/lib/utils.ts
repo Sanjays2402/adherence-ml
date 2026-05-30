@@ -6,22 +6,22 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function fmtPct(x: number | null | undefined, digits = 1): string {
-  if (x == null || Number.isNaN(x)) return "—";
+  if (x == null || Number.isNaN(x)) return "n/a";
   return `${(x * 100).toFixed(digits)}%`;
 }
 
 export function fmtNum(x: number | null | undefined, digits = 3): string {
-  if (x == null || Number.isNaN(x)) return "—";
+  if (x == null || Number.isNaN(x)) return "n/a";
   return x.toFixed(digits);
 }
 
 export function fmtInt(x: number | null | undefined): string {
-  if (x == null) return "—";
+  if (x == null) return "n/a";
   return new Intl.NumberFormat("en-US").format(x);
 }
 
 export function fmtTime(iso: string | null | undefined): string {
-  if (!iso) return "—";
+  if (!iso) return "n/a";
   try {
     const d = new Date(iso);
     return d.toLocaleString(undefined, {
