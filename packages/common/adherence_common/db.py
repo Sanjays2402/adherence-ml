@@ -57,6 +57,27 @@ class PredictionAudit(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 
+class DoseOutcome(Base):
+    """Ground-truth dose event reported by a partner (e.g. Med-Tracker).
+
+    One row per scheduled dose with the observed outcome. Joined against
+    PredictionAudit (via user_id + dose_id) to compute online metrics such
+    as AUC/Brier/calibration on live traffic.
+    """
+    __tablename__ = "dose_outcomes"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source = Column(String(32), nullable=False, default="medtracker")
+    external_event_id = Column(String(64), unique=True, nullable=True, index=True)
+    user_id = Column(String(64), index=True, nullable=False)
+    dose_id = Column(String(64), index=True, nullable=False)
+    scheduled_at = Column(DateTime, nullable=False, index=True)
+    observed_at = Column(DateTime, nullable=True)
+    outcome = Column(String(16), nullable=False)  # "taken" | "missed" | "late"
+    delay_minutes = Column(Float, nullable=True)
+    notes = Column(Text, nullable=True)
+    received_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
 class TrainingRun(Base):
     __tablename__ = "training_runs"
     id = Column(Integer, primary_key=True, autoincrement=True)
