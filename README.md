@@ -1,5 +1,8 @@
 # adherence-ml
 
+![landing](docs/screenshots/landing.png)
+
+
 A Python service that predicts which medication doses a user is likely to miss in the next 24 hours. Built around an XGBoost + LightGBM ensemble with SHAP-derived per-dose reason codes, drift monitoring, calibration plots, and a small REST surface intended to plug into [Med-Tracker](https://github.com/Sanjays2402) or any similar adherence app.
 
 ## Quickstart
