@@ -1,10 +1,13 @@
 """/predict endpoints (sync inference)."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+import time
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
-from adherence_api.deps import require_service
+from adherence_api.deps import current_principal, require_service
+from adherence_common.audit import record as audit_record
 from adherence_common.errors import ModelNotFoundError
 from adherence_common.schemas import PredictRequest, PredictResponse
 from adherence_worker.inference import predict_doses
@@ -12,12 +15,26 @@ from adherence_worker.inference import predict_doses
 router = APIRouter(prefix="/v1", tags=["predict"])
 
 
+def _caller_id(request: Request, principal: dict[str, str]) -> str:
+    api_key = request.headers.get("x-api-key")
+    if api_key:
+        import hashlib
+        return "k:" + hashlib.sha256(api_key.encode()).hexdigest()[:16]
+    if principal.get("sub"):
+        return "j:" + str(principal["sub"])[:30]
+    return "i:" + (request.client.host if request.client else "unknown")
+
+
 @router.post("/predict", response_model=PredictResponse)
 def predict(
     req: PredictRequest,
+    request: Request,
     model_name: str = Query("default"),
-    _p=Depends(require_service),
+    p=Depends(require_service),
 ) -> PredictResponse:
+    t0 = time.perf_counter()
+    rid = getattr(request.state, "request_id", "")
+    caller = _caller_id(request, p)
     try:
         import pandas as pd
         history = None
@@ -31,8 +48,23 @@ def predict(
             model_name=model_name,
             top_k=req.top_k_reasons,
         )
+        dt = (time.perf_counter() - t0) * 1000.0
+        audit_record(
+            request_id=rid, route="/v1/predict", user_id=req.user_id,
+            caller=caller, caller_role=p.get("role", "service"),
+            model_name=model_name, model_version=str(res.get("model_version", "")),
+            n_doses=len(res.get("predictions", [])),
+            latency_ms=dt, ok=True, predictions=res.get("predictions", []),
+        )
         return PredictResponse(**res)
     except ModelNotFoundError as exc:
+        dt = (time.perf_counter() - t0) * 1000.0
+        audit_record(
+            request_id=rid, route="/v1/predict", user_id=req.user_id,
+            caller=caller, caller_role=p.get("role", "service"),
+            model_name=model_name, model_version="",
+            n_doses=len(req.schedule), latency_ms=dt, ok=False, error=str(exc),
+        )
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
 
 
@@ -61,8 +93,9 @@ class BatchPredictResponse(BaseModel):
 @router.post("/predict/batch", response_model=BatchPredictResponse)
 def predict_batch(
     req: BatchPredictRequest,
+    request: Request,
     model_name: str = Query("default"),
-    _p=Depends(require_service),
+    p=Depends(require_service),
 ) -> BatchPredictResponse:
     """Score upcoming doses for many users in one call.
 
@@ -72,7 +105,10 @@ def predict_batch(
     """
     import pandas as pd
 
-    # Validate model up-front so we fail fast if the registry is empty.
+    rid = getattr(request.state, "request_id", "")
+    caller = _caller_id(request, p)
+    role = p.get("role", "service")
+
     try:
         from adherence_worker.inference import load_model
         art, _model, _explainer = load_model(model_name)
@@ -82,6 +118,7 @@ def predict_batch(
     results: list[BatchPredictItem] = []
     n_ok = 0
     for item in req.items:
+        t0 = time.perf_counter()
         try:
             history = None
             if item.history:
@@ -98,9 +135,25 @@ def predict_batch(
                 )
             )
             n_ok += 1
-        except Exception as exc:  # isolate per-user failures
+            audit_record(
+                request_id=rid, route="/v1/predict/batch", user_id=item.user_id,
+                caller=caller, caller_role=role,
+                model_name=model_name, model_version=str(res.get("model_version", "")),
+                n_doses=len(res.get("predictions", [])),
+                latency_ms=(time.perf_counter() - t0) * 1000.0,
+                ok=True, predictions=res.get("predictions", []),
+            )
+        except Exception as exc:
             results.append(
                 BatchPredictItem(user_id=item.user_id, ok=False, error=str(exc))
+            )
+            audit_record(
+                request_id=rid, route="/v1/predict/batch", user_id=item.user_id,
+                caller=caller, caller_role=role,
+                model_name=model_name, model_version=str(art.version),
+                n_doses=len(item.schedule),
+                latency_ms=(time.perf_counter() - t0) * 1000.0,
+                ok=False, error=str(exc),
             )
 
     return BatchPredictResponse(

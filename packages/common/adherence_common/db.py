@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from functools import lru_cache
 
-from sqlalchemy import JSON, Column, DateTime, Float, Integer, String, create_engine
+from sqlalchemy import JSON, Column, DateTime, Float, Integer, String, Text, create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from adherence_common.settings import get_settings
@@ -25,6 +25,36 @@ class PredictionRow(Base):
     model_version = Column(String(64), nullable=False)
     reasons = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class PredictionAudit(Base):
+    """One row per /v1/predict (or batch item) call.
+
+    Stores enough to debug regressions, compute online metrics later (when
+    ground-truth `taken/missed` events arrive via webhook), and trace a
+    response back to the caller and model version that produced it.
+    """
+    __tablename__ = "prediction_audit"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    request_id = Column(String(32), index=True, nullable=False)
+    route = Column(String(64), nullable=False)
+    user_id = Column(String(64), index=True, nullable=False)
+    caller = Column(String(64), index=True, nullable=False)
+    caller_role = Column(String(16), nullable=False)
+    model_name = Column(String(64), nullable=False)
+    model_version = Column(String(64), nullable=False)
+    shadow_model_name = Column(String(64), nullable=True)
+    shadow_model_version = Column(String(64), nullable=True)
+    n_doses = Column(Integer, nullable=False)
+    mean_miss_prob = Column(Float, nullable=True)
+    max_miss_prob = Column(Float, nullable=True)
+    high_risk_count = Column(Integer, nullable=False, default=0)
+    shadow_max_divergence = Column(Float, nullable=True)
+    latency_ms = Column(Float, nullable=True)
+    ok = Column(Integer, nullable=False, default=1)
+    error = Column(Text, nullable=True)
+    response_summary = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 
 class TrainingRun(Base):

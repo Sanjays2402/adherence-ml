@@ -12,6 +12,7 @@ from adherence_api.middleware import RequestIdMiddleware
 from adherence_api.ratelimit_middleware import RateLimitMiddleware
 from adherence_api.routes import (
     admin,
+    audit as audit_route,
     cohort,
     drift as drift_route,
     explain as explain_route,
@@ -47,6 +48,7 @@ def create_app() -> FastAPI:
             {"name": "webhooks", "description": "Outbound webhook callbacks"},
             {"name": "explain", "description": "Global model explainability (SHAP + gain)"},
             {"name": "cohort", "description": "Population-level risk aggregations"},
+            {"name": "audit", "description": "Prediction audit log (admin)"},
         ],
     )
 
@@ -74,5 +76,6 @@ def create_app() -> FastAPI:
     app.include_router(webhooks.router)
     app.include_router(explain_route.router)
     app.include_router(cohort.router)
+    app.include_router(audit_route.router)
     log.info("api ready", version=__version__)
     return app
