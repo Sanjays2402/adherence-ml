@@ -1,0 +1,32 @@
+# Bandit configuration for adherence-ml SAST in CI.
+#
+# Scope: first-party Python under packages/ and services/. Tests, third-party
+# code, build artifacts, and the redesigned web UI are excluded so findings
+# stay actionable for application engineers.
+#
+# Severity gate is set to MEDIUM via the `-ll` flag at the call site, so this
+# file only configures path exclusions and per-rule skips.
+
+exclude_dirs:
+  - tests
+  - .venv
+  - .git
+  - mlruns
+  - mlruns_sample
+  - web
+  - apps/web
+  - infra
+  - models
+  - clients
+  - .pytest_cache
+  - .ruff_cache
+  - .hypothesis
+
+# Per-rule skips with justification. Keep this list short and reviewed.
+#   B101 assert_used: pytest and internal invariants rely on assert; the
+#         production paths that matter are covered by explicit raises.
+#   B311 random: we use random only for jitter / non-cryptographic sampling;
+#         security-sensitive randomness uses secrets/os.urandom.
+skips:
+  - B101
+  - B311

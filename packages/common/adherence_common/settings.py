@@ -21,7 +21,10 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_format: Literal["json", "console"] = "json"
 
-    api_host: str = "0.0.0.0"
+    # 0.0.0.0 is intentional: this service is designed to run inside a
+    # container/pod where the network boundary is enforced by Helm
+    # NetworkPolicy + Service, not by bind address.
+    api_host: str = "0.0.0.0"  # nosec B104
     api_port: int = 7421
     api_cors_origins: list[str] = Field(default_factory=lambda: ["*"])
 

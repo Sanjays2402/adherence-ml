@@ -120,7 +120,9 @@ def export_user(user_id: str) -> ExportResult:
         for name, model, col, extra in _USER_TABLES:
             stmt = select(model).where(col == user_id)
             if extra is not None:
-                stmt = stmt.where(extra(model))
+                # `extra` here is a local callable that returns a SQLAlchemy
+                # ColumnElement, not Django's QuerySet.extra(). Safe.
+                stmt = stmt.where(extra(model))  # nosec B610
             rows = s.execute(stmt).scalars().all()
             res.tables[name] = [_row_to_dict(r) for r in rows]
             res.counts[name] = len(rows)
@@ -146,7 +148,9 @@ def erase_user(user_id: str) -> EraseResult:
         for name, model, col, extra in _USER_TABLES:
             stmt = delete(model).where(col == user_id)
             if extra is not None:
-                stmt = stmt.where(extra(model))
+                # See note above: `extra` is a SQLAlchemy ColumnElement
+                # builder, not Django's QuerySet.extra(). Safe.
+                stmt = stmt.where(extra(model))  # nosec B610
             result = s.execute(stmt)
             n = int(result.rowcount or 0)
             res.deleted[name] = n

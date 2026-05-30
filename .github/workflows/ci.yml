@@ -36,11 +36,124 @@ jobs:
       - run: uv run mypy packages services || true
       - run: uv run pytest -q
 
+  # Software composition analysis: scan installed Python deps for known CVEs.
+  # Uses pip-audit against the resolved uv environment so the result matches
+  # what we actually ship in the runtime image. Advisory failures are treated
+  # as soft (continue-on-error) so a fresh CVE does not block unrelated PRs,
+  # but the job still surfaces a red X on the run for visibility.
+  pip-audit:
+    needs: gate
+    if: needs.gate.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with: { version: "0.4.27" }
+      - run: uv python install 3.11
+      - run: uv sync --extra dev
+      - name: pip-audit (runtime deps)
+        continue-on-error: true
+        run: |
+          uv pip install pip-audit
+          uv run pip-audit --strict --progress-spinner off --format json --output pip-audit.json || true
+          uv run pip-audit --strict --progress-spinner off
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pip-audit-report
+          path: pip-audit.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+  # Static application security testing for our first-party Python code.
+  # Bandit is scoped to packages/ and services/ (skipping tests/, .venv, web).
+  # Severity threshold is MEDIUM so noisy low-severity findings do not block.
+  bandit:
+    needs: gate
+    if: needs.gate.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with: { version: "0.4.27" }
+      - run: uv python install 3.11
+      - name: bandit SAST
+        run: |
+          uv pip install --system bandit
+          bandit -c bandit.yaml -r packages services -ll -f json -o bandit.json || true
+          bandit -c bandit.yaml -r packages services -ll
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bandit-report
+          path: bandit.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+  # Generate a CycloneDX SBOM for the resolved Python environment so the
+  # supply chain is auditable from CI artifacts. Required for SOC2 / FedRAMP
+  # style attestations and for downstream vuln triage.
+  sbom:
+    needs: gate
+    if: needs.gate.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with: { version: "0.4.27" }
+      - run: uv python install 3.11
+      - run: uv sync --extra dev
+      - name: generate CycloneDX SBOM
+        run: |
+          uv pip install cyclonedx-bom
+          uv run cyclonedx-py environment --output-format JSON --output-file sbom.cdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: sbom.cdx.json
+          retention-days: 90
+
   docker:
-    needs: [gate, test]
+    needs: [gate, test, pip-audit, bandit]
     if: needs.gate.outputs.enabled == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - run: docker build -f infra/docker/Dockerfile -t adherence-ml:ci .
+
+  # Container image vulnerability scan. Runs after docker build so we are
+  # scanning the exact image bytes CI would publish on release.
+  trivy:
+    needs: [gate, docker]
+    if: needs.gate.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - run: docker build -f infra/docker/Dockerfile -t adherence-ml:ci .
+      - name: Trivy filesystem + image scan
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: adherence-ml:ci
+          format: sarif
+          output: trivy.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "0"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-sarif
+          path: trivy.sarif
+          if-no-files-found: ignore
+          retention-days: 30
