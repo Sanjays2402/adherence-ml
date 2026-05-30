@@ -9,6 +9,7 @@ from adherence_common.settings import get_settings
 from adherence_common.telemetry import init_tracing
 from adherence_common.version import __version__
 from adherence_api.middleware import RequestIdMiddleware
+from adherence_api.ratelimit_middleware import RateLimitMiddleware
 from adherence_api.routes import (
     admin,
     cohort,
@@ -56,6 +57,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.add_middleware(RequestIdMiddleware)
+    app.add_middleware(RateLimitMiddleware, settings=s)
 
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor

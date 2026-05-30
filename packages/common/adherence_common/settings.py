@@ -39,6 +39,13 @@ class Settings(BaseSettings):
     drift_webhook_url: str | None = None
     drift_psi_threshold: float = 0.2
 
+    # Rate limiter (per-caller token bucket). Set rate_limit_enabled=false to disable.
+    rate_limit_enabled: bool = True
+    rate_limit_capacity: int = 120        # burst size
+    rate_limit_refill_per_sec: float = 2.0  # sustained req/s
+    rate_limit_admin_capacity: int = 30   # tighter cap for admin role
+    rate_limit_admin_refill_per_sec: float = 0.5
+
     medtracker_base_url: str | None = None
     medtracker_api_key: str | None = None
 
