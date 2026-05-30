@@ -8,11 +8,13 @@ import {
   Bell,
   Lightning,
   Pulse,
+  UsersThree,
 } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
   { href: "/dashboard", label: "Performance", icon: ChartLine },
+  { href: "/cohort", label: "Cohort", icon: UsersThree },
   { href: "/explain", label: "Explainer", icon: Lightbulb },
   { href: "/interventions", label: "Interventions", icon: Bell },
   { href: "/predict", label: "Predict", icon: Lightning },
