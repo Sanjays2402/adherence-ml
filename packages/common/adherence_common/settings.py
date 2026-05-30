@@ -64,6 +64,16 @@ class Settings(BaseSettings):
             raise ValueError("sample rate must be between 0.0 and 1.0")
         return v
 
+    # Security response headers. Off by default for HSTS so dev HTTP works.
+    security_headers_enabled: bool = True
+    hsts_enabled: bool = False
+    hsts_max_age_seconds: int = 63072000  # 2 years
+    hsts_include_subdomains: bool = True
+    hsts_preload: bool = False
+    # CSP is opt-in; the API serves JSON + PNG, and the Next.js front end sets
+    # its own CSP. Set ADHERENCE_CSP_POLICY to enable a server-side default.
+    csp_policy: str = ""
+
     # Intervention recommender
     intervention_cooldown_minutes: int = 120
     notification_default_daily_limit: int = 6

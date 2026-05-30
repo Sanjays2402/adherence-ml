@@ -56,6 +56,7 @@ from adherence_api.routes import (
 from adherence_api.routes import (
     policies as policies_route,
 )
+from adherence_api.security_headers_middleware import SecurityHeadersMiddleware
 
 log = get_logger(__name__)
 
@@ -99,6 +100,7 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(RateLimitMiddleware, settings=s)
+    app.add_middleware(SecurityHeadersMiddleware, settings=s)
 
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
