@@ -9,6 +9,7 @@ from adherence_common.version import __version__
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from adherence_api.body_size_middleware import BodySizeLimitMiddleware
 from adherence_api.middleware import RequestIdMiddleware
 from adherence_api.ratelimit_middleware import RateLimitMiddleware
 from adherence_api.routes import (
@@ -101,6 +102,9 @@ def create_app() -> FastAPI:
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(RateLimitMiddleware, settings=s)
     app.add_middleware(SecurityHeadersMiddleware, settings=s)
+    # Body size cap runs last (closest to the wire) so oversize requests
+    # short-circuit before any other middleware does work on them.
+    app.add_middleware(BodySizeLimitMiddleware, settings=s)
 
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor

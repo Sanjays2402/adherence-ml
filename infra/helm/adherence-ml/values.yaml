@@ -26,6 +26,9 @@ env:
   ADHERENCE_SENTRY_ENVIRONMENT: "prod"
   ADHERENCE_SENTRY_TRACES_SAMPLE_RATE: "0.1"
   ADHERENCE_SENTRY_PROFILES_SAMPLE_RATE: "0.0"
+  # Request body size cap (1 MiB). Tune via bodySizeLimit.maxBytes in values.
+  ADHERENCE_BODY_SIZE_LIMIT_ENABLED: "true"
+  ADHERENCE_MAX_BODY_BYTES: "1048576"
 
 secrets:
   jwtSecret: "change-me-in-prod-please-32bytes-min"

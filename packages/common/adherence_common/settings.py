@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     drift_webhook_url: str | None = None
     drift_psi_threshold: float = 0.2
 
+    # Request body size limit (DoS protection). Returns HTTP 413 when exceeded.
+    # Per-route overrides via the with_max_body() decorator.
+    body_size_limit_enabled: bool = True
+    max_body_bytes: int = 1 * 1024 * 1024  # 1 MiB default; fits ~thousands of doses
+
     # Rate limiter (per-caller token bucket). Set rate_limit_enabled=false to disable.
     rate_limit_enabled: bool = True
     rate_limit_capacity: int = 120        # burst size
