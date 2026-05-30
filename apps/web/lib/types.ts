@@ -91,6 +91,27 @@ export interface CohortRiskResponse {
   top_users: CohortBucket[];
 }
 
+export interface DailyForecast {
+  date: string;
+  n_doses: number;
+  mean_miss_probability: number;
+  projected_adherence_rate: number;
+  high_risk_count: number;
+}
+
+export interface ForecastResponse {
+  user_id: string;
+  model_name: string;
+  model_version: string;
+  horizon_days: number;
+  n_doses_scored: number;
+  overall_projected_adherence_rate: number;
+  overall_adherence_ci_low: number;
+  overall_adherence_ci_high: number;
+  by_day: DailyForecast[];
+  schedule_source: string;
+}
+
 export interface InterventionItem {
   action: string;
   score: number;
