@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     jwt_ttl_seconds: int = 3600
     # Format: role:key,role:key,...
     api_keys: str = ""
+    # Default tenant id stamped onto env-key callers and onto JWTs that
+    # omit a ``tenant`` claim. Set to a stable string per deployment so
+    # legacy callers land in a known tenant bucket rather than NULL.
+    default_tenant: str = "default"
 
     db_url: str = "sqlite:///./adherence.db"
     redis_url: str = "redis://localhost:6379/0"

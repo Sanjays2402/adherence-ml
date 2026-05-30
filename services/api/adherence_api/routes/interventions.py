@@ -233,6 +233,7 @@ def interventions_endpoint(
 
     audit_record(
         request_id=rid, route="/v1/interventions", user_id=req.user_id,
+        tenant_id=p.get("tenant", "default"),
         caller=caller, caller_role=p.get("role", "service"),
         model_name=model_name, model_version=str(res.get("model_version", "")),
         n_doses=len(preds), latency_ms=(time.perf_counter() - t0) * 1000.0,

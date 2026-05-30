@@ -14,6 +14,11 @@ router = APIRouter(prefix="/v1/admin", tags=["admin"])
 class TokenRequest(BaseModel):
     subject: str
     role: str = "viewer"
+    tenant: str | None = Field(
+        None,
+        description="Tenant id to embed in the JWT 'tenant' claim. Defaults to deployment default.",
+        max_length=64,
+    )
 
 
 class TokenResponse(BaseModel):
@@ -25,7 +30,7 @@ class TokenResponse(BaseModel):
 def mint_token(req: TokenRequest, settings: SettingsDep, _p=Depends(require_admin)) -> TokenResponse:
     if req.role not in {"admin", "service", "viewer"}:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid role")
-    tok = mint_jwt(req.subject, req.role, settings)  # type: ignore[arg-type]
+    tok = mint_jwt(req.subject, req.role, settings, tenant=req.tenant)  # type: ignore[arg-type]
     return TokenResponse(token=tok, expires_in=settings.jwt_ttl_seconds)
 
 
@@ -53,6 +58,10 @@ class APIKeyCreateIn(BaseModel):
     scopes: list[str] = Field(default_factory=list)
     note: str | None = Field(None, max_length=512)
     ttl_seconds: int | None = Field(None, ge=60, le=60 * 60 * 24 * 365 * 5)
+    tenant_id: str = Field(
+        "default", min_length=1, max_length=64,
+        description="Tenant the key may operate within. Stamped on every row the key writes.",
+    )
 
 
 class APIKeyCreateOut(BaseModel):
@@ -60,6 +69,7 @@ class APIKeyCreateOut(BaseModel):
     name: str
     role: str
     scopes: list[str]
+    tenant_id: str
     key: str = Field(..., description="Plaintext. Shown ONCE. Not recoverable.")
     key_prefix: str
     expires_at: str | None
@@ -71,6 +81,7 @@ class APIKeyOut(BaseModel):
     name: str
     role: str
     scopes: list[str]
+    tenant_id: str
     key_prefix: str
     note: str | None
     created_by: str | None
@@ -84,6 +95,7 @@ def _key_row_to_out(row) -> APIKeyOut:
     scopes = sorted(s for s in (row.scopes_csv or "").split(",") if s)
     return APIKeyOut(
         id=row.id, name=row.name, role=row.role, scopes=scopes,
+        tenant_id=(row.tenant_id or "default"),
         key_prefix=row.key_prefix, note=row.note,
         created_by=row.created_by,
         created_at=row.created_at.isoformat(),
@@ -99,12 +111,14 @@ def create_api_key(body: APIKeyCreateIn, p=Depends(require_admin)) -> APIKeyCrea
         plain, row = ak.create_key(
             name=body.name, role=body.role, scopes=body.scopes,
             note=body.note, created_by=p.get("sub"), ttl_seconds=body.ttl_seconds,
+            tenant_id=body.tenant_id,
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
     scopes = sorted(s for s in (row.scopes_csv or "").split(",") if s)
     return APIKeyCreateOut(
         id=row.id, name=row.name, role=row.role, scopes=scopes,
+        tenant_id=(row.tenant_id or "default"),
         key=plain, key_prefix=row.key_prefix,
         expires_at=row.expires_at.isoformat() if row.expires_at else None,
         created_at=row.created_at.isoformat(),

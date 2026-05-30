@@ -42,6 +42,7 @@ class APIKeyRecord(Base):
     key_prefix = Column(String(12), nullable=False, index=True)
     key_hash = Column(String(64), nullable=False, unique=True, index=True)
     role = Column(String(16), nullable=False)
+    tenant_id = Column(String(64), nullable=False, default="default", index=True)
     scopes_csv = Column(String(256), nullable=True)
     note = Column(Text, nullable=True)
     created_by = Column(String(64), nullable=True)
@@ -60,6 +61,7 @@ class ResolvedKey:
     role: str
     scopes: frozenset[str]
     record_id: int
+    tenant_id: str = "default"
 
 
 def _hash(plain: str) -> str:
@@ -87,6 +89,7 @@ def create_key(
     note: str | None = None,
     created_by: str | None = None,
     ttl_seconds: int | None = None,
+    tenant_id: str = "default",
 ) -> tuple[str, APIKeyRecord]:
     """Create a key; returns (plaintext, row). Caller must surface plaintext
     to the user immediately. It is never recoverable afterwards.
@@ -112,6 +115,7 @@ def create_key(
             key_prefix=prefix,
             key_hash=key_hash,
             role=role,
+            tenant_id=(tenant_id or "default").strip() or "default",
             scopes_csv=scopes_csv,
             note=note,
             created_by=created_by,
@@ -173,6 +177,7 @@ def resolve_db_key(plain: str) -> ResolvedKey | None:
         resolved = ResolvedKey(
             name=row.name, role=row.role,
             scopes=_parse_scopes(row.scopes_csv), record_id=rid,
+            tenant_id=(row.tenant_id or "default"),
         )
     # best-effort last_used_at; ignore failures
     try:

@@ -24,6 +24,7 @@ from adherence_common.db import PredictionAudit, session
 
 _HASH_FIELDS = (
     "id",
+    "tenant_id",
     "request_id",
     "route",
     "user_id",

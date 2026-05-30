@@ -18,7 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
 
-from adherence_api.deps import require_admin
+from adherence_api.deps import require_admin, require_tenant_access
 
 router = APIRouter(prefix="/v1/audit", tags=["audit"])
 
@@ -27,6 +27,7 @@ class AuditRow(BaseModel):
     id: int
     request_id: str
     route: str
+    tenant_id: str
     user_id: str
     caller: str
     caller_role: str
@@ -123,7 +124,9 @@ def shadow_stats(
 
 def _row_to_model(r: PredictionAudit) -> AuditRow:
     return AuditRow(
-        id=r.id, request_id=r.request_id, route=r.route, user_id=r.user_id,
+        id=r.id, request_id=r.request_id, route=r.route,
+        tenant_id=(r.tenant_id or "default"),
+        user_id=r.user_id,
         caller=r.caller, caller_role=r.caller_role,
         model_name=r.model_name, model_version=r.model_version,
         n_doses=r.n_doses, mean_miss_prob=r.mean_miss_prob,
@@ -140,11 +143,22 @@ def list_audit(
     route: str | None = None,
     model_name: str | None = None,
     only_errors: bool = False,
-    _a=Depends(require_admin),
+    tenant: str | None = Query(
+        None,
+        description=(
+            "Restrict results to this tenant id. Defaults to the caller's tenant."
+            " Admins may pass ``*`` to read across every tenant for compliance."
+        ),
+    ),
+    p=Depends(require_admin),
 ) -> AuditListResponse:
     init_db()
+    target = tenant or str(p.get("tenant") or "default")
+    require_tenant_access(target, p)
     with session() as s:
         q = select(PredictionAudit).order_by(PredictionAudit.id.desc()).limit(limit)
+        if target != "*":
+            q = q.where(PredictionAudit.tenant_id == target)
         if user_id:
             q = q.where(PredictionAudit.user_id == user_id)
         if route:
@@ -260,7 +274,7 @@ def stats(
 # CSV export -----------------------------------------------------------------
 
 _CSV_COLUMNS = (
-    "id", "created_at", "request_id", "route", "user_id", "caller", "caller_role",
+    "id", "created_at", "tenant_id", "request_id", "route", "user_id", "caller", "caller_role",
     "model_name", "model_version", "shadow_model_name", "shadow_model_version",
     "n_doses", "mean_miss_prob", "max_miss_prob", "high_risk_count",
     "shadow_max_divergence", "latency_ms", "ok", "error",
@@ -282,6 +296,7 @@ def _stream_csv(rows: list[PredictionAudit]) -> Iterator[str]:
         vals = [
             r.id,
             r.created_at.isoformat() if r.created_at else "",
+            (r.tenant_id or "default"),
             r.request_id, r.route, r.user_id, r.caller, r.caller_role,
             r.model_name, r.model_version,
             r.shadow_model_name or "", r.shadow_model_version or "",
@@ -305,7 +320,11 @@ def export_csv(
     model_name: str | None = None,
     only_errors: bool = False,
     limit: int = Query(50_000, ge=1, le=500_000),
-    _a=Depends(require_admin),
+    tenant: str | None = Query(
+        None,
+        description="Tenant filter. Defaults to caller tenant; admin may pass '*'.",
+    ),
+    p=Depends(require_admin),
 ) -> StreamingResponse:
     """Stream prediction-audit rows as CSV for compliance / offline analysis.
 
@@ -315,6 +334,8 @@ def export_csv(
     """
     init_db()
     cutoff = datetime.utcnow() - timedelta(hours=window_hours)
+    target = tenant or str(p.get("tenant") or "default")
+    require_tenant_access(target, p)
     with session() as s:
         q = (
             select(PredictionAudit)
@@ -322,6 +343,8 @@ def export_csv(
             .order_by(PredictionAudit.id.asc())
             .limit(limit)
         )
+        if target != "*":
+            q = q.where(PredictionAudit.tenant_id == target)
         if user_id:
             q = q.where(PredictionAudit.user_id == user_id)
         if route:

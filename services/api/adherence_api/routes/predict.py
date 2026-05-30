@@ -125,6 +125,7 @@ def predict(
             SHADOW_DIVERGENCE.observe(shadow_div, shadow_model=shadow)
         audit_record(
             request_id=rid, route="/v1/predict", user_id=req.user_id,
+            tenant_id=p.get("tenant", "default"),
             caller=caller, caller_role=p.get("role", "service"),
             model_name=model_name, model_version=str(res.get("model_version", "")),
             shadow_model_name=shadow if shadow and shadow != model_name else None,
@@ -147,6 +148,7 @@ def predict(
         dt = (time.perf_counter() - t0) * 1000.0
         audit_record(
             request_id=rid, route="/v1/predict", user_id=req.user_id,
+            tenant_id=p.get("tenant", "default"),
             caller=caller, caller_role=p.get("role", "service"),
             model_name=model_name, model_version="",
             n_doses=len(req.schedule), latency_ms=dt, ok=False, error=str(exc),
@@ -223,6 +225,7 @@ def predict_batch(
             n_ok += 1
             audit_record(
                 request_id=rid, route="/v1/predict/batch", user_id=item.user_id,
+                tenant_id=p.get("tenant", "default"),
                 caller=caller, caller_role=role,
                 model_name=model_name, model_version=str(res.get("model_version", "")),
                 n_doses=len(res.get("predictions", [])),
@@ -236,6 +239,7 @@ def predict_batch(
             )
             audit_record(
                 request_id=rid, route="/v1/predict/batch", user_id=item.user_id,
+                tenant_id=p.get("tenant", "default"),
                 caller=caller, caller_role=role,
                 model_name=model_name, model_version=str(art.version),
                 n_doses=len(item.schedule),

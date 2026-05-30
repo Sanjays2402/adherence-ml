@@ -20,10 +20,12 @@ def nightly_predict_all(
     history_provider=None,
     schedule_provider=None,
     model_name: str = "default",
+    tenant_id: str | None = None,
 ) -> dict[str, Any]:
     """Score next-24h doses for users and write to predictions table."""
     s = get_settings()
     init_db()
+    tenant = (tenant_id or s.default_tenant or "default").strip() or "default"
     n_users = 0
     n_rows = 0
     mt = MedTrackerClient(s.medtracker_base_url, s.medtracker_api_key)
@@ -43,6 +45,7 @@ def nightly_predict_all(
             with session() as db:
                 for p in res["predictions"]:
                     db.add(PredictionRow(
+                        tenant_id=tenant,
                         user_id=uid,
                         dose_id=p["dose_id"],
                         scheduled_at=pd.to_datetime(p["scheduled_at"], utc=True).to_pydatetime(),

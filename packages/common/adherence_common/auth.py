@@ -13,11 +13,12 @@ Role = Literal["admin", "service", "viewer"]
 ROLE_RANK: dict[str, int] = {"viewer": 1, "service": 2, "admin": 3}
 
 
-def mint_jwt(subject: str, role: Role, settings: Settings) -> str:
+def mint_jwt(subject: str, role: Role, settings: Settings, *, tenant: str | None = None) -> str:
     now = datetime.now(tz=timezone.utc)
     payload = {
         "sub": subject,
         "role": role,
+        "tenant": (tenant or "default"),
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(seconds=settings.jwt_ttl_seconds)).timestamp()),
         "iss": "adherence-ml",

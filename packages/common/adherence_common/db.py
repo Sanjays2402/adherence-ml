@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from functools import lru_cache
 
-from sqlalchemy import JSON, Column, DateTime, Float, Integer, String, Text, create_engine
+from sqlalchemy import JSON, Column, DateTime, Float, Integer, String, Text, create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from adherence_common.settings import get_settings
@@ -17,6 +17,7 @@ class Base(DeclarativeBase):
 class PredictionRow(Base):
     __tablename__ = "predictions"
     id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(String(64), index=True, nullable=False, default="default")
     user_id = Column(String(64), index=True, nullable=False)
     dose_id = Column(String(64), index=True, nullable=False)
     scheduled_at = Column(DateTime, nullable=False)
@@ -36,6 +37,7 @@ class PredictionAudit(Base):
     """
     __tablename__ = "prediction_audit"
     id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(String(64), index=True, nullable=False, default="default")
     request_id = Column(String(32), index=True, nullable=False)
     route = Column(String(64), nullable=False)
     user_id = Column(String(64), index=True, nullable=False)
@@ -332,8 +334,43 @@ def _session_factory():
     return sessionmaker(bind=_engine(), expire_on_commit=False, future=True)
 
 
+# Lightweight idempotent migrations: tables created by an earlier release
+# do not have the multi-tenant columns. Adding them here lets fresh
+# deployments and in-place upgrades converge without an alembic round-trip.
+# Only handles ``ADD COLUMN`` of nullable / defaulted scalars; anything
+# riskier still goes through alembic.
+_TENANT_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("predictions", "tenant_id"),
+    ("prediction_audit", "tenant_id"),
+    ("api_key_records", "tenant_id"),
+)
+
+
+def _ensure_tenant_columns(engine) -> None:
+    insp = inspect(engine)
+    existing_tables = set(insp.get_table_names())
+    for table, column in _TENANT_COLUMNS:
+        if table not in existing_tables:
+            continue
+        cols = {c["name"] for c in insp.get_columns(table)}
+        if column in cols:
+            continue
+        ddl = (
+            f"ALTER TABLE {table} ADD COLUMN {column} VARCHAR(64) "
+            f"NOT NULL DEFAULT 'default'"
+        )
+        with engine.begin() as conn:
+            conn.execute(text(ddl))
+
+
 def init_db() -> None:
-    Base.metadata.create_all(_engine())
+    engine = _engine()
+    Base.metadata.create_all(engine)
+    try:
+        _ensure_tenant_columns(engine)
+    except Exception:
+        # Migration is best-effort; surface real errors via subsequent queries.
+        pass
 
 
 def session() -> Session:
