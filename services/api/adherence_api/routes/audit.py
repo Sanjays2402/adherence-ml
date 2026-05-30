@@ -7,16 +7,18 @@ without rebuilding from MLflow.
 """
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import datetime, timedelta
-from typing import Any, Iterator
+from typing import Any
 
+from adherence_common.audit_chain import verify_chain
+from adherence_common.db import PredictionAudit, init_db, session
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from adherence_api.deps import require_admin
-from adherence_common.db import PredictionAudit, init_db, session
 
 router = APIRouter(prefix="/v1/audit", tags=["audit"])
 
@@ -153,6 +155,50 @@ def list_audit(
             q = q.where(PredictionAudit.ok == 0)
         rows = list(s.scalars(q))
     return AuditListResponse(n=len(rows), items=[_row_to_model(r) for r in rows])
+
+
+class ChainBreakRow(BaseModel):
+    row_id: int
+    reason: str
+    expected: str | None
+    actual: str | None
+
+
+class AuditVerifyResponse(BaseModel):
+    n_rows: int
+    n_hashed: int
+    ok: bool
+    head_hash: str | None
+    breaks: list[ChainBreakRow]
+
+
+@router.get("/verify", response_model=AuditVerifyResponse)
+def verify(
+    limit: int | None = Query(None, ge=1, le=1_000_000),
+    _a=Depends(require_admin),
+) -> AuditVerifyResponse:
+    """Verify the tamper-evident hash chain over the prediction audit log.
+
+    Re-derives every ``row_hash`` in id order, compares against stored values
+    and ``prev_hash`` links, and returns the first ``breaks`` (empty list when
+    the chain is intact). Use this from a compliance job to detect rows that
+    were edited or deleted out-of-band.
+    """
+    init_db()
+    res = verify_chain(limit=limit)
+    return AuditVerifyResponse(
+        n_rows=res.n_rows,
+        n_hashed=res.n_hashed,
+        ok=res.ok,
+        head_hash=res.head_hash,
+        breaks=[
+            ChainBreakRow(
+                row_id=b.row_id, reason=b.reason,
+                expected=b.expected, actual=b.actual,
+            )
+            for b in res.breaks
+        ],
+    )
 
 
 def _percentile(values: list[float], pct: float) -> float | None:

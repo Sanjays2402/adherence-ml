@@ -6,7 +6,6 @@ log and move on so observability never blocks a clinical-ish request path.
 """
 from __future__ import annotations
 
-import contextlib
 from datetime import datetime
 from typing import Any
 
@@ -111,11 +110,27 @@ def record(
         response_summary=response_summary,
         created_at=datetime.utcnow(),
     )
-    with contextlib.suppress(SQLAlchemyError, Exception):
+    try:
+        # Two-phase write: flush to assign an autoincrement ``id``, then chain
+        # this row to the previous head and recompute its own ``row_hash``.
+        # Done inside one transaction so a failure mid-way rolls everything
+        # back, leaving the chain consistent.
+        from adherence_common.audit_chain import (
+            assign_chain,
+            latest_chain_hash_in_session,
+        )
         with session() as s:
             s.add(row)
+            s.flush()
+            try:
+                prev = latest_chain_hash_in_session(s, exclude_id=row.id)
+                assign_chain(row, prev)
+            except Exception as exc:  # never fail the audit write on chain issues
+                log.warning("audit_chain_failed", error=str(exc), request_id=request_id)
             s.commit()
             return
+    except (SQLAlchemyError, Exception):
+        pass
     log.warning("audit_write_failed", request_id=request_id, route=route)
 
 

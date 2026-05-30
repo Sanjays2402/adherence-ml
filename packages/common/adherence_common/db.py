@@ -55,6 +55,12 @@ class PredictionAudit(Base):
     error = Column(Text, nullable=True)
     response_summary = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    # Tamper-evident hash chain. ``row_hash`` is sha256 over the row's canonical
+    # field tuple plus ``prev_hash`` (the row_hash of the row with the previous
+    # ``id``). A NULL ``prev_hash`` marks the genesis row. A verifier can walk
+    # rows in id order and re-derive each row_hash to detect edits or deletes.
+    prev_hash = Column(String(64), nullable=True)
+    row_hash = Column(String(64), nullable=True, index=True)
 
 
 class DoseOutcome(Base):
