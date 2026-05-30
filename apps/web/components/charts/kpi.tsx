@@ -78,7 +78,7 @@ export function KpiTile({
       </div>
       <div className="flex items-baseline gap-2">
         <span className="text-[28px] leading-none font-mono font-medium tabular-nums tracking-tight">
-          {value == null || Number.isNaN(value) ? "—" : value.toFixed(precision)}
+          {value == null || Number.isNaN(value) ? "n/a" : value.toFixed(precision)}
         </span>
         {unit ? (
           <span className="text-xs font-mono text-[var(--color-muted)]">{unit}</span>

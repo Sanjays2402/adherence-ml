@@ -136,8 +136,9 @@ export default async function UserDetailPage({
   return (
     <>
       <PageHeader
+        eyebrow="cohort // user detail"
         title={userId}
-        description="Live predictions, projected adherence and recent intervention deliveries for this user."
+        description="Per-user predicted miss probability stream, projected N-day adherence, and recent intervention deliveries."
         actions={
           <Link
             href="/cohort"

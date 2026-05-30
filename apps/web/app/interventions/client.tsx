@@ -394,7 +394,7 @@ function CooldownChip({
   }, [until]);
 
   if (!until) {
-    return <MonoChip>{state === "queued" ? "ready" : "—"}</MonoChip>;
+    return <MonoChip>{state === "queued" ? "ready" : "n/a"}</MonoChip>;
   }
   const ms = new Date(until).getTime() - Date.now();
   if (ms <= 0) {

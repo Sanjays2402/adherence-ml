@@ -110,8 +110,9 @@ export default function PredictClient() {
   return (
     <>
       <PageHeader
-        title="Run a prediction"
-        description="Score one user's upcoming doses against the live model. Real /v1/predict call, no mocks."
+        eyebrow="predict // live scoring"
+        title="Inline prediction"
+        description="POST /v1/predict against the served model. Use to spot-check feature wiring, calibration on edge users, or to reproduce an audit row."
       />
 
       <div className="p-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">

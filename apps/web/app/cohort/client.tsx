@@ -22,7 +22,8 @@ import {
   Select,
 } from "@/components/ui/primitives";
 import type { CohortRiskResponse, CohortBucket } from "@/lib/types";
-import { fmtInt, fmtPct } from "@/lib/utils";
+import { fmtInt, fmtPct, riskRailClass } from "@/lib/utils";
+import { MonoChip, LiveDot } from "@/components/ui/primitives";
 
 const fetcher = (url: string, init?: RequestInit) =>
   fetch(url, init).then(async (r) => {
@@ -61,10 +62,15 @@ export default function CohortClient({ initial }: { initial: Initial }) {
   return (
     <>
       <PageHeader
+        eyebrow="cohort // risk rollups"
         title="Cohort risk"
-        description="Population view of miss probability rolled up by dose class, time of day, and per user. Click a user to drill into their predictions and forecast."
+        description="Population miss probability rolled up by dose class, time-of-day slot, and per user. Click a user to drill into per-dose predictions and the N-day adherence forecast."
         actions={
           <div className="flex items-center gap-2">
+            <MonoChip>
+              <LiveDot />
+              60s poll
+            </MonoChip>
             <Select
               value={topN}
               onChange={(e) => setTopN(Number(e.target.value))}
@@ -103,12 +109,12 @@ export default function CohortClient({ initial }: { initial: Initial }) {
               <Stat
                 label="Total doses"
                 value={fmtInt(data.total_doses)}
-                sub={`${data.by_dose_class.length} classes`}
+                sub={`${data.by_dose_class.length} dose classes`}
               />
               <Stat
-                label="Mean risk"
+                label="Mean p(miss)"
                 value={fmtPct(data.overall_mean_risk)}
-                sub="across cohort"
+                sub="cohort weighted"
               />
               <Stat
                 label="High risk users"
@@ -125,7 +131,7 @@ export default function CohortClient({ initial }: { initial: Initial }) {
                     {data.model_name}
                   </span>
                 }
-                sub={data.model_version}
+                sub={`v${data.model_version}`}
               />
             </>
           ) : null}
@@ -229,12 +235,12 @@ function BucketRow({ bucket: b }: { bucket: CohortBucket }) {
   const pct = Math.min(1, b.mean_miss_probability);
   const tone =
     b.mean_miss_probability >= 0.7
-      ? "var(--color-danger)"
+      ? "var(--color-high)"
       : b.mean_miss_probability >= 0.4
-        ? "var(--color-warn)"
-        : "var(--color-success)";
+        ? "var(--color-mid)"
+        : "var(--color-low)";
   return (
-    <div className="px-4 py-2.5">
+    <div className={`pl-4 pr-4 py-2.5 ${riskRailClass(b.mean_miss_probability)}`}>
       <div className="flex items-center justify-between gap-3">
         <div className="text-sm font-medium truncate">{b.key}</div>
         <div className="flex items-center gap-3 shrink-0 text-xs tabular-nums">
@@ -264,10 +270,10 @@ function UserRow({ bucket: u }: { bucket: CohortBucket }) {
   return (
     <Link
       href={`/cohort/users/${encodeURIComponent(u.key)}`}
-      className="grid grid-cols-12 gap-2 px-4 py-2.5 items-center hover:bg-[var(--color-border)]/30 transition-colors"
+      className={`grid grid-cols-12 gap-2 pl-4 pr-4 py-2.5 items-center hover:bg-[var(--color-border)]/30 transition-colors ${riskRailClass(u.mean_miss_probability)}`}
     >
       <div className="col-span-5 min-w-0">
-        <div className="text-sm font-mono truncate">{u.key}</div>
+        <div className="text-[13px] font-mono truncate">{u.key}</div>
       </div>
       <div className="col-span-2 text-right text-xs tabular-nums text-[var(--color-muted)]">
         {fmtInt(u.n_doses)}

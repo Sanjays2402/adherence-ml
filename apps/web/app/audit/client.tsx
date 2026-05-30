@@ -134,8 +134,9 @@ export default function AuditClient({
   return (
     <>
       <PageHeader
+        eyebrow="audit // call log"
         title="Audit"
-        description="Live prediction audit log. Filter by user, route, model, or errors. Counters refresh every 30 seconds."
+        description="Per-call audit stream: route, caller, model, latency, miss-prob aggregates. Filter on user, model, route, or error. Counters refresh every 30s."
         actions={
           <div className="flex items-center gap-2">
             <Select
