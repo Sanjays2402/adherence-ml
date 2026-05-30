@@ -248,6 +248,59 @@ class UserMute(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class Experiment(Base):
+    """Definition of an A/B (or multi-arm) experiment.
+
+    Variants and their traffic weights are stored as JSON. Assignment is
+    deterministic per user (sha256 of ``salt + user_id`` mod weight sum)
+    so the same user always lands in the same bucket across processes
+    and restarts. ``state`` is one of ``draft``, ``running``, ``paused``,
+    ``stopped``.
+    """
+    __tablename__ = "experiments"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    key = Column(String(64), unique=True, nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    variants_json = Column(JSON, nullable=False)
+    salt = Column(String(64), nullable=False)
+    state = Column(String(16), nullable=False, default="running", index=True)
+    created_by = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class ExperimentExposure(Base):
+    """One row per (experiment, user, variant) first-touch exposure.
+
+    Deduplicated on (experiment_key, user_id) so a user appears once per
+    experiment regardless of how many times they are scored.
+    """
+    __tablename__ = "experiment_exposures"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    experiment_key = Column(String(64), index=True, nullable=False)
+    user_id = Column(String(64), index=True, nullable=False)
+    variant = Column(String(64), index=True, nullable=False)
+    context_json = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class ExperimentEvent(Base):
+    """Conversion / metric event tied to an experiment exposure.
+
+    ``value`` is optional and lets callers log continuous metrics (e.g.
+    latency, dose delay) alongside the boolean ``converted`` flag.
+    """
+    __tablename__ = "experiment_events"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    experiment_key = Column(String(64), index=True, nullable=False)
+    user_id = Column(String(64), index=True, nullable=False)
+    variant = Column(String(64), index=True, nullable=False)
+    event_name = Column(String(64), index=True, nullable=False)
+    value = Column(Float, nullable=True)
+    metadata_json = Column("metadata", JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
 class TrainingRun(Base):
     __tablename__ = "training_runs"
     id = Column(Integer, primary_key=True, autoincrement=True)
