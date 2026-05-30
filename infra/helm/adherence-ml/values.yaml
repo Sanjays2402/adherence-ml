@@ -60,3 +60,45 @@ podDisruptionBudget:
 serviceAccount:
   create: true
   name: ""
+
+# NetworkPolicy lockdown for api / worker / trainer pods.
+# Disabled by default so existing clusters without a CNI that enforces
+# NetworkPolicy (or without these dependency labels) keep working. Enable
+# in prod after confirming Postgres / Redis / MLflow pod labels match.
+networkPolicy:
+  enabled: false
+  # Namespace labels that should be allowed to scrape Prometheus /metrics on the api.
+  prometheusNamespaceLabels:
+    name: monitoring
+  api:
+    # Same-chart pods (worker, trainer) can hit the api on 7421 when true.
+    allowSameChart: true
+    # Allow Prometheus scrape from prometheusNamespaceLabels above.
+    allowPrometheusScrape: true
+    # Pod-label selectors of ingress controllers / clients allowed to reach api:7421.
+    fromLabels:
+      - app.kubernetes.io/name: ingress-nginx
+    # Optional namespace-level allowlist for clients in arbitrary pods.
+    fromNamespaceLabels: []
+  egress:
+    # In-cluster Postgres pod labels + port.
+    postgres:
+      podLabels:
+        app.kubernetes.io/name: postgresql
+      port: 5432
+    # In-cluster Redis pod labels + port.
+    redis:
+      podLabels:
+        app.kubernetes.io/name: redis
+      port: 6379
+    # In-cluster MLflow pod labels + port.
+    mlflow:
+      podLabels:
+        app.kubernetes.io/name: mlflow
+      port: 5000
+    # Extra CIDR egress allowlist for SaaS deps (Sentry ingest, OTLP collector, med-tracker).
+    # Each entry: { cidr: "1.2.3.0/24", except: ["1.2.3.4/32"] }
+    extraCIDRs: []
+    # Ports opened for extraCIDRs entries (applies to all of them).
+    extraPorts:
+      - { protocol: TCP, port: 443 }

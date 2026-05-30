@@ -1,0 +1,230 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- /*
+  Default-deny + explicit allow NetworkPolicies for the adherence-ml chart.
+  Pods are selected by app.kubernetes.io/name and component.
+  Ingress allowlist:
+    - api: from pods carrying any of .Values.networkPolicy.api.fromLabels
+           (e.g. ingress-nginx), plus optional .Values.networkPolicy.api.fromNamespaceLabels,
+           plus other adherence components (worker scrape / sidecar fanout) when allowSameChart=true.
+    - worker / trainer: from the api component only (same-chart) plus Prometheus scrape if enabled.
+  Egress allowlist:
+    - DNS (UDP/TCP 53) to kube-dns
+    - In-cluster Postgres, Redis, MLflow via .Values.networkPolicy.egress.* selectors
+    - Optional .Values.networkPolicy.egress.extraCIDRs for SaaS deps (Sentry, OTLP collector)
+*/}}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "adherence.fullname" . }}-api
+  labels: {{- include "adherence.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "adherence.name" . }}
+      app.kubernetes.io/component: api
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    {{- with .Values.networkPolicy.api.fromLabels }}
+    - from:
+        {{- range . }}
+        - podSelector:
+            matchLabels: {{- toYaml . | nindent 14 }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: 7421
+    {{- end }}
+    {{- with .Values.networkPolicy.api.fromNamespaceLabels }}
+    - from:
+        {{- range . }}
+        - namespaceSelector:
+            matchLabels: {{- toYaml . | nindent 14 }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: 7421
+    {{- end }}
+    {{- if .Values.networkPolicy.api.allowSameChart }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "adherence.name" . }}
+      ports:
+        - protocol: TCP
+          port: 7421
+    {{- end }}
+    {{- if .Values.networkPolicy.api.allowPrometheusScrape }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.prometheusNamespaceLabels | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 7421
+    {{- end }}
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- with .Values.networkPolicy.egress.postgres }}
+    - to:
+        - podSelector:
+            matchLabels: {{- toYaml .podLabels | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .port }}
+    {{- end }}
+    {{- with .Values.networkPolicy.egress.redis }}
+    - to:
+        - podSelector:
+            matchLabels: {{- toYaml .podLabels | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .port }}
+    {{- end }}
+    {{- with .Values.networkPolicy.egress.mlflow }}
+    - to:
+        - podSelector:
+            matchLabels: {{- toYaml .podLabels | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .port }}
+    {{- end }}
+    {{- with .Values.networkPolicy.egress.extraCIDRs }}
+    - to:
+        {{- range . }}
+        - ipBlock:
+            cidr: {{ .cidr }}
+            {{- with .except }}
+            except: {{- toYaml . | nindent 14 }}
+            {{- end }}
+        {{- end }}
+      ports:
+        {{- range $.Values.networkPolicy.egress.extraPorts }}
+        - protocol: {{ .protocol | default "TCP" }}
+          port: {{ .port }}
+        {{- end }}
+    {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "adherence.fullname" . }}-worker
+  labels: {{- include "adherence.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "adherence.name" . }}
+      app.kubernetes.io/component: worker
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "adherence.name" . }}
+              app.kubernetes.io/component: api
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- with .Values.networkPolicy.egress.postgres }}
+    - to:
+        - podSelector:
+            matchLabels: {{- toYaml .podLabels | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .port }}
+    {{- end }}
+    {{- with .Values.networkPolicy.egress.redis }}
+    - to:
+        - podSelector:
+            matchLabels: {{- toYaml .podLabels | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .port }}
+    {{- end }}
+    {{- with .Values.networkPolicy.egress.mlflow }}
+    - to:
+        - podSelector:
+            matchLabels: {{- toYaml .podLabels | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .port }}
+    {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "adherence.fullname" . }}-trainer
+  labels: {{- include "adherence.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "adherence.name" . }}
+      app.kubernetes.io/component: trainer
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- with .Values.networkPolicy.egress.postgres }}
+    - to:
+        - podSelector:
+            matchLabels: {{- toYaml .podLabels | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .port }}
+    {{- end }}
+    {{- with .Values.networkPolicy.egress.mlflow }}
+    - to:
+        - podSelector:
+            matchLabels: {{- toYaml .podLabels | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .port }}
+    {{- end }}
+    {{- with .Values.networkPolicy.egress.extraCIDRs }}
+    - to:
+        {{- range . }}
+        - ipBlock:
+            cidr: {{ .cidr }}
+            {{- with .except }}
+            except: {{- toYaml . | nindent 14 }}
+            {{- end }}
+        {{- end }}
+      ports:
+        {{- range $.Values.networkPolicy.egress.extraPorts }}
+        - protocol: {{ .protocol | default "TCP" }}
+          port: {{ .port }}
+        {{- end }}
+    {{- end }}
+{{- end }}
