@@ -22,6 +22,36 @@ from adherence_models.registry import ModelRegistry
 log = get_logger(__name__)
 
 
+def _calibration_reference(y, p, n_bins: int = 10) -> str:
+    """Return reliability bins encoded as a compact JSON string.
+
+    Schema: ``{"n_bins": int, "bins": [{"p_lo", "p_hi", "n",
+    "mean_pred", "miss_rate"}, ...]}``. Stored as a string so it round-
+    trips cleanly through the registry index even when consumers expect
+    ``dict[str, float]`` shaped metrics.
+    """
+    import json
+
+    y_list = [int(v) for v in y]
+    p_list = [float(v) for v in p]
+    total = len(p_list)
+    bins = []
+    for b in range(n_bins):
+        lo = b / n_bins
+        hi = (b + 1) / n_bins
+        idx = [i for i, pi in enumerate(p_list)
+               if (pi >= lo and pi < hi) or (b == n_bins - 1 and pi == 1.0)]
+        if not idx:
+            bins.append({"p_lo": lo, "p_hi": hi, "n": 0,
+                         "mean_pred": 0.0, "miss_rate": 0.0})
+            continue
+        mp = sum(p_list[i] for i in idx) / len(idx)
+        mr = sum(y_list[i] for i in idx) / len(idx)
+        bins.append({"p_lo": lo, "p_hi": hi, "n": len(idx),
+                     "mean_pred": mp, "miss_rate": mr})
+    return json.dumps({"n_bins": n_bins, "total": total, "bins": bins})
+
+
 def _load_events(
     synthetic: bool,
     events_path: str | None,
@@ -92,6 +122,18 @@ def run_training(
             eval_metrics["auc_cv_folds"] = float(len(cv_aucs))
 
         metrics = {**base_metrics, **eval_metrics, "train_seconds": float(time.time() - t0)}
+
+        # Persist a reliability curve as the calibration reference so the
+        # /v1/metrics/calibration-drift endpoint can detect post-deploy
+        # drift bin-by-bin. We keep it small (10 bins, scalars only) so
+        # it fits comfortably in the registry index JSON.
+        try:
+            cal_ref = _calibration_reference(
+                valid_df["label"].to_numpy(), valid_proba, n_bins=10
+            )
+            metrics["calibration_bins_json"] = cal_ref
+        except Exception as exc:  # pragma: no cover
+            log.warning("calibration reference failed", error=str(exc))
 
         reg = ModelRegistry()
         art = reg.save(register_as, model, metrics=metrics, notes="trainer.pipeline")

@@ -374,3 +374,154 @@ def online_metrics(
         calibration=cal,
         by_model=by_model,
     )
+
+
+# ---- Calibration drift -----------------------------------------------------
+
+class CalibrationDriftBin(BaseModel):
+    p_lo: float
+    p_hi: float
+    n_live: int
+    n_ref: int
+    mean_pred_live: float
+    mean_pred_ref: float
+    miss_rate_live: float
+    miss_rate_ref: float
+    delta: float  # |miss_rate_live - miss_rate_ref|
+
+
+class CalibrationDriftResponse(BaseModel):
+    model_name: str
+    model_version: str
+    window_hours: int
+    n_matched: int
+    n_bins: int
+    ece_live: float | None
+    ece_ref: float | None
+    ece_delta: float | None
+    max_bin_delta: float | None
+    alert: bool
+    alert_reasons: list[str]
+    bins: list[CalibrationDriftBin]
+
+
+def _load_reference_bins(model_name: str) -> tuple[str, list[dict]] | None:
+    """Return (version, bins) from the latest artifact for ``model_name``
+    that carries a ``calibration_bins_json`` metric, or None.
+    """
+    import json
+    from adherence_models.registry import ModelRegistry
+    reg = ModelRegistry()
+    items = reg.list(model_name)
+    if not items:
+        return None
+    for it in reversed(items):
+        raw = it.metrics.get("calibration_bins_json")
+        if not raw:
+            continue
+        try:
+            parsed = json.loads(raw) if isinstance(raw, str) else raw
+            bins = parsed.get("bins", [])
+            if bins:
+                return it.version, bins
+        except Exception:
+            continue
+    return None
+
+
+@router.get("/calibration-drift", response_model=CalibrationDriftResponse)
+def calibration_drift(
+    model_name: str = Query("default"),
+    window_hours: int = Query(168, ge=1, le=24 * 90),
+    n_bins: int = Query(10, ge=2, le=50),
+    bin_alert_delta: float = Query(
+        0.1, ge=0.0, le=1.0,
+        description="Alert if any bin's |live miss_rate - reference miss_rate| exceeds this.",
+    ),
+    ece_alert_delta: float = Query(
+        0.05, ge=0.0, le=1.0,
+        description="Alert if |live ECE - reference ECE| exceeds this.",
+    ),
+    _a=Depends(require_admin),
+) -> CalibrationDriftResponse:
+    """Compare live calibration bins against the reference reliability curve
+    captured at training time. Fires an alert when ECE drift or any
+    individual bin's miss-rate gap exceeds the configured threshold.
+    """
+    ref = _load_reference_bins(model_name)
+    if ref is None:
+        from fastapi import HTTPException, status as st
+        raise HTTPException(
+            st.HTTP_404_NOT_FOUND,
+            detail=(
+                f"no calibration reference stored for model {model_name!r}; "
+                "retrain to capture reliability bins"
+            ),
+        )
+    ref_version, ref_bins = ref
+
+    rows, _n_preds = _collect(window_hours, model_name)
+    if not rows:
+        return CalibrationDriftResponse(
+            model_name=model_name, model_version=ref_version,
+            window_hours=window_hours, n_matched=0, n_bins=n_bins,
+            ece_live=None, ece_ref=None, ece_delta=None,
+            max_bin_delta=None, alert=False,
+            alert_reasons=["no_matched_outcomes"], bins=[],
+        )
+    y = [r[2] for r in rows]
+    p = [r[1] for r in rows]
+    live_cal, ece_live = _calibration(y, p, n_bins=n_bins)
+
+    # Reference may have been computed at a different n_bins; we align by
+    # taking the reference bin whose midpoint falls inside the live bin's
+    # interval. If counts mismatch, fall back to per-index zip on the
+    # overlap.
+    def _ref_at(p_lo: float, p_hi: float) -> dict:
+        for rb in ref_bins:
+            mid = 0.5 * (rb["p_lo"] + rb["p_hi"])
+            if p_lo <= mid < p_hi or (p_hi >= 1.0 and mid <= 1.0 and mid >= p_lo):
+                return rb
+        return {"n": 0, "mean_pred": 0.0, "miss_rate": 0.0}
+
+    # ECE of the reference curve directly from its stored bin weights.
+    ref_total = sum(int(b.get("n", 0)) for b in ref_bins)
+    if ref_total > 0:
+        ece_ref = sum(
+            (int(b["n"]) / ref_total) * abs(float(b["mean_pred"]) - float(b["miss_rate"]))
+            for b in ref_bins if int(b.get("n", 0)) > 0
+        )
+    else:
+        ece_ref = None
+
+    out_bins: list[CalibrationDriftBin] = []
+    max_delta = 0.0
+    for cb in live_cal:
+        rb = _ref_at(cb.p_lo, cb.p_hi)
+        delta = abs(cb.miss_rate - float(rb.get("miss_rate", 0.0)))
+        if int(rb.get("n", 0)) > 0 and cb.n > 0:
+            max_delta = max(max_delta, delta)
+        out_bins.append(CalibrationDriftBin(
+            p_lo=cb.p_lo, p_hi=cb.p_hi,
+            n_live=cb.n, n_ref=int(rb.get("n", 0)),
+            mean_pred_live=cb.mean_pred,
+            mean_pred_ref=float(rb.get("mean_pred", 0.0)),
+            miss_rate_live=cb.miss_rate,
+            miss_rate_ref=float(rb.get("miss_rate", 0.0)),
+            delta=delta,
+        ))
+
+    ece_delta = abs(ece_live - ece_ref) if ece_ref is not None else None
+    reasons: list[str] = []
+    if max_delta > bin_alert_delta:
+        reasons.append(f"max_bin_delta>{bin_alert_delta:g}")
+    if ece_delta is not None and ece_delta > ece_alert_delta:
+        reasons.append(f"ece_delta>{ece_alert_delta:g}")
+    return CalibrationDriftResponse(
+        model_name=model_name, model_version=ref_version,
+        window_hours=window_hours, n_matched=len(rows), n_bins=n_bins,
+        ece_live=ece_live, ece_ref=ece_ref, ece_delta=ece_delta,
+        max_bin_delta=max_delta if rows else None,
+        alert=bool(reasons), alert_reasons=reasons,
+        bins=out_bins,
+    )
