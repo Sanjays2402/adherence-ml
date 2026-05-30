@@ -227,6 +227,27 @@ class WebhookDelivery(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class UserMute(Base):
+    """Per-user opt-out from intervention delivery.
+
+    Distinct from QuietHoursPolicy (which is a recurring local-time window):
+    a mute is a one-shot block valid until ``muted_until``. Use cases
+    include a clinician acknowledging a hospital stay, a user requesting
+    a vacation pause, or post-incident cool-down after a false alarm.
+
+    When ``muted_until`` is in the past the row is treated as inactive
+    but kept around so we can audit who set it and why.
+    """
+    __tablename__ = "user_mutes"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(64), nullable=False, unique=True, index=True)
+    muted_until = Column(DateTime, nullable=False, index=True)
+    reason = Column(Text, nullable=True)
+    set_by = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class TrainingRun(Base):
     __tablename__ = "training_runs"
     id = Column(Integer, primary_key=True, autoincrement=True)

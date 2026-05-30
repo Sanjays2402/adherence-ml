@@ -17,6 +17,7 @@ from adherence_api.routes import (
     drift as drift_route,
     explain as explain_route,
     health,
+    mutes as mutes_route,
     plots,
     predict,
     train,
@@ -55,6 +56,7 @@ def create_app() -> FastAPI:
             {"name": "audit", "description": "Prediction audit log (admin)"},
             {"name": "interventions", "description": "Recommended caregiver/app actions per dose"},
             {"name": "policies", "description": "Admin risk-tier and quiet-hours policies"},
+            {"name": "mutes", "description": "Per-user intervention mute (TTL opt-out)"},
         ],
     )
 
@@ -87,5 +89,6 @@ def create_app() -> FastAPI:
     app.include_router(metrics_route.router)
     app.include_router(outbound_route.router)
     app.include_router(policies_route.router)
+    app.include_router(mutes_route.router)
     log.info("api ready", version=__version__)
     return app

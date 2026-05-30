@@ -193,6 +193,11 @@ INTERVENTIONS_BUDGET_SUPPRESSED = REGISTRY.counter(
     "Interventions deferred because the user's daily notification budget was exhausted.",
     labelnames=("action",),
 )
+INTERVENTIONS_MUTE_SUPPRESSED = REGISTRY.counter(
+    "adherence_intervention_mute_suppressed_total",
+    "Interventions suppressed because the user has an active mute (TTL opt-out).",
+    labelnames=("action",),
+)
 INTERVENTIONS_ACKED = REGISTRY.counter(
     "adherence_intervention_acked_total",
     "Intervention deliveries acked by clients, by terminal state.",

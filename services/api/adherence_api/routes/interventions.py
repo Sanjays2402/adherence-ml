@@ -19,6 +19,7 @@ from adherence_common import deliveries as deliveries_mod
 from adherence_common import outbound as outbound_mod
 from adherence_common.errors import ModelNotFoundError
 from adherence_common.interventions import recommend, summary
+from adherence_common import mutes as mutes_mod
 from adherence_common import prom as prom_metrics
 from adherence_common.quiet_hours import apply as apply_quiet_hours, from_row as qh_from_row
 from adherence_common.schemas import PredictRequest, PredictResponse
@@ -49,6 +50,12 @@ class BudgetInfo(BaseModel):
     exhausted: bool
 
 
+class MuteInfo(BaseModel):
+    active: bool
+    muted_until: str | None = None
+    reason: str | None = None
+
+
 class InterventionResponse(BaseModel):
     user_id: str
     model_version: str
@@ -57,6 +64,7 @@ class InterventionResponse(BaseModel):
     summary: dict[str, Any] = Field(default_factory=dict)
     quiet_hours: dict[str, Any] = Field(default_factory=dict)
     budget: BudgetInfo | None = None
+    mute: MuteInfo | None = None
     cooldown_suppressed: list[dict[str, Any]] = Field(default_factory=list)
 
 
@@ -95,6 +103,24 @@ def interventions_endpoint(
 
     ivs = recommend(enriched, max_actions=max_actions)
     iv_dicts = [iv.to_dict() for iv in ivs]
+
+    # User mute -- a TTL opt-out that suppresses *all* delivery without
+    # affecting predictions. We still surface the would-be actions so the
+    # caller can render "3 actions held while user is muted" UI.
+    mute_state = mutes_mod.is_muted(req.user_id)
+    mute_block: MuteInfo | None = None
+    if mute_state is not None:
+        mute_block = MuteInfo(
+            active=True,
+            muted_until=mute_state.muted_until.isoformat(),
+            reason=mute_state.reason,
+        )
+        for iv in iv_dicts:
+            iv["suppressed"] = True
+            iv["suppress_reason"] = "user_muted"
+            prom_metrics.INTERVENTIONS_MUTE_SUPPRESSED.inc(
+                action=iv.get("action", ""),
+            )
     qh_info: dict[str, Any] = {"applied": False}
     if respect_quiet_hours:
         from sqlalchemy import select
@@ -241,6 +267,7 @@ def interventions_endpoint(
         summary=summary(ivs),
         quiet_hours=qh_info,
         budget=budget_block,
+        mute=mute_block,
         cooldown_suppressed=cooldown_dropped,
     )
 
