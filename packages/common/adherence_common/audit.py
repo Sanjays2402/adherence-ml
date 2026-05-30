@@ -63,19 +63,28 @@ def record(
     shadow_max_divergence: float | None = None,
     error: str | None = None,
     extra: dict[str, Any] | None = None,
+    schedule_meta: dict[str, dict[str, Any]] | None = None,
 ) -> None:
     _ensure_table()
     stats = summarize(predictions or [])
+    sm = schedule_meta or {}
     # Slim per-dose snapshot for online metrics (join against dose_outcomes).
-    slim_preds = [
-        {
-            "dose_id": p.get("dose_id"),
+    slim_preds = []
+    for p in (predictions or []):
+        did = p.get("dose_id")
+        if did is None:
+            continue
+        meta = sm.get(did, {})
+        entry = {
+            "dose_id": did,
             "miss_probability": float(p.get("miss_probability", 0.0)),
             "risk_tier": p.get("risk_tier"),
         }
-        for p in (predictions or [])
-        if p.get("dose_id") is not None
-    ]
+        if meta.get("dose_class"):
+            entry["dose_class"] = str(meta["dose_class"])
+        if meta.get("scheduled_at"):
+            entry["scheduled_at"] = str(meta["scheduled_at"])
+        slim_preds.append(entry)
     response_summary = {
         "tiers": _tier_counts(predictions or []),
         "predictions": slim_preds,

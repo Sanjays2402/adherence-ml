@@ -132,6 +132,7 @@ def predict(
             shadow_max_divergence=shadow_div,
             n_doses=len(res.get("predictions", [])),
             latency_ms=dt, ok=True, predictions=res.get("predictions", []),
+            schedule_meta={s.dose_id: {"dose_class": s.dose_class, "scheduled_at": s.scheduled_at.isoformat()} for s in req.schedule},
         )
         response_obj = PredictResponse(**res)
         if idempotency_key:
@@ -227,6 +228,7 @@ def predict_batch(
                 n_doses=len(res.get("predictions", [])),
                 latency_ms=(time.perf_counter() - t0) * 1000.0,
                 ok=True, predictions=res.get("predictions", []),
+                schedule_meta={s.dose_id: {"dose_class": s.dose_class, "scheduled_at": s.scheduled_at.isoformat()} for s in item.schedule},
             )
         except Exception as exc:
             results.append(
