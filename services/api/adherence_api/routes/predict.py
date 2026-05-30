@@ -15,6 +15,16 @@ from adherence_worker.inference import predict_doses
 router = APIRouter(prefix="/v1", tags=["predict"])
 
 
+def _max_divergence(a: list[dict], b: list[dict]) -> float | None:
+    """Max |p_a - p_b| across matching dose_ids. None if no overlap."""
+    by_id_b = {x.get("dose_id"): float(x.get("miss_probability", 0.0)) for x in b}
+    diffs = [
+        abs(float(x.get("miss_probability", 0.0)) - by_id_b[x.get("dose_id")])
+        for x in a if x.get("dose_id") in by_id_b
+    ]
+    return max(diffs) if diffs else None
+
+
 def _caller_id(request: Request, principal: dict[str, str]) -> str:
     api_key = request.headers.get("x-api-key")
     if api_key:
@@ -30,6 +40,15 @@ def predict(
     req: PredictRequest,
     request: Request,
     model_name: str = Query("default"),
+    shadow: str | None = Query(
+        None,
+        description=(
+            "Optional challenger model name. When set, the request is also "
+            "scored with this model; the response still comes from `model_name`, "
+            "but per-dose divergence (|p_primary - p_shadow|) is written to the "
+            "audit log for safe rollout evaluation."
+        ),
+    ),
     p=Depends(require_service),
 ) -> PredictResponse:
     t0 = time.perf_counter()
@@ -48,11 +67,30 @@ def predict(
             model_name=model_name,
             top_k=req.top_k_reasons,
         )
+        shadow_version: str | None = None
+        shadow_div: float | None = None
+        if shadow and shadow != model_name:
+            try:
+                shadow_res = predict_doses(
+                    req.user_id, sched, history,
+                    model_name=shadow, top_k=0,
+                )
+                shadow_version = str(shadow_res.get("model_version", ""))
+                shadow_div = _max_divergence(
+                    res.get("predictions", []),
+                    shadow_res.get("predictions", []),
+                )
+            except Exception as exc:  # shadow must never break the primary path
+                shadow_version = f"error:{type(exc).__name__}"
+                shadow_div = None
         dt = (time.perf_counter() - t0) * 1000.0
         audit_record(
             request_id=rid, route="/v1/predict", user_id=req.user_id,
             caller=caller, caller_role=p.get("role", "service"),
             model_name=model_name, model_version=str(res.get("model_version", "")),
+            shadow_model_name=shadow if shadow and shadow != model_name else None,
+            shadow_model_version=shadow_version,
+            shadow_max_divergence=shadow_div,
             n_doses=len(res.get("predictions", [])),
             latency_ms=dt, ok=True, predictions=res.get("predictions", []),
         )

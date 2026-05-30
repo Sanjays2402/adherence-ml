@@ -18,6 +18,9 @@ def _setup_env(tmp_path, monkeypatch):
     # reset audit init flag so it picks up the new DB
     from adherence_common import audit as audit_mod
     audit_mod._INITIALIZED = False
+    from adherence_common import db as db_mod
+    db_mod._engine.cache_clear()
+    db_mod._session_factory.cache_clear()
 
 
 def _train(tmp_path):

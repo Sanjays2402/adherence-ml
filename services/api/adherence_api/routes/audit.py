@@ -57,6 +57,67 @@ class AuditStatsResponse(BaseModel):
     by_route: dict[str, int]
 
 
+class ShadowStatsRow(BaseModel):
+    shadow_model_name: str
+    n_calls: int
+    mean_divergence: float
+    max_divergence: float
+    p95_divergence: float
+    n_large_divergence: int  # |delta| > 0.10
+
+
+class ShadowStatsResponse(BaseModel):
+    window_hours: int
+    n_with_shadow: int
+    rows: list[ShadowStatsRow]
+
+
+@router.get("/shadow", response_model=ShadowStatsResponse)
+def shadow_stats(
+    window_hours: int = Query(24, ge=1, le=24 * 30),
+    large_threshold: float = Query(0.10, ge=0.0, le=1.0),
+    _a=Depends(require_admin),
+) -> ShadowStatsResponse:
+    """Aggregate shadow-vs-primary divergence per challenger model.
+
+    Used to decide when a challenger model is safe to promote: low
+    mean+p95 divergence and small `n_large_divergence` means the
+    challenger tracks the primary closely on live traffic.
+    """
+    init_db()
+    cutoff = datetime.utcnow() - timedelta(hours=window_hours)
+    with session() as s:
+        rows: list[PredictionAudit] = list(
+            s.scalars(
+                select(PredictionAudit).where(
+                    PredictionAudit.created_at >= cutoff,
+                    PredictionAudit.shadow_model_name.is_not(None),
+                )
+            )
+        )
+    by_shadow: dict[str, list[float]] = {}
+    for r in rows:
+        if r.shadow_max_divergence is None:
+            continue
+        by_shadow.setdefault(r.shadow_model_name, []).append(float(r.shadow_max_divergence))
+    out: list[ShadowStatsRow] = []
+    for name, vals in by_shadow.items():
+        out.append(ShadowStatsRow(
+            shadow_model_name=name,
+            n_calls=len(vals),
+            mean_divergence=sum(vals) / len(vals),
+            max_divergence=max(vals),
+            p95_divergence=_percentile(vals, 95) or 0.0,
+            n_large_divergence=sum(1 for v in vals if v > large_threshold),
+        ))
+    out.sort(key=lambda r: r.n_calls, reverse=True)
+    return ShadowStatsResponse(
+        window_hours=window_hours,
+        n_with_shadow=len(rows),
+        rows=out,
+    )
+
+
 def _row_to_model(r: PredictionAudit) -> AuditRow:
     return AuditRow(
         id=r.id, request_id=r.request_id, route=r.route, user_id=r.user_id,

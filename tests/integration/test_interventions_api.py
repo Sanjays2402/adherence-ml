@@ -16,6 +16,9 @@ def _setup(tmp_path, monkeypatch):
     reload_settings()
     from adherence_common import audit as audit_mod
     audit_mod._INITIALIZED = False
+    from adherence_common import db as db_mod
+    db_mod._engine.cache_clear()
+    db_mod._session_factory.cache_clear()
     from adherence_worker import inference as inf
     inf.load_model.cache_clear()
     from adherence_trainer.pipeline import run_training
