@@ -66,8 +66,19 @@ def record(
 ) -> None:
     _ensure_table()
     stats = summarize(predictions or [])
+    # Slim per-dose snapshot for online metrics (join against dose_outcomes).
+    slim_preds = [
+        {
+            "dose_id": p.get("dose_id"),
+            "miss_probability": float(p.get("miss_probability", 0.0)),
+            "risk_tier": p.get("risk_tier"),
+        }
+        for p in (predictions or [])
+        if p.get("dose_id") is not None
+    ]
     response_summary = {
         "tiers": _tier_counts(predictions or []),
+        "predictions": slim_preds,
         **(extra or {}),
     }
     row = PredictionAudit(

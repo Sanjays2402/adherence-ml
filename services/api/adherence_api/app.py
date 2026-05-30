@@ -22,6 +22,7 @@ from adherence_api.routes import (
     train,
     webhooks,
     interventions as interventions_route,
+    metrics as metrics_route,
 )
 
 log = get_logger(__name__)
@@ -80,5 +81,6 @@ def create_app() -> FastAPI:
     app.include_router(cohort.router)
     app.include_router(audit_route.router)
     app.include_router(interventions_route.router)
+    app.include_router(metrics_route.router)
     log.info("api ready", version=__version__)
     return app
