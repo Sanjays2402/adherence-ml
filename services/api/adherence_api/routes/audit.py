@@ -8,9 +8,10 @@ without rebuilding from MLflow.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Iterator
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
 
@@ -207,4 +208,89 @@ def stats(
         high_risk_calls=high_risk_calls,
         by_model=by_model,
         by_route=by_route,
+    )
+
+
+# CSV export -----------------------------------------------------------------
+
+_CSV_COLUMNS = (
+    "id", "created_at", "request_id", "route", "user_id", "caller", "caller_role",
+    "model_name", "model_version", "shadow_model_name", "shadow_model_version",
+    "n_doses", "mean_miss_prob", "max_miss_prob", "high_risk_count",
+    "shadow_max_divergence", "latency_ms", "ok", "error",
+)
+
+
+def _csv_escape(v: Any) -> str:
+    if v is None:
+        return ""
+    s = str(v)
+    if any(ch in s for ch in (",", '"', "\n", "\r")):
+        return '"' + s.replace('"', '""') + '"'
+    return s
+
+
+def _stream_csv(rows: list[PredictionAudit]) -> Iterator[str]:
+    yield ",".join(_CSV_COLUMNS) + "\n"
+    for r in rows:
+        vals = [
+            r.id,
+            r.created_at.isoformat() if r.created_at else "",
+            r.request_id, r.route, r.user_id, r.caller, r.caller_role,
+            r.model_name, r.model_version,
+            r.shadow_model_name or "", r.shadow_model_version or "",
+            r.n_doses,
+            "" if r.mean_miss_prob is None else f"{r.mean_miss_prob:.6f}",
+            "" if r.max_miss_prob is None else f"{r.max_miss_prob:.6f}",
+            r.high_risk_count,
+            "" if r.shadow_max_divergence is None else f"{r.shadow_max_divergence:.6f}",
+            "" if r.latency_ms is None else f"{r.latency_ms:.3f}",
+            int(bool(r.ok)),
+            r.error or "",
+        ]
+        yield ",".join(_csv_escape(v) for v in vals) + "\n"
+
+
+@router.get("/export.csv")
+def export_csv(
+    window_hours: int = Query(24, ge=1, le=24 * 90),
+    user_id: str | None = None,
+    route: str | None = None,
+    model_name: str | None = None,
+    only_errors: bool = False,
+    limit: int = Query(50_000, ge=1, le=500_000),
+    _a=Depends(require_admin),
+) -> StreamingResponse:
+    """Stream prediction-audit rows as CSV for compliance / offline analysis.
+
+    Bounded by ``limit`` (default 50k) so a runaway export cannot exhaust
+    server memory. Always ordered oldest -> newest so consumers can resume
+    on ``id`` if needed.
+    """
+    init_db()
+    cutoff = datetime.utcnow() - timedelta(hours=window_hours)
+    with session() as s:
+        q = (
+            select(PredictionAudit)
+            .where(PredictionAudit.created_at >= cutoff)
+            .order_by(PredictionAudit.id.asc())
+            .limit(limit)
+        )
+        if user_id:
+            q = q.where(PredictionAudit.user_id == user_id)
+        if route:
+            q = q.where(PredictionAudit.route == route)
+        if model_name:
+            q = q.where(PredictionAudit.model_name == model_name)
+        if only_errors:
+            q = q.where(PredictionAudit.ok == 0)
+        rows = list(s.scalars(q))
+    filename = f"audit_{cutoff.strftime('%Y%m%dT%H%M%SZ')}.csv"
+    return StreamingResponse(
+        _stream_csv(rows),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Row-Count": str(len(rows)),
+        },
     )

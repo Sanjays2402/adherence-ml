@@ -15,10 +15,13 @@ from pydantic import BaseModel, Field
 from adherence_api.deps import require_admin, require_service
 from adherence_api.routes.predict import _caller_id  # reuse identity helper
 from adherence_common.audit import record as audit_record
+from adherence_common import deliveries as deliveries_mod
 from adherence_common.errors import ModelNotFoundError
 from adherence_common.interventions import recommend, summary
+from adherence_common import prom as prom_metrics
 from adherence_common.quiet_hours import apply as apply_quiet_hours, from_row as qh_from_row
 from adherence_common.schemas import PredictRequest, PredictResponse
+from adherence_common.settings import get_settings
 from adherence_worker.inference import predict_doses
 
 router = APIRouter(prefix="/v1", tags=["interventions"])
@@ -33,6 +36,16 @@ class InterventionItem(BaseModel):
     lead_time_minutes: int
     deferred_until: str | None = None
     deferred_reason: str | None = None
+    delivery_id: int | None = None
+    suppressed: bool = False
+    suppress_reason: str | None = None
+
+
+class BudgetInfo(BaseModel):
+    daily_limit: int
+    used: int
+    remaining: int
+    exhausted: bool
 
 
 class InterventionResponse(BaseModel):
@@ -42,6 +55,8 @@ class InterventionResponse(BaseModel):
     interventions: list[InterventionItem] = Field(default_factory=list)
     summary: dict[str, Any] = Field(default_factory=dict)
     quiet_hours: dict[str, Any] = Field(default_factory=dict)
+    budget: BudgetInfo | None = None
+    cooldown_suppressed: list[dict[str, Any]] = Field(default_factory=list)
 
 
 @router.post("/interventions", response_model=InterventionResponse)
@@ -94,7 +109,100 @@ def interventions_endpoint(
             iv_dicts, qh_info = apply_quiet_hours(
                 iv_dicts, qh_from_row(qh_row), dose_times=dose_times,
             )
+    # Cooldown + budget enforcement -----------------------------------------
+    settings = get_settings()
+    cooldown_min = settings.intervention_cooldown_minutes
+    suppressed_until = deliveries_mod.recent_actions(req.user_id, cooldown_min)
+    used_today = deliveries_mod.count_today(req.user_id)
+    # Lookup per-user override of daily limit; missing => default.
+    daily_limit = settings.notification_default_daily_limit
+    try:
+        from sqlalchemy import select as _sel
+        from adherence_common.db import NotificationBudget, init_db as _init, session as _sess
+        _init()
+        with _sess() as s:
+            nb = s.execute(
+                _sel(NotificationBudget).where(NotificationBudget.user_id == req.user_id)
+            ).scalar_one_or_none()
+            if nb is not None:
+                daily_limit = int(nb.daily_limit)
+    except Exception:  # pragma: no cover
+        pass
+
+    cooldown_dropped: list[dict[str, Any]] = []
+    remaining_budget = max(0, daily_limit - used_today)
+    surviving: list[dict[str, Any]] = []
+    for iv in iv_dicts:
+        action = iv.get("action", "")
+        # Already deferred (e.g. by quiet hours) still counts as surfaced; keep.
+        until = suppressed_until.get(action)
+        if until is not None and not iv.get("deferred_reason"):
+            cooldown_dropped.append({
+                "action": action,
+                "target_dose_ids": iv.get("target_dose_ids", []),
+                "suppress_until": until.isoformat(),
+            })
+            prom_metrics.INTERVENTIONS_COOLDOWN_SUPPRESSED.inc(action=action)
+            continue
+        surviving.append(iv)
+
+    # Apply budget. Quiet-hours-deferred items still surface but consume no
+    # budget (they'll fire later in the allowed window).
+    budget_consuming = [iv for iv in surviving if not iv.get("deferred_reason")]
+    over_budget = max(0, len(budget_consuming) - remaining_budget)
+    if over_budget > 0:
+        # Mark the lowest-score ones as budget-deferred (sort ascending).
+        idxs = sorted(
+            (i for i, iv in enumerate(surviving) if not iv.get("deferred_reason")),
+            key=lambda i: surviving[i].get("score", 0.0),
+        )
+        for i in idxs[:over_budget]:
+            surviving[i] = {
+                **surviving[i],
+                "deferred_until": None,
+                "deferred_reason": "budget_exhausted",
+                "suppressed": True,
+                "suppress_reason": "budget_exhausted",
+            }
+            prom_metrics.INTERVENTIONS_BUDGET_SUPPRESSED.inc(
+                action=surviving[i].get("action", ""),
+            )
+
+    # Persist deliveries for the non-suppressed (or only deferred) actions.
+    to_persist = [
+        iv for iv in surviving
+        if not iv.get("suppressed")
+    ]
+    delivery_ids = deliveries_mod.record_many(
+        request_id=rid, user_id=req.user_id, interventions=to_persist,
+    )
+    di = iter(delivery_ids)
+    for iv in surviving:
+        if iv.get("suppressed"):
+            continue
+        try:
+            iv["delivery_id"] = next(di)
+        except StopIteration:
+            break
+
+    for iv in surviving:
+        prom_metrics.INTERVENTIONS_RECOMMENDED.inc(
+            action=iv.get("action", ""), channel=iv.get("channel", ""),
+        )
+
+    iv_dicts = surviving
     out_ivs = [InterventionItem(**iv) for iv in iv_dicts]
+
+    final_used = used_today + sum(
+        1 for iv in iv_dicts
+        if not iv.get("suppressed") and not iv.get("deferred_reason")
+    )
+    budget_block = BudgetInfo(
+        daily_limit=daily_limit,
+        used=final_used,
+        remaining=max(0, daily_limit - final_used),
+        exhausted=final_used >= daily_limit,
+    )
 
     audit_record(
         request_id=rid, route="/v1/interventions", user_id=req.user_id,
@@ -111,6 +219,8 @@ def interventions_endpoint(
         interventions=out_ivs,
         summary=summary(ivs),
         quiet_hours=qh_info,
+        budget=budget_block,
+        cooldown_suppressed=cooldown_dropped,
     )
 
 
@@ -222,4 +332,188 @@ def quiet_hours_delete(user_id: str, p=Depends(require_admin)):
         s.commit()
     if res.rowcount == 0:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="no policy for user")
+    return {"deleted": True, "user_id": user_id}
+
+
+# Ack endpoints --------------------------------------------------------------
+
+class AckIn(BaseModel):
+    state: str = Field(..., description="One of: sent, snoozed, dismissed, acted")
+    note: str | None = Field(None, max_length=512)
+    snooze_minutes: int | None = Field(None, ge=1, le=24 * 60)
+
+
+class AckOut(BaseModel):
+    id: int
+    state: str
+    action: str
+    user_id: str
+    snooze_until: str | None
+    acked_by: str | None
+    updated_at: str
+
+
+@router.post("/interventions/{delivery_id}/ack", response_model=AckOut)
+def ack_delivery(
+    delivery_id: int,
+    body: AckIn,
+    request: Request,
+    p=Depends(require_service),
+) -> AckOut:
+    if body.state not in {"sent", "snoozed", "dismissed", "acted"}:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="state must be one of: sent, snoozed, dismissed, acted",
+        )
+    caller = _caller_id(request, p)
+    try:
+        row = deliveries_mod.ack(
+            delivery_id,
+            body.state,
+            acked_by=caller,
+            note=body.note,
+            snooze_minutes=body.snooze_minutes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="delivery not found")
+    prom_metrics.INTERVENTIONS_ACKED.inc(action=row.action, state=row.state)
+    return AckOut(
+        id=row.id,
+        state=row.state,
+        action=row.action,
+        user_id=row.user_id,
+        snooze_until=row.snooze_until.isoformat() if row.snooze_until else None,
+        acked_by=row.acked_by,
+        updated_at=row.updated_at.isoformat(),
+    )
+
+
+class DeliveryOut(BaseModel):
+    id: int
+    request_id: str
+    user_id: str
+    action: str
+    channel: str
+    score: float
+    target_dose_ids: list[str]
+    reason: str | None
+    state: str
+    snooze_until: str | None
+    acked_by: str | None
+    created_at: str
+    updated_at: str
+
+
+@router.get("/interventions/deliveries/{user_id}", response_model=list[DeliveryOut])
+def list_deliveries(
+    user_id: str,
+    limit: int = Query(50, ge=1, le=500),
+    state: str | None = Query(None),
+    p=Depends(require_admin),
+) -> list[DeliveryOut]:
+    from sqlalchemy import select
+    from adherence_common.db import InterventionDelivery, init_db, session
+    init_db()
+    with session() as s:
+        q = (
+            select(InterventionDelivery)
+            .where(InterventionDelivery.user_id == user_id)
+            .order_by(InterventionDelivery.id.desc())
+            .limit(limit)
+        )
+        if state:
+            q = q.where(InterventionDelivery.state == state)
+        rows = list(s.scalars(q))
+    return [
+        DeliveryOut(
+            id=r.id, request_id=r.request_id, user_id=r.user_id,
+            action=r.action, channel=r.channel, score=r.score,
+            target_dose_ids=[t for t in (r.target_dose_ids_csv or "").split(",") if t],
+            reason=r.reason, state=r.state,
+            snooze_until=r.snooze_until.isoformat() if r.snooze_until else None,
+            acked_by=r.acked_by,
+            created_at=r.created_at.isoformat(),
+            updated_at=r.updated_at.isoformat(),
+        )
+        for r in rows
+    ]
+
+
+# Notification budget admin --------------------------------------------------
+
+class BudgetIn(BaseModel):
+    user_id: str = Field(..., min_length=1, max_length=64)
+    daily_limit: int = Field(..., ge=0, le=200)
+    note: str | None = Field(None, max_length=512)
+
+
+class BudgetOut(BaseModel):
+    user_id: str
+    daily_limit: int
+    note: str | None
+    updated_by: str | None
+    updated_at: str
+
+
+@router.put("/policies/notification-budget", response_model=BudgetOut, tags=["policies"])
+def budget_upsert(body: BudgetIn, request: Request, p=Depends(require_admin)) -> BudgetOut:
+    from datetime import datetime
+    from sqlalchemy import select
+    from adherence_common.db import NotificationBudget, init_db, session
+    init_db()
+    caller = _caller_id(request, p)
+    with session() as s:
+        row = s.execute(
+            select(NotificationBudget).where(NotificationBudget.user_id == body.user_id)
+        ).scalar_one_or_none()
+        if row is None:
+            row = NotificationBudget(
+                user_id=body.user_id, daily_limit=body.daily_limit,
+                note=body.note, updated_by=caller, updated_at=datetime.utcnow(),
+            )
+            s.add(row)
+        else:
+            row.daily_limit = body.daily_limit
+            row.note = body.note
+            row.updated_by = caller
+            row.updated_at = datetime.utcnow()
+        s.commit()
+        s.refresh(row)
+    return BudgetOut(
+        user_id=row.user_id, daily_limit=row.daily_limit, note=row.note,
+        updated_by=row.updated_by,
+        updated_at=row.updated_at.isoformat(),
+    )
+
+
+@router.get("/policies/notification-budget/{user_id}", response_model=BudgetOut, tags=["policies"])
+def budget_get(user_id: str, p=Depends(require_admin)) -> BudgetOut:
+    from sqlalchemy import select
+    from adherence_common.db import NotificationBudget, init_db, session
+    init_db()
+    with session() as s:
+        row = s.execute(
+            select(NotificationBudget).where(NotificationBudget.user_id == user_id)
+        ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="no budget for user")
+    return BudgetOut(
+        user_id=row.user_id, daily_limit=row.daily_limit, note=row.note,
+        updated_by=row.updated_by,
+        updated_at=row.updated_at.isoformat(),
+    )
+
+
+@router.delete("/policies/notification-budget/{user_id}", tags=["policies"])
+def budget_delete(user_id: str, p=Depends(require_admin)):
+    from sqlalchemy import delete as _del
+    from adherence_common.db import NotificationBudget, init_db, session
+    init_db()
+    with session() as s:
+        res = s.execute(_del(NotificationBudget).where(NotificationBudget.user_id == user_id))
+        s.commit()
+    if res.rowcount == 0:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="no budget for user")
     return {"deleted": True, "user_id": user_id}

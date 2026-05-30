@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     medtracker_base_url: str | None = None
     medtracker_api_key: str | None = None
 
+    # Intervention recommender
+    intervention_cooldown_minutes: int = 120
+    notification_default_daily_limit: int = 6
+
     @field_validator("jwt_secret")
     @classmethod
     def _validate_secret(cls, v: str) -> str:

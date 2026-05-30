@@ -178,3 +178,23 @@ MODEL_LOADED = REGISTRY.gauge(
     "1 if the named model is currently loaded into the worker cache.",
     labelnames=("model",),
 )
+INTERVENTIONS_RECOMMENDED = REGISTRY.counter(
+    "adherence_intervention_recommended_total",
+    "Interventions surfaced by the recommender (not suppressed/dropped).",
+    labelnames=("action", "channel"),
+)
+INTERVENTIONS_COOLDOWN_SUPPRESSED = REGISTRY.counter(
+    "adherence_intervention_cooldown_suppressed_total",
+    "Interventions dropped because the same (user, action) is within cooldown.",
+    labelnames=("action",),
+)
+INTERVENTIONS_BUDGET_SUPPRESSED = REGISTRY.counter(
+    "adherence_intervention_budget_suppressed_total",
+    "Interventions deferred because the user's daily notification budget was exhausted.",
+    labelnames=("action",),
+)
+INTERVENTIONS_ACKED = REGISTRY.counter(
+    "adherence_intervention_acked_total",
+    "Intervention deliveries acked by clients, by terminal state.",
+    labelnames=("action", "state"),
+)

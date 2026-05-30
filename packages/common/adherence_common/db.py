@@ -136,6 +136,50 @@ class QuietHoursPolicy(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class InterventionDelivery(Base):
+    """One row per recommended intervention surfaced to a caller.
+
+    Records the action, target dose(s), and lifecycle state. Lets us
+    suppress duplicate recommendations for the same (user, action) within
+    a cooldown window, attribute outcomes to specific interventions, and
+    expose ack metrics. The recommender endpoint inserts rows in state
+    `recommended`; clients later flip them to `sent`, `snoozed`,
+    `dismissed`, or `acted` via /v1/interventions/{id}/ack.
+    """
+    __tablename__ = "intervention_deliveries"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    request_id = Column(String(32), index=True, nullable=False)
+    user_id = Column(String(64), index=True, nullable=False)
+    action = Column(String(32), index=True, nullable=False)
+    channel = Column(String(16), nullable=False)
+    score = Column(Float, nullable=False)
+    target_dose_ids_csv = Column(String(512), nullable=True)
+    reason = Column(Text, nullable=True)
+    state = Column(String(16), nullable=False, default="recommended", index=True)
+    snooze_until = Column(DateTime, nullable=True)
+    acked_by = Column(String(64), nullable=True)
+    ack_note = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class NotificationBudget(Base):
+    """Per-user daily limit on outbound intervention notifications.
+
+    Used to prevent alert fatigue. The interventions endpoint counts how
+    many deliveries the user has accrued today (UTC) and defers any
+    additional recommended actions when the budget is exhausted. A
+    missing row falls back to `default_daily_limit` from settings.
+    """
+    __tablename__ = "notification_budgets"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(64), nullable=False, unique=True, index=True)
+    daily_limit = Column(Integer, nullable=False)
+    note = Column(Text, nullable=True)
+    updated_by = Column(String(64), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class TrainingRun(Base):
     __tablename__ = "training_runs"
     id = Column(Integer, primary_key=True, autoincrement=True)
