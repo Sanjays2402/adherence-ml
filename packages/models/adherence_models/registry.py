@@ -83,3 +83,33 @@ class ModelRegistry:
 
     def latest(self, name: str) -> tuple[ModelArtifact, object]:
         return self.load(name, version=None)
+
+    def promote(self, source: str, target: str,
+                version: str | None = None) -> ModelArtifact:
+        """Register `source` (optionally a specific version) as the latest entry
+        under `target`. The underlying joblib file is shared, so promotion is
+        cheap and reversible.
+        """
+        items = self._load_index(source)
+        if not items:
+            raise ModelNotFoundError(
+                f"cannot promote: no models under {source!r}")
+        if version is None:
+            src_item = items[-1]
+        else:
+            cand = [i for i in items if i["version"] == version]
+            if not cand:
+                raise ModelNotFoundError(
+                    f"{source} v{version} not found")
+            src_item = cand[0]
+        promoted = dict(src_item)
+        notes = promoted.get("notes") or ""
+        suffix = (
+            f"promoted from {source}@{src_item['version']}"
+        )
+        promoted["notes"] = f"{notes}; {suffix}" if notes else suffix
+        promoted["name"] = target
+        target_items = self._load_index(target)
+        target_items.append(promoted)
+        self._save_index(target, target_items)
+        return ModelArtifact(**promoted)

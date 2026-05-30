@@ -146,5 +146,71 @@ def list_models() -> None:
     console.print(tbl)
 
 
+@app.command("promote")
+def promote_cmd(
+    challenger: str = typer.Argument(..., help="challenger model name"),
+    target: str = typer.Option("default", "--target"),
+    window_hours: int = typer.Option(168, "--window-hours"),
+    min_shadow_calls: int = typer.Option(100, "--min-shadow-calls"),
+    max_p95_divergence: float = typer.Option(0.15, "--max-p95-divergence"),
+    min_matched_outcomes: int = typer.Option(50, "--min-matched-outcomes"),
+    max_brier_regression: float = typer.Option(0.01, "--max-brier-regression"),
+    min_auc_delta: float = typer.Option(-0.01, "--min-auc-delta"),
+    dry_run: bool = typer.Option(False, "--dry-run",
+                                 help="evaluate gates, do not modify registry"),
+    force: bool = typer.Option(False, "--force",
+                               help="promote even if gates fail"),
+) -> None:
+    """Run safety gates and promote a challenger model to `target`.
+
+    Exit code is 0 on a promotion (or a green dry-run) and 2 when gates
+    block promotion, so this slots straight into CI.
+    """
+    from adherence_models.promotion import (
+        evaluate_promotion,
+        promote_challenger,
+    )
+    kw = dict(
+        challenger=challenger, target=target,
+        window_hours=window_hours,
+        min_shadow_calls=min_shadow_calls,
+        max_p95_divergence=max_p95_divergence,
+        min_matched_outcomes=min_matched_outcomes,
+        max_brier_regression=max_brier_regression,
+        min_auc_delta=min_auc_delta,
+    )
+    if dry_run:
+        decision = evaluate_promotion(**kw)
+    else:
+        decision = promote_challenger(force=force, **kw)
+
+    tbl = Table(title=f"promote {challenger} -> {target}")
+    tbl.add_column("gate")
+    tbl.add_column("ok")
+    tbl.add_column("value", justify="right")
+    tbl.add_column("threshold", justify="right")
+    tbl.add_column("detail")
+    for g in decision.gates:
+        tbl.add_row(
+            g.name,
+            "[green]yes[/green]" if g.ok else "[red]no[/red]",
+            "" if g.value is None else f"{g.value:.4f}" if isinstance(g.value, float) else str(g.value),
+            "" if g.threshold is None else f"{g.threshold}",
+            g.detail,
+        )
+    console.print(tbl)
+    console.print(json.dumps(decision.summary, indent=2, default=str))
+    if decision.artifact:
+        console.print(
+            f"[green]promoted {challenger}@{decision.artifact.version} -> {target}[/green]"
+        )
+    elif dry_run:
+        verdict = "would promote" if decision.promote else "would NOT promote"
+        console.print(f"[yellow]dry-run: {verdict}[/yellow]")
+    else:
+        console.print("[red]not promoted: one or more gates failed[/red]")
+        raise typer.Exit(code=2)
+
+
 if __name__ == "__main__":
     app()

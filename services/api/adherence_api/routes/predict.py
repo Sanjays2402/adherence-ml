@@ -3,12 +3,19 @@ from __future__ import annotations
 
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from adherence_api.deps import current_principal, require_service
 from adherence_common.audit import record as audit_record
 from adherence_common.errors import ModelNotFoundError
+from adherence_common.idempotency import (
+    IdempotencyConflict,
+    hash_body,
+    lookup as idem_lookup,
+    store as idem_store,
+)
 from adherence_common.prom import PREDICTIONS, SHADOW_DIVERGENCE
 from adherence_common.schemas import PredictRequest, PredictResponse
 from adherence_worker.inference import predict_doses
@@ -50,11 +57,37 @@ def predict(
             "audit log for safe rollout evaluation."
         ),
     ),
+    idempotency_key: str | None = Header(
+        None, alias="Idempotency-Key",
+        description=(
+            "Optional client-supplied key (max 128 chars). Replays within the"
+            " TTL (default 24h) return the original cached response without"
+            " re-running the model. Reusing a key with a different payload"
+            " returns HTTP 409."
+        ),
+    ),
     p=Depends(require_service),
-) -> PredictResponse:
+):
     t0 = time.perf_counter()
     rid = getattr(request.state, "request_id", "")
     caller = _caller_id(request, p)
+    req_hash = hash_body({"req": req.model_dump(mode="json"),
+                          "model_name": model_name, "shadow": shadow})
+    if idempotency_key:
+        if len(idempotency_key) > 128:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                detail="Idempotency-Key too long (max 128)")
+        try:
+            cached = idem_lookup(idempotency_key, caller=caller,
+                                 route="/v1/predict", request_hash=req_hash)
+        except IdempotencyConflict as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc))
+        if cached is not None:
+            return JSONResponse(
+                content=cached["response"],
+                status_code=cached["status_code"],
+                headers={"Idempotent-Replay": "true"},
+            )
     try:
         import pandas as pd
         history = None
@@ -100,7 +133,15 @@ def predict(
             n_doses=len(res.get("predictions", [])),
             latency_ms=dt, ok=True, predictions=res.get("predictions", []),
         )
-        return PredictResponse(**res)
+        response_obj = PredictResponse(**res)
+        if idempotency_key:
+            idem_store(
+                idempotency_key, caller=caller, route="/v1/predict",
+                request_hash=req_hash, status_code=200,
+                response=response_obj.model_dump(mode="json"),
+                ttl_seconds=86400,
+            )
+        return response_obj
     except ModelNotFoundError as exc:
         dt = (time.perf_counter() - t0) * 1000.0
         audit_record(

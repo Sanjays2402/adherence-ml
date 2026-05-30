@@ -78,6 +78,64 @@ class DoseOutcome(Base):
     received_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 
+class IdempotencyRecord(Base):
+    """Stores cached responses keyed by Idempotency-Key + caller + route.
+
+    Lets webhook callers safely retry POST /v1/predict and friends without
+    causing duplicate audit rows or non-deterministic re-scoring. Replays
+    return the original status code and body for `ttl_seconds`.
+    """
+    __tablename__ = "idempotency_records"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    key = Column(String(128), nullable=False, index=True)
+    caller = Column(String(64), nullable=False, index=True)
+    route = Column(String(64), nullable=False)
+    request_hash = Column(String(64), nullable=False)
+    status_code = Column(Integer, nullable=False)
+    response_json = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False, index=True)
+
+
+class UserRiskPolicy(Base):
+    """Per-user (or per-dose-class) overrides for risk-tier cutoffs.
+
+    Default tiering uses global thresholds (low<0.3, medium<0.7, else high).
+    Clinicians can store overrides so e.g. a transplant patient gets `high`
+    at p>=0.4. `scope_type` is one of 'user' or 'dose_class'; `scope_id` is
+    the user_id or dose_class string. Most-specific match wins (user beats
+    class beats global).
+    """
+    __tablename__ = "user_risk_policies"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    scope_type = Column(String(16), nullable=False, index=True)
+    scope_id = Column(String(64), nullable=False, index=True)
+    low_max = Column(Float, nullable=False)
+    medium_max = Column(Float, nullable=False)
+    note = Column(Text, nullable=True)
+    updated_by = Column(String(64), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class QuietHoursPolicy(Base):
+    """Per-user quiet-hours window during which interventions are suppressed
+    or shifted to a non-disruptive channel.
+
+    `start_hour` and `end_hour` are local-time hours (0..23) in `tz`. If
+    `end_hour < start_hour` the window wraps midnight. Channels in
+    `allowed_channels_csv` are still delivered during quiet hours (e.g.
+    'email' only); everything else is deferred to `end_hour`.
+    """
+    __tablename__ = "quiet_hours_policies"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(64), nullable=False, unique=True, index=True)
+    tz = Column(String(64), nullable=False, default="UTC")
+    start_hour = Column(Integer, nullable=False)
+    end_hour = Column(Integer, nullable=False)
+    allowed_channels_csv = Column(String(128), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class TrainingRun(Base):
     __tablename__ = "training_runs"
     id = Column(Integer, primary_key=True, autoincrement=True)
