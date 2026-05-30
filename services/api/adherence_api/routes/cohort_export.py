@@ -1,0 +1,188 @@
+"""/v1/cohort/risk/export: streaming NDJSON cohort risk export.
+
+Same scoring logic as POST /v1/cohort/risk but designed for nightly
+snapshot pipelines. Streams one JSON object per scored dose so callers
+can sink directly into BigQuery / Snowflake / Parquet without holding
+the full cohort in memory.
+
+Filters:
+  risk_tier: comma-separated subset of low,medium,high
+  min_probability: minimum miss_probability to include
+  dose_class: comma-separated subset of dose classes
+  user_ids: comma-separated allowlist of user ids
+
+The request body matches /v1/cohort/risk so the two endpoints are
+interchangeable from a payload perspective.
+"""
+from __future__ import annotations
+
+import json
+from typing import Any, Iterator
+
+import pandas as pd
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
+
+from adherence_api.deps import require_service
+from adherence_common.constants import DEFAULT_RISK_THRESHOLDS, DOSE_CLASSES, TIME_BUCKETS
+from adherence_common.errors import ModelNotFoundError
+from adherence_common.logging import get_logger
+from adherence_data import SyntheticConfig, generate_events
+from adherence_features.engineering import build_training_frame
+from adherence_models.registry import ModelRegistry
+
+router = APIRouter(prefix="/v1/cohort", tags=["cohort"])
+log = get_logger(__name__)
+
+
+_VALID_TIERS = {"low", "medium", "high"}
+
+
+def _tier(p: float) -> str:
+    high = DEFAULT_RISK_THRESHOLDS["high"]
+    med = DEFAULT_RISK_THRESHOLDS["medium"]
+    if p >= high:
+        return "high"
+    if p >= med:
+        return "medium"
+    return "low"
+
+
+def _parse_csv(v: str | None) -> set[str] | None:
+    if not v:
+        return None
+    out = {x.strip() for x in v.split(",") if x.strip()}
+    return out or None
+
+
+def _stream(
+    df: pd.DataFrame,
+    *,
+    model_name: str,
+    model_version: str,
+    tier_filter: set[str] | None,
+    min_prob: float,
+    class_filter: set[str] | None,
+    user_filter: set[str] | None,
+    limit: int | None,
+) -> Iterator[bytes]:
+    class_decode = {i: c for i, c in enumerate(DOSE_CLASSES)}
+    bucket_decode = {i: b for i, b in enumerate(TIME_BUCKETS)}
+    emitted = 0
+    header = {
+        "kind": "header",
+        "model_name": model_name,
+        "model_version": model_version,
+        "total_candidates": int(len(df)),
+    }
+    yield (json.dumps(header) + "\n").encode("utf-8")
+    for row in df.itertuples(index=False):
+        uid = str(row.user_id)
+        if user_filter is not None and uid not in user_filter:
+            continue
+        prob = float(row.miss_probability)
+        if prob < min_prob:
+            continue
+        tier = _tier(prob)
+        if tier_filter is not None and tier not in tier_filter:
+            continue
+        dose_class = class_decode.get(int(row.dose_class_idx), "unknown")
+        if class_filter is not None and dose_class not in class_filter:
+            continue
+        record: dict[str, Any] = {
+            "kind": "row",
+            "user_id": uid,
+            "dose_id": getattr(row, "dose_id", None),
+            "dose_class": dose_class,
+            "time_bucket": bucket_decode.get(int(row.time_bucket_idx), "unknown"),
+            "miss_probability": round(prob, 6),
+            "risk_tier": tier,
+        }
+        yield (json.dumps(record) + "\n").encode("utf-8")
+        emitted += 1
+        if limit is not None and emitted >= limit:
+            break
+    yield (json.dumps({"kind": "footer", "emitted": emitted}) + "\n").encode("utf-8")
+
+
+@router.post("/risk/export")
+def cohort_risk_export(
+    payload: dict[str, Any] = Body(default_factory=dict),
+    model_name: str = Query("default"),
+    risk_tier: str | None = Query(
+        None, description="Comma-separated tier filter: low,medium,high"
+    ),
+    min_probability: float = Query(0.0, ge=0.0, le=1.0),
+    dose_class: str | None = Query(
+        None, description="Comma-separated dose class allowlist"
+    ),
+    user_ids: str | None = Query(
+        None, description="Comma-separated user_id allowlist"
+    ),
+    limit: int | None = Query(
+        None, ge=1, le=1_000_000,
+        description="Max rows to emit after filtering (None = unlimited).",
+    ),
+    _p=Depends(require_service),
+) -> StreamingResponse:
+    try:
+        art, model = ModelRegistry().latest(model_name)
+    except ModelNotFoundError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc))
+
+    tier_filter = _parse_csv(risk_tier)
+    if tier_filter is not None and not tier_filter.issubset(_VALID_TIERS):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=f"risk_tier must be subset of {sorted(_VALID_TIERS)}",
+        )
+    class_filter = _parse_csv(dose_class)
+    if class_filter is not None and not class_filter.issubset(set(DOSE_CLASSES)):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=f"dose_class must be subset of {DOSE_CLASSES}",
+        )
+    user_filter = _parse_csv(user_ids)
+
+    events_payload = payload.get("events")
+    if events_payload:
+        events = pd.DataFrame(events_payload)
+        events["scheduled_at"] = pd.to_datetime(events["scheduled_at"], utc=True, errors="coerce")
+        if "taken_at" in events.columns:
+            events["taken_at"] = pd.to_datetime(events["taken_at"], utc=True, errors="coerce")
+    else:
+        cfg = payload.get("synthetic", {}) or {}
+        events = generate_events(
+            SyntheticConfig(
+                n_users=int(cfg.get("n_users", 200)),
+                n_days=int(cfg.get("n_days", 14)),
+                seed=int(cfg.get("seed", 11)),
+            )
+        )
+
+    df = build_training_frame(events)
+    if df.empty:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "no scoreable doses in cohort")
+
+    X = df[model.feature_columns]
+    df = df.copy()
+    df["miss_probability"] = model.predict_proba(X)
+
+    return StreamingResponse(
+        _stream(
+            df,
+            model_name=model_name,
+            model_version=art.version,
+            tier_filter=tier_filter,
+            min_prob=float(min_probability),
+            class_filter=class_filter,
+            user_filter=user_filter,
+            limit=limit,
+        ),
+        media_type="application/x-ndjson",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="cohort_risk_{model_name}_{art.version}.ndjson"'
+            ),
+        },
+    )

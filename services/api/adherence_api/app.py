@@ -26,6 +26,7 @@ from adherence_api.routes import (
     metrics as metrics_route,
     outbound as outbound_route,
     policies as policies_route,
+    cohort_export as cohort_export_route,
 )
 
 log = get_logger(__name__)
@@ -84,6 +85,7 @@ def create_app() -> FastAPI:
     app.include_router(webhooks.router)
     app.include_router(explain_route.router)
     app.include_router(cohort.router)
+    app.include_router(cohort_export_route.router)
     app.include_router(audit_route.router)
     app.include_router(interventions_route.router)
     app.include_router(metrics_route.router)
