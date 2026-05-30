@@ -122,3 +122,64 @@ def revoke_api_key(name: str, p=Depends(require_admin)) -> dict:
     if not ok:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="api key not found")
     return {"revoked": True, "name": name}
+
+
+# ---- Model rollback -------------------------------------------------------
+
+class RollbackIn(BaseModel):
+    to_version: str | None = Field(
+        None,
+        description="Specific prior version to roll back to. "
+                    "Defaults to the second-most-recent registered version.",
+    )
+    reason: str | None = Field(None, max_length=512)
+
+
+class RollbackOut(BaseModel):
+    name: str
+    rolled_back_to: str
+    previous_version: str
+    notes: str
+    artifact_path: str
+
+
+@router.post("/models/{name}/rollback", response_model=RollbackOut)
+def rollback_model(name: str, body: RollbackIn, p=Depends(require_admin)) -> RollbackOut:
+    """Revert a model alias to a previously registered version.
+
+    Cheap inverse of promote: re-appends the chosen prior entry so it
+    becomes the latest, bumps the version stamp in notes, and busts the
+    in-process inference cache so the next /v1/predict call serves the
+    rolled-back model.
+    """
+    from adherence_models.registry import ModelRegistry
+    from adherence_common.errors import ModelNotFoundError
+
+    reg = ModelRegistry()
+    items = reg.list(name)
+    if not items:
+        raise HTTPException(status.HTTP_404_NOT_FOUND,
+                            detail=f"no models under {name!r}")
+    prev = items[-1].version
+    try:
+        art = reg.rollback(
+            name,
+            to_version=body.to_version,
+            by=p.get("sub"),
+            reason=body.reason,
+        )
+    except ModelNotFoundError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    # Bust the inference cache so the rollback is immediately effective.
+    try:
+        from adherence_worker.inference import load_model as _lm
+        _lm.cache_clear()
+    except Exception:  # pragma: no cover
+        pass
+    return RollbackOut(
+        name=name,
+        rolled_back_to=art.version,
+        previous_version=prev,
+        notes=art.notes,
+        artifact_path=art.path,
+    )

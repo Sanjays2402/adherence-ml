@@ -212,6 +212,40 @@ def promote_cmd(
         raise typer.Exit(code=2)
 
 
+@app.command("rollback")
+def rollback_cmd(
+    name: str = typer.Argument(..., help="Model alias to roll back (e.g. 'default')."),
+    to_version: str | None = typer.Option(
+        None, "--to",
+        help="Specific prior version. Defaults to the second-most-recent.",
+    ),
+    reason: str | None = typer.Option(None, "--reason"),
+    by: str | None = typer.Option(None, "--by", help="Operator identifier for audit."),
+) -> None:
+    """Re-append a prior version of a model alias so it serves the next request.
+
+    Cheap inverse of promote; safe to repeat. Use when a freshly promoted
+    model is misbehaving on live traffic and a full retrain is too slow.
+    """
+    from adherence_models.registry import ModelRegistry
+    from adherence_common.errors import ModelNotFoundError
+    reg = ModelRegistry()
+    items = reg.list(name)
+    if not items:
+        console.print(f"[red]no models under {name!r}[/red]")
+        raise typer.Exit(code=2)
+    prev = items[-1].version
+    try:
+        art = reg.rollback(name, to_version=to_version, by=by, reason=reason)
+    except ModelNotFoundError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2)
+    console.print(
+        f"[green]rolled back {name}: {prev} -> {art.version}[/green]\n"
+        f"notes: {art.notes}"
+    )
+
+
 @app.command("expire-interventions")
 def expire_interventions(
     max_age_minutes: int = typer.Option(

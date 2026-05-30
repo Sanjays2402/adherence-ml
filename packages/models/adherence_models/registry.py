@@ -84,6 +84,58 @@ class ModelRegistry:
     def latest(self, name: str) -> tuple[ModelArtifact, object]:
         return self.load(name, version=None)
 
+    def rollback(self, name: str, *, to_version: str | None = None,
+                 by: str | None = None, reason: str | None = None,
+                 ) -> ModelArtifact:
+        """Re-append a prior entry under ``name`` so it becomes the latest.
+
+        Inverse of ``promote``: useful when a freshly promoted model is
+        underperforming on live traffic and we need to revert without a
+        full retrain. ``to_version`` defaults to the second-most-recent
+        entry under ``name``. Raises ``ModelNotFoundError`` if there is
+        no version to roll back to.
+
+        The underlying joblib file is reused, so rollback is cheap and
+        repeatable. The new entry's ``notes`` field captures who rolled
+        back, when, and why for audit.
+        """
+        items = self._load_index(name)
+        if not items:
+            raise ModelNotFoundError(f"no models under {name!r}")
+        if to_version is None:
+            if len(items) < 2:
+                raise ModelNotFoundError(
+                    f"{name!r} has only one version; nothing to roll back to"
+                )
+            src_item = items[-2]
+        else:
+            cand = [i for i in items if i["version"] == to_version]
+            if not cand:
+                raise ModelNotFoundError(
+                    f"{name} v{to_version} not found"
+                )
+            src_item = cand[0]
+        if src_item["version"] == items[-1]["version"]:
+            raise ModelNotFoundError(
+                f"{name} is already at version {src_item['version']!r}"
+            )
+        rolled = dict(src_item)
+        prior = items[-1]["version"]
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
+        tag = (
+            f"rolled back from {prior} -> {src_item['version']} "
+            f"@ {stamp}"
+        )
+        if by:
+            tag += f" by {by}"
+        if reason:
+            tag += f" ({reason})"
+        base_notes = rolled.get("notes") or ""
+        rolled["notes"] = f"{base_notes}; {tag}" if base_notes else tag
+        items.append(rolled)
+        self._save_index(name, items)
+        return ModelArtifact(**rolled)
+
     def promote(self, source: str, target: str,
                 version: str | None = None) -> ModelArtifact:
         """Register `source` (optionally a specific version) as the latest entry
