@@ -274,5 +274,35 @@ def delivery_stats(
     console.print_json(data=out)
 
 
+@app.command("sweep-retention")
+def sweep_retention(
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    audit_days: int = typer.Option(None, "--audit-days"),
+    outcomes_days: int = typer.Option(None, "--outcomes-days"),
+    webhooks_days: int = typer.Option(None, "--webhooks-days"),
+    idem_days: int = typer.Option(None, "--idem-days"),
+) -> None:
+    """Delete rows past TTL across audit / outcomes / webhook tables."""
+    from adherence_common import retention
+    overrides: dict[str, int] = {}
+    if audit_days is not None:
+        overrides["prediction_audit"] = audit_days
+    if outcomes_days is not None:
+        overrides["dose_outcomes"] = outcomes_days
+    if webhooks_days is not None:
+        overrides["webhook_deliveries"] = webhooks_days
+    if idem_days is not None:
+        overrides["idempotency_records"] = idem_days
+    rows = retention.sweep(ttls_days=overrides or None, dry_run=dry_run)
+    table = Table(title="retention sweep" + (" (dry-run)" if dry_run else ""))
+    table.add_column("table")
+    table.add_column("cutoff")
+    table.add_column("candidates", justify="right")
+    table.add_column("deleted", justify="right")
+    for r in rows:
+        table.add_row(r.table, r.cutoff.isoformat(), str(r.candidates), str(r.deleted))
+    console.print(table)
+
+
 if __name__ == "__main__":
     app()

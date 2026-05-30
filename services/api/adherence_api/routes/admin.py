@@ -183,3 +183,67 @@ def rollback_model(name: str, body: RollbackIn, p=Depends(require_admin)) -> Rol
         notes=art.notes,
         artifact_path=art.path,
     )
+
+
+# ---- Audit retention -----------------------------------------------------
+
+class RetentionSweepIn(BaseModel):
+    ttls_days: dict[str, int] | None = Field(
+        None,
+        description=(
+            "Optional per-table override map. Keys: prediction_audit, "
+            "dose_outcomes, webhook_deliveries, idempotency_records."
+        ),
+    )
+    tables: list[str] | None = Field(
+        None,
+        description="Restrict the sweep to this subset of tables.",
+    )
+    dry_run: bool = Field(
+        False, description="Count candidates without deleting."
+    )
+
+
+class RetentionSweepRow(BaseModel):
+    table: str
+    cutoff: str
+    candidates: int
+    deleted: int
+
+
+class RetentionSweepOut(BaseModel):
+    dry_run: bool
+    results: list[RetentionSweepRow]
+
+
+@router.post("/audit/retention", response_model=RetentionSweepOut)
+def sweep_retention(
+    body: RetentionSweepIn,
+    _p=Depends(require_admin),
+) -> RetentionSweepOut:
+    """Delete rows past TTL across audit / outcome / delivery tables.
+
+    Run this from cron or trigger ad-hoc before a backup window. Use
+    ``dry_run=true`` first on a new deployment to see candidate volume.
+    """
+    from adherence_common import retention
+    try:
+        rows = retention.sweep(
+            ttls_days=body.ttls_days,
+            tables=body.tables,
+            dry_run=body.dry_run,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return RetentionSweepOut(
+        dry_run=body.dry_run,
+        results=[
+            RetentionSweepRow(
+                table=r.table,
+                cutoff=r.cutoff.isoformat(),
+                candidates=r.candidates,
+                deleted=r.deleted,
+            )
+            for r in rows
+        ],
+    )
