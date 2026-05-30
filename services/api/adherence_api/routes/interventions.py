@@ -517,3 +517,40 @@ def budget_delete(user_id: str, p=Depends(require_admin)):
     if res.rowcount == 0:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="no budget for user")
     return {"deleted": True, "user_id": user_id}
+
+
+# Operational endpoints ------------------------------------------------------
+
+class DeliveryStatsOut(BaseModel):
+    window_hours: int
+    total: int
+    by_state: dict[str, int]
+    by_action: dict[str, int]
+    unique_users: int
+
+
+@router.get("/interventions/stats", response_model=DeliveryStatsOut, tags=["interventions"])
+def deliveries_stats(
+    window_hours: int = Query(24, ge=1, le=24 * 30),
+    p=Depends(require_admin),
+) -> DeliveryStatsOut:
+    return DeliveryStatsOut(**deliveries_mod.stats(window_hours))
+
+
+class ExpireOut(BaseModel):
+    max_age_minutes: int
+    expired: int
+
+
+@router.post("/interventions/expire", response_model=ExpireOut, tags=["interventions"])
+def deliveries_expire(
+    max_age_minutes: int | None = Query(
+        None,
+        ge=1, le=7 * 24 * 60,
+        description="Override the configured max age (default: ADHERENCE_INTERVENTION_MAX_AGE_MINUTES).",
+    ),
+    p=Depends(require_admin),
+) -> ExpireOut:
+    age = max_age_minutes or get_settings().intervention_max_age_minutes
+    n = deliveries_mod.expire_stale(age)
+    return ExpireOut(max_age_minutes=age, expired=n)

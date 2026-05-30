@@ -212,5 +212,33 @@ def promote_cmd(
         raise typer.Exit(code=2)
 
 
+@app.command("expire-interventions")
+def expire_interventions(
+    max_age_minutes: int = typer.Option(
+        None, "--max-age-minutes",
+        help="Override the configured max age (default: setting).",
+    ),
+) -> None:
+    """Flip stale `recommended` intervention deliveries to `expired`.
+
+    Intended to be invoked from cron or systemd timers in deployments that
+    do not run the in-process scheduler.
+    """
+    from adherence_common import deliveries as dmod
+    age = max_age_minutes or get_settings().intervention_max_age_minutes
+    n = dmod.expire_stale(age)
+    console.print(f"expired {n} deliveries older than {age} minutes")
+
+
+@app.command("delivery-stats")
+def delivery_stats(
+    window_hours: int = typer.Option(24, "--window-hours"),
+) -> None:
+    """Print intervention delivery counts over the given window."""
+    from adherence_common import deliveries as dmod
+    out = dmod.stats(window_hours)
+    console.print_json(data=out)
+
+
 if __name__ == "__main__":
     app()

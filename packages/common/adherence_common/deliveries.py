@@ -185,6 +185,67 @@ def ack(
         return row
 
 
+def expire_stale(max_age_minutes: int) -> int:
+    """Flip deliveries still in ``recommended`` after ``max_age_minutes`` to
+    ``expired``. Returns the number of rows updated.
+
+    Run periodically (cron / scheduler) so that a client that never called
+    ``ack`` does not suppress future recommendations forever. ``expired``
+    deliveries do not count against the cooldown window or daily budget.
+    """
+    _ensure_table()
+    cutoff = datetime.utcnow() - timedelta(minutes=max(1, max_age_minutes))
+    updated = 0
+    try:
+        with session() as s:
+            rows = list(s.scalars(
+                select(InterventionDelivery).where(
+                    InterventionDelivery.state == "recommended",
+                    InterventionDelivery.created_at < cutoff,
+                )
+            ))
+            for r in rows:
+                r.state = "expired"
+                r.updated_at = datetime.utcnow()
+                updated += 1
+            s.commit()
+    except SQLAlchemyError as exc:  # pragma: no cover
+        log.warning("delivery_expire_failed", error=str(exc))
+        return 0
+    return updated
+
+
+def stats(window_hours: int) -> dict:
+    """Return aggregate counts of deliveries over the recent window."""
+    _ensure_table()
+    cutoff = datetime.utcnow() - timedelta(hours=max(1, window_hours))
+    out = {
+        "window_hours": window_hours,
+        "total": 0,
+        "by_state": {},
+        "by_action": {},
+        "unique_users": 0,
+    }
+    try:
+        with session() as s:
+            rows = list(s.scalars(
+                select(InterventionDelivery).where(
+                    InterventionDelivery.created_at >= cutoff,
+                )
+            ))
+    except SQLAlchemyError as exc:  # pragma: no cover
+        log.warning("delivery_stats_failed", error=str(exc))
+        return out
+    users: set[str] = set()
+    for r in rows:
+        out["total"] += 1
+        out["by_state"][r.state] = out["by_state"].get(r.state, 0) + 1
+        out["by_action"][r.action] = out["by_action"].get(r.action, 0) + 1
+        users.add(r.user_id)
+    out["unique_users"] = len(users)
+    return out
+
+
 __all__ = [
     "VALID_STATES",
     "SUPPRESSING_STATES",
@@ -192,4 +253,6 @@ __all__ = [
     "count_today",
     "record_many",
     "ack",
+    "expire_stale",
+    "stats",
 ]

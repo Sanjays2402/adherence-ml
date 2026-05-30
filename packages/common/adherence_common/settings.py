@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     # Intervention recommender
     intervention_cooldown_minutes: int = 120
     notification_default_daily_limit: int = 6
+    intervention_max_age_minutes: int = 24 * 60  # auto-expire stale recommended rows
 
     @field_validator("jwt_secret")
     @classmethod
