@@ -153,7 +153,7 @@ export function ByModelRow({
     <div className="grid grid-cols-5 items-center gap-2 px-4 py-2 text-sm border-b border-[var(--color-border)] last:border-b-0">
       <div className="font-mono text-xs truncate">{name}</div>
       <div className="tabular-nums text-right">{n}</div>
-      <div className="tabular-nums text-right">{auc != null ? auc.toFixed(3) : "—"}</div>
+      <div className="tabular-nums text-right">{auc != null ? auc.toFixed(3) : "n/a"}</div>
       <div className="tabular-nums text-right">{brier.toFixed(3)}</div>
       <div className="tabular-nums text-right">{fmtPct(missRate)}</div>
     </div>

@@ -127,7 +127,7 @@ export default function UserDetailClient({
           label="Forecast adherence"
           value={
             isErr(forecast)
-              ? "—"
+              ? "n/a"
               : fmtPct(forecast.overall_projected_adherence_rate)
           }
           sub={
@@ -138,14 +138,14 @@ export default function UserDetailClient({
         />
         <Stat
           label="Doses scored"
-          value={isErr(forecast) ? "—" : fmtInt(forecast.n_doses_scored)}
+          value={isErr(forecast) ? "n/a" : fmtInt(forecast.n_doses_scored)}
           sub={isErr(forecast) ? undefined : `${forecast.horizon_days}d horizon`}
         />
         <Stat
           label="Next doses scored"
           value={
             isErr(initialPredict)
-              ? "—"
+              ? "n/a"
               : fmtInt(initialPredict.predictions.length)
           }
           sub={
@@ -157,7 +157,7 @@ export default function UserDetailClient({
         <Stat
           label="Recent deliveries"
           value={
-            isErr(initialDeliveries) ? "—" : fmtInt(initialDeliveries.length)
+            isErr(initialDeliveries) ? "n/a" : fmtInt(initialDeliveries.length)
           }
           sub={
             isErr(initialDeliveries)
