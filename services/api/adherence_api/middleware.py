@@ -8,6 +8,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
 from adherence_common.logging import get_logger
+from adherence_common.prom import LATENCY, REQUESTS
 
 log = get_logger(__name__)
 
@@ -29,6 +30,14 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
             )
             raise
         dt = (time.perf_counter() - t0) * 1000.0
+        route_label = _route_template(request) or request.url.path
+        REQUESTS.inc(
+            method=request.method, route=route_label,
+            status=str(response.status_code),
+        )
+        LATENCY.observe(
+            dt, method=request.method, route=route_label,
+        )
         log.info(
             "request",
             request_id=rid,
@@ -39,3 +48,10 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
         )
         response.headers["x-request-id"] = rid
         return response
+
+
+def _route_template(request: Request) -> str | None:
+    """Use the matched route template (low cardinality) when available."""
+    route = request.scope.get("route")
+    path = getattr(route, "path", None)
+    return path

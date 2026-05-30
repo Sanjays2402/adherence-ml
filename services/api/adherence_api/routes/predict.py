@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from adherence_api.deps import current_principal, require_service
 from adherence_common.audit import record as audit_record
 from adherence_common.errors import ModelNotFoundError
+from adherence_common.prom import PREDICTIONS, SHADOW_DIVERGENCE
 from adherence_common.schemas import PredictRequest, PredictResponse
 from adherence_worker.inference import predict_doses
 
@@ -84,6 +85,11 @@ def predict(
                 shadow_version = f"error:{type(exc).__name__}"
                 shadow_div = None
         dt = (time.perf_counter() - t0) * 1000.0
+        for pred in res.get("predictions", []):
+            PREDICTIONS.inc(model=model_name,
+                            tier=str(pred.get("risk_tier", "unknown")))
+        if shadow and shadow != model_name and shadow_div is not None:
+            SHADOW_DIVERGENCE.observe(shadow_div, shadow_model=shadow)
         audit_record(
             request_id=rid, route="/v1/predict", user_id=req.user_id,
             caller=caller, caller_role=p.get("role", "service"),

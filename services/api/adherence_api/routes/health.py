@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from fastapi import APIRouter
+from fastapi.responses import PlainTextResponse
 
+from adherence_common.prom import MODEL_LOADED, REGISTRY
 from adherence_common.schemas import HealthResponse
 from adherence_common.settings import get_settings
 from adherence_common.version import __version__
@@ -57,3 +59,19 @@ def healthz() -> HealthResponse:
 @router.get("/livez")
 def livez() -> dict:
     return {"alive": True, "version": __version__}
+
+
+@router.get("/metrics", response_class=PlainTextResponse,
+            include_in_schema=False)
+def metrics() -> str:
+    """Prometheus text exposition. No auth so a scraper can hit it directly;
+    deploy behind a private NLB or use a network policy in production."""
+    # Refresh model gauge on every scrape (cheap).
+    try:
+        from adherence_models.registry import ModelRegistry
+        names = {a.name for a in ModelRegistry().list()}
+    except Exception:
+        names = set()
+    for n in names:
+        MODEL_LOADED.set(1.0, model=n)
+    return REGISTRY.render()
