@@ -76,7 +76,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         settings: Settings,
         backend: RateLimiterBackend | None = None,
         exempt_prefixes: Iterable[str] = (
-            "/healthz", "/livez", "/openapi.json", "/docs", "/redoc",
+            "/healthz", "/livez", "/readyz", "/openapi.json", "/docs", "/redoc",
         ),
     ) -> None:
         super().__init__(app)

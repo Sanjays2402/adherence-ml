@@ -74,6 +74,11 @@ class Settings(BaseSettings):
     # its own CSP. Set ADHERENCE_CSP_POLICY to enable a server-side default.
     csp_policy: str = ""
 
+    # Readiness probe behavior. When true, /readyz fails if redis is
+    # unreachable. Default false because the API still serves predict and
+    # cohort routes without redis (only async queues degrade).
+    readyz_require_redis: bool = False
+
     # Intervention recommender
     intervention_cooldown_minutes: int = 120
     notification_default_daily_limit: int = 6

@@ -32,9 +32,10 @@ spec:
             - configMapRef: { name: {{ include "adherence.fullname" . }}-env }
             - secretRef:    { name: {{ include "adherence.fullname" . }}-secrets }
           readinessProbe:
-            httpGet: { path: /healthz, port: 7421 }
+            httpGet: { path: /readyz, port: 7421 }
             initialDelaySeconds: 5
             periodSeconds: 10
+            failureThreshold: 3
           livenessProbe:
             httpGet: { path: /livez, port: 7421 }
             initialDelaySeconds: 10
