@@ -39,6 +39,9 @@ from adherence_api.routes import (
     forecast as forecast_route,
 )
 from adherence_api.routes import (
+    gdpr as gdpr_route,
+)
+from adherence_api.routes import (
     interventions as interventions_route,
 )
 from adherence_api.routes import (
@@ -84,6 +87,7 @@ def create_app() -> FastAPI:
             {"name": "interventions", "description": "Recommended caregiver/app actions per dose"},
             {"name": "policies", "description": "Admin risk-tier and quiet-hours policies"},
             {"name": "mutes", "description": "Per-user intervention mute (TTL opt-out)"},
+            {"name": "gdpr", "description": "Per-user data export and erasure (GDPR)"},
         ],
     )
 
@@ -120,5 +124,6 @@ def create_app() -> FastAPI:
     app.include_router(outbound_route.router)
     app.include_router(policies_route.router)
     app.include_router(mutes_route.router)
+    app.include_router(gdpr_route.router)
     log.info("api ready", version=__version__)
     return app
