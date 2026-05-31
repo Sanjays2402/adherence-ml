@@ -41,6 +41,30 @@ curl -s -X DELETE http://127.0.0.1:8000/scim/v2/Users/$USER_ID \
 # 4. Rotate: revoke the old SCIM token after the IdP picks up the new one.
 curl -s -X DELETE http://127.0.0.1:8000/v1/admin/scim/tokens/$TOKEN_ID \
   -H "authorization: Bearer $ADMIN_JWT"
+## CSP violation reporting (XSS canary)
+
+The dashboard now wires browser CSP violation reports back into a tamper-resistant in-process ring buffer and a live admin panel, so operators can see exactly when a script-src or connect-src directive blocks something in the wild. Both envelopes are supported: the legacy `Content-Security-Policy: report-uri` (CSP Level 2) and the modern Reporting API (`Report-To`, `Reporting-Endpoints`, `report-to` directive). Every accepted report is also emitted as a structured `csp.violation` log line for SIEM ingest.
+
+Ingest is bounded (8 KiB body cap, 512-entry ring, every string clipped) so untrusted POSTs cannot OOM the process. The admin view lives on the existing security headers page and auto-refreshes every 15 seconds.
+
+Configure with:
+
+- `ADHERENCE_CSP_REPORT_URI` override the ingest URL (defaults to the in-app endpoint)
+- `ADHERENCE_DISABLE_CSP_REPORTS=1` opt out entirely
+
+### Try it
+
+```bash
+cd apps/web && pnpm dev
+# open http://localhost:3000/settings/security-headers and scroll to the
+# "recent CSP violations" panel
+
+# simulate a browser violation report
+curl -s -X POST http://localhost:3000/api/security/csp-report \
+  -H 'content-type: application/csp-report' \
+  -d '{"csp-report":{"document-uri":"http://localhost:3000/dashboard","violated-directive":"script-src","blocked-uri":"https://evil.example.com/x.js","disposition":"enforce"}}' \
+  -o /dev/null -w '%{http_code}\n'
+# -> 204
 ```
 
 ## Workspace verified domains and SSO auto-join

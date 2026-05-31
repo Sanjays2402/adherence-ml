@@ -14,6 +14,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   buildSecurityHeaders,
+  resolveCspReportUri,
   isApiPath,
   isPublicSharePath,
   newNonce,
@@ -64,6 +65,7 @@ export function middleware(req: NextRequest) {
     isPublicShare: isPublicSharePath(path),
     extraConnectSrc: process.env.ADHERENCE_CSP_CONNECT_SRC,
     hsts: shouldEnableHsts(process.env as Record<string, string | undefined>),
+    cspReportUri: resolveCspReportUri(process.env as Record<string, string | undefined>),
   });
   for (const [k, v] of Object.entries(headers)) {
     res.headers.set(k, v);

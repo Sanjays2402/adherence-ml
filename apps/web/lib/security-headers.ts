@@ -33,7 +33,18 @@ export interface SecurityHeaderOptions {
   extraConnectSrc?: string;
   /** Disable HSTS in local dev so http://localhost works after one https visit. */
   hsts?: boolean;
+  /**
+   * Absolute or path-relative URL that browsers should POST CSP violation
+   * reports to. Wired into both `report-uri` (CSP Level 2) and a
+   * `Report-To` group named `csp-endpoint` (Reporting API). Omit to keep
+   * the dashboard silent (e.g. local dev or scanners that care only about
+   * the directive set).
+   */
+  cspReportUri?: string;
 }
+
+/** Default in-app ingest endpoint. Override via env in deployments. */
+export const DEFAULT_CSP_REPORT_URI = "/api/security/csp-report";
 
 /**
  * Browser feature toggles. We disable powerful APIs nobody on this app
@@ -91,7 +102,7 @@ function buildCsp(opts: SecurityHeaderOptions): string {
     ].join("; ");
   }
 
-  return [
+  const directives = [
     "default-src 'self'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
     "style-src 'self' 'unsafe-inline'",
@@ -106,7 +117,16 @@ function buildCsp(opts: SecurityHeaderOptions): string {
     "base-uri 'self'",
     "form-action 'self'",
     "upgrade-insecure-requests",
-  ].join("; ");
+  ];
+  if (opts.cspReportUri) {
+    // `report-uri` for CSP Level 2 (still required by Chromium for
+    // backwards compatibility) and `report-to` for the Reporting API,
+    // which carries richer metadata. The group name must match the
+    // `Report-To` header below.
+    directives.push(`report-uri ${opts.cspReportUri}`);
+    directives.push("report-to csp-endpoint");
+  }
+  return directives.join("; ");
 }
 
 /**
@@ -131,6 +151,19 @@ export function buildSecurityHeaders(opts: SecurityHeaderOptions): HeaderMap {
     // 2-year max-age with includeSubDomains and preload meets the HSTS
     // preload list requirements.
     headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload";
+  }
+  if (opts.cspReportUri) {
+    // Reporting API group definition. Browsers cache this for `max_age`
+    // seconds and use it for any `report-to` directive referencing the
+    // named group. 10 minutes is a sane TTL for a self-hosted endpoint.
+    headers["Report-To"] = JSON.stringify({
+      group: "csp-endpoint",
+      max_age: 600,
+      endpoints: [{ url: opts.cspReportUri }],
+      include_subdomains: false,
+    });
+    // Reporting-Endpoints is the v1 replacement that Chromium prefers.
+    headers["Reporting-Endpoints"] = `csp-endpoint="${opts.cspReportUri}"`;
   }
   return headers;
 }
@@ -165,4 +198,18 @@ export function shouldEnableHsts(env: Record<string, string | undefined>): boole
   if (env.ADHERENCE_DISABLE_HSTS === "1") return false;
   // Default ON in production; OFF locally.
   return env.NODE_ENV === "production";
+}
+
+/**
+ * Resolve the CSP report ingest URL from env. Defaults to the in-app
+ * endpoint; opt out entirely with `ADHERENCE_DISABLE_CSP_REPORTS=1`.
+ */
+export function resolveCspReportUri(
+  env: Record<string, string | undefined>,
+): string | undefined {
+  if (env.ADHERENCE_DISABLE_CSP_REPORTS === "1") return undefined;
+  const override = env.ADHERENCE_CSP_REPORT_URI;
+  if (override && /^(https?:)?\/\//.test(override)) return override;
+  if (override && override.startsWith("/")) return override;
+  return DEFAULT_CSP_REPORT_URI;
 }

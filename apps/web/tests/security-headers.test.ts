@@ -12,6 +12,7 @@ import {
   isApiPath,
   isPublicSharePath,
   newNonce,
+  resolveCspReportUri,
   shouldEnableHsts,
 } from "@/lib/security-headers";
 
@@ -92,5 +93,40 @@ describe("security headers", () => {
     const b = newNonce();
     expect(a.length).toBeGreaterThanOrEqual(20);
     expect(a).not.toBe(b);
+  });
+
+  it("wires CSP report-uri and Report-To when a report endpoint is configured", () => {
+    const h = buildSecurityHeaders({
+      nonce: "n",
+      isApi: false,
+      hsts: true,
+      cspReportUri: "/api/security/csp-report",
+    });
+    expect(h["Content-Security-Policy"]).toContain("report-uri /api/security/csp-report");
+    expect(h["Content-Security-Policy"]).toContain("report-to csp-endpoint");
+    expect(h["Reporting-Endpoints"]).toContain("csp-endpoint=\"/api/security/csp-report\"");
+    const parsed = JSON.parse(h["Report-To"]!);
+    expect(parsed.group).toBe("csp-endpoint");
+    expect(parsed.endpoints?.[0]?.url).toBe("/api/security/csp-report");
+  });
+
+  it("omits reporting headers when no endpoint is configured", () => {
+    const h = buildSecurityHeaders({ nonce: "n", isApi: false, hsts: true });
+    expect(h["Content-Security-Policy"]).not.toContain("report-uri");
+    expect(h["Content-Security-Policy"]).not.toContain("report-to");
+    expect(h["Report-To"]).toBeUndefined();
+    expect(h["Reporting-Endpoints"]).toBeUndefined();
+  });
+
+  it("keeps the default CSP report ingest path unless explicitly disabled", () => {
+    expect(resolveCspReportUri({})).toBe("/api/security/csp-report");
+    expect(resolveCspReportUri({ ADHERENCE_DISABLE_CSP_REPORTS: "1" })).toBeUndefined();
+    expect(
+      resolveCspReportUri({ ADHERENCE_CSP_REPORT_URI: "https://csp.acme.com/ingest" }),
+    ).toBe("https://csp.acme.com/ingest");
+    // junk values fall back to default
+    expect(resolveCspReportUri({ ADHERENCE_CSP_REPORT_URI: "javascript:alert(1)" })).toBe(
+      "/api/security/csp-report",
+    );
   });
 });

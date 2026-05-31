@@ -15,6 +15,7 @@ import {
   isApiPath,
   isPublicSharePath,
   newNonce,
+  resolveCspReportUri,
   shouldEnableHsts,
 } from "@/lib/security-headers";
 
@@ -39,6 +40,7 @@ export async function GET(req: NextRequest) {
     isPublicShare: isPublicSharePath(path),
     extraConnectSrc: process.env.ADHERENCE_CSP_CONNECT_SRC,
     hsts: shouldEnableHsts(process.env as Record<string, string | undefined>),
+    cspReportUri: resolveCspReportUri(process.env as Record<string, string | undefined>),
   });
 
   return NextResponse.json({
@@ -57,6 +59,7 @@ export async function GET(req: NextRequest) {
       { id: "perm", label: "Permissions policy", ok: "Permissions-Policy" in headers },
       { id: "coop", label: "Cross-origin opener policy", ok: "Cross-Origin-Opener-Policy" in headers },
       { id: "corp", label: "Cross-origin resource policy", ok: "Cross-Origin-Resource-Policy" in headers },
+      { id: "csp-report", label: "CSP violation reporting", ok: "Reporting-Endpoints" in headers || "Report-To" in headers },
     ],
   });
 }

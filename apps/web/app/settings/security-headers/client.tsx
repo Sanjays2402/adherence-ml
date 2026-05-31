@@ -186,13 +186,124 @@ export default function SecurityHeadersClient() {
             </div>
           </Card>
 
+          <CspReportsPanel />
+
           <p className="mt-4 text-xs text-zinc-500">
             Sources: OWASP Secure Headers Project, Mozilla Observatory, SOC2 CC6.
             Configure looser CSP connect-src via ADHERENCE_CSP_CONNECT_SRC.
             Disable HSTS in non-TLS environments with ADHERENCE_DISABLE_HSTS=1.
+            Override the CSP report ingest URL with ADHERENCE_CSP_REPORT_URI or
+            disable reports entirely with ADHERENCE_DISABLE_CSP_REPORTS=1.
           </p>
         </>
       ) : null}
     </main>
   );
 }
+
+type CspReport = {
+  id: string;
+  received_at: number;
+  source_ip: string | null;
+  user_agent: string | null;
+  document_uri: string | null;
+  violated_directive: string | null;
+  blocked_uri: string | null;
+  disposition: "enforce" | "report" | null;
+  envelope: "csp-report" | "report-to" | "unknown";
+};
+
+type ReportsResp = { total: number; limit: number; reports: CspReport[] };
+
+function fmtTime(ms: number): string {
+  try {
+    return new Date(ms).toLocaleString();
+  } catch {
+    return String(ms);
+  }
+}
+
+function CspReportsPanel() {
+  const reportsFetcher = (url: string) =>
+    fetch(url).then(async (r) => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return (await r.json()) as ReportsResp;
+    });
+  const { data, error, isLoading, mutate } = useSWR<ReportsResp>(
+    "/api/security/csp-reports?limit=50",
+    reportsFetcher,
+    { refreshInterval: 15_000, revalidateOnFocus: false },
+  );
+
+  return (
+    <Card className="mt-6">
+      <CardHeader
+        title="recent CSP violations"
+        hint="Browsers POST here whenever a script-src or connect-src directive is violated. This is your XSS canary."
+        right={
+          <Button
+            variant="ghost"
+            onClick={() => mutate()}
+            aria-label="refresh CSP violations"
+          >
+            <ArrowClockwise size={14} weight="duotone" /> refresh
+          </Button>
+        }
+      />
+
+      {isLoading ? (
+        <div className="space-y-2 p-4">
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-5/6" />
+          <Skeleton className="h-4 w-4/6" />
+        </div>
+      ) : error ? (
+        <div className="m-4">
+          <ErrorBox message="Could not load CSP reports." />
+        </div>
+      ) : !data || data.reports.length === 0 ? (
+        <div className="flex flex-col items-center gap-2 p-8 text-center text-sm text-zinc-500">
+          <ShieldCheck size={28} weight="duotone" className="text-emerald-500" />
+          <p className="font-medium text-zinc-700 dark:text-zinc-300">No reports yet.</p>
+          <p className="max-w-md text-xs">
+            Either the CSP is holding (good) or the report endpoint is
+            disabled. Reports are stored in memory and capped at 512 entries
+            per process; pipe them to your SIEM for long-term retention.
+          </p>
+        </div>
+      ) : (
+        <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
+          {data.reports.map((r) => (
+            <div key={r.id} className="flex flex-col gap-1 px-4 py-3 text-xs sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone={r.disposition === "enforce" ? "warn" : "accent"}>
+                    {r.violated_directive ?? "unknown directive"}
+                  </Badge>
+                  <Badge tone="neutral">{r.envelope}</Badge>
+                  {r.disposition ? <Badge tone="neutral">{r.disposition}</Badge> : null}
+                  <span className="text-zinc-500">{fmtTime(r.received_at)}</span>
+                </div>
+                <div className="mt-1 break-all text-zinc-700 dark:text-zinc-300">
+                  <span className="text-zinc-500">blocked:</span> {r.blocked_uri ?? "(none)"}
+                </div>
+                <div className="break-all text-zinc-600 dark:text-zinc-400">
+                  <span className="text-zinc-500">document:</span> {r.document_uri ?? "(none)"}
+                </div>
+                {r.source_ip ? (
+                  <div className="text-zinc-500">
+                    <span>from:</span> {r.source_ip}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ))}
+          <div className="px-4 py-2 text-xs text-zinc-500">
+            Showing {data.reports.length} of {data.total} buffered.
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
