@@ -2,6 +2,53 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Workspace data retention (GDPR / CCPA storage minimization)
+
+Workspace owners can now declare how long stored runs (predictions, cohorts,
+explanations, forecasts) live before they are auto-deleted. Procurement
+scenario: a healthcare buyer requires that prediction inputs/outputs be
+purged 90 days after creation; their security team needs to run an on-demand
+cleanup before a SOC2 audit.
+
+- New `runs_retention_days` field on the workspace security policy (1 to 3650,
+  or null to keep forever). Owner-only, audited on change, returned in the
+  policy GET so SCIM/Terraform clients can read it.
+- `POST /api/retention/tick` purges runs older than the cutoff for the
+  requesting workspace. Cross-tenant safe by construction: the tick can only
+  delete runs whose owner is a current member of that workspace, so workspace
+  A can never silently nuke workspace B's data. Supports `?dry_run=true`.
+- Surfaced in the Workspace > Security UI with quick presets (30d, 90d, 1y,
+  7y HIPAA) and a "Run cleanup now" button that shows how many runs were
+  deleted out of how many candidates.
+- Audit log entries are intentionally NOT purged. They are append-only and
+  hash-chained per SOC2 guidance.
+- Test coverage: `apps/web/tests/workspace-retention.test.ts` includes an
+  explicit cross-tenant isolation case (Alice's 1-day retention does not
+  delete Bob's runs even though they live in the same instance).
+
+### Try it
+
+Dashboard: <http://localhost:3000/workspace/security>
+
+```bash
+# Set 90-day retention on your workspace (owner cookie required).
+curl -s -X PUT http://localhost:3000/api/workspaces/$WS/policy \
+  -H 'Content-Type: application/json' \
+  -b cookie.txt \
+  -d '{"session_max_age_minutes":null,"require_mfa":false,"runs_retention_days":90}'
+
+# Preview the purge without deleting anything.
+curl -s -X POST "http://localhost:3000/api/retention/tick?dry_run=true" \
+  -H 'Content-Type: application/json' -b cookie.txt \
+  -d "{\"workspace_id\":\"$WS\"}"
+
+# Enforce the policy now.
+curl -s -X POST http://localhost:3000/api/retention/tick \
+  -H 'Content-Type: application/json' -b cookie.txt \
+  -d "{\"workspace_id\":\"$WS\"}"
+# -> {"workspace_id":"...","retention_days":90,"cutoff_ms":...,"candidate_count":12,"deleted_count":12}
+```
+
 ## Per-key source IP allowlist (CIDR-pinned API keys)
 
 Every API key can now be restricted to a specific set of source IPs / CIDRs.

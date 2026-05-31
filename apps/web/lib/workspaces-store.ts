@@ -67,8 +67,29 @@ export interface WorkspaceSecurityPolicy {
    * `DEPLOY_REGION` is surfaced in the response header so auditors notice.
    */
   data_residency: DataResidencyRegion;
+  /**
+   * Per-workspace data retention for stored runs (predictions, cohorts,
+   * explanations, forecasts). When a positive integer N is set, the retention
+   * tick (POST /api/retention/tick) deletes any run owned by a workspace
+   * member whose `created_at` is older than N days. `null` or 0 disables
+   * retention enforcement (runs are kept indefinitely). Capped at 10 years.
+   * Audit log entries are intentionally NOT purged: they are append-only and
+   * hash-chained per SOC2 guidance.
+   */
+  runs_retention_days: number | null;
   updated_at: number;
   updated_by: string;
+}
+
+export const RETENTION_MIN_DAYS = 1;
+export const RETENTION_MAX_DAYS = 3650;
+
+/** Normalize a user-supplied retention value: positive int 1..3650, else null. */
+export function normalizeRetentionDays(raw: unknown): number | null {
+  if (raw === null || raw === undefined || raw === "") return null;
+  const n = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.min(Math.max(Math.floor(n), RETENTION_MIN_DAYS), RETENTION_MAX_DAYS);
 }
 
 export type DataResidencyRegion =
@@ -914,6 +935,7 @@ export interface PublicWorkspaceSecurityPolicy {
   webhook_allow_private_networks: boolean;
   webhook_host_allowlist: string[];
   data_residency: DataResidencyRegion;
+  runs_retention_days: number | null;
   updated_at: number;
 }
 
@@ -927,6 +949,7 @@ export function publicPolicy(
       webhook_allow_private_networks: false,
       webhook_host_allowlist: [],
       data_residency: "unspecified",
+      runs_retention_days: null,
       updated_at: 0,
     };
   }
@@ -940,6 +963,9 @@ export function publicPolicy(
     data_residency: isDataResidencyRegion(p.data_residency)
       ? p.data_residency
       : "unspecified",
+    runs_retention_days: normalizeRetentionDays(
+      (p as { runs_retention_days?: unknown }).runs_retention_days,
+    ),
     updated_at: p.updated_at,
   };
 }
@@ -961,6 +987,7 @@ export async function setWorkspacePolicy(
     webhook_allow_private_networks?: boolean;
     webhook_host_allowlist?: string[];
     data_residency?: DataResidencyRegion;
+    runs_retention_days?: number | null;
   },
 ): Promise<PublicWorkspaceSecurityPolicy> {
   const store = await readStore();
@@ -1002,12 +1029,20 @@ export async function setWorkspacePolicy(
     : isDataResidencyRegion(ws.security_policy?.data_residency)
       ? (ws.security_policy!.data_residency as DataResidencyRegion)
       : "unspecified";
+  const retention =
+    next.runs_retention_days === undefined
+      ? (normalizeRetentionDays(
+          (ws.security_policy as { runs_retention_days?: unknown } | null | undefined)?.
+            runs_retention_days,
+        ))
+      : normalizeRetentionDays(next.runs_retention_days);
   ws.security_policy = {
     session_max_age_minutes: cap,
     require_mfa: Boolean(next.require_mfa),
     webhook_allow_private_networks: allowPrivate,
     webhook_host_allowlist: hostAllowlist,
     data_residency: residency,
+    runs_retention_days: retention,
     updated_at: Date.now(),
     updated_by: actorUserId,
   };

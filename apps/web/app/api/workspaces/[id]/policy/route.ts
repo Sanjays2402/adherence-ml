@@ -10,6 +10,8 @@ import {
   POLICY_MAX_SESSION_MINUTES,
   POLICY_MIN_SESSION_MINUTES,
   DATA_RESIDENCY_REGIONS,
+  RETENTION_MAX_DAYS,
+  RETENTION_MIN_DAYS,
   type DataResidencyRegion,
   getWorkspaceForUser,
   publicPolicy,
@@ -38,6 +40,13 @@ const Body = z.object({
   data_residency: z
     .enum(DATA_RESIDENCY_REGIONS as [DataResidencyRegion, ...DataResidencyRegion[]])
     .optional(),
+  runs_retention_days: z
+    .number()
+    .int()
+    .min(RETENTION_MIN_DAYS)
+    .max(RETENTION_MAX_DAYS)
+    .nullable()
+    .optional(),
 });
 
 export async function GET(
@@ -59,6 +68,8 @@ export async function GET(
         min_session_minutes: POLICY_MIN_SESSION_MINUTES,
         max_session_minutes: POLICY_MAX_SESSION_MINUTES,
         regions: DATA_RESIDENCY_REGIONS,
+        min_retention_days: RETENTION_MIN_DAYS,
+        max_retention_days: RETENTION_MAX_DAYS,
       },
     }),
     policy.data_residency,

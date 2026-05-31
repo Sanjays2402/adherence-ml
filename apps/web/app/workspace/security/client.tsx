@@ -13,6 +13,8 @@ import {
   ArrowSquareOut,
   Globe,
   MapPin,
+  Trash,
+  Broom,
 } from "@phosphor-icons/react";
 import {
   PageHeader,
@@ -35,6 +37,7 @@ interface PublicPolicy {
   webhook_allow_private_networks: boolean;
   webhook_host_allowlist: string[];
   data_residency: string;
+  runs_retention_days: number | null;
   updated_at: number;
 }
 
@@ -46,6 +49,8 @@ interface PolicyResp {
     min_session_minutes: number;
     max_session_minutes: number;
     regions: string[];
+    min_retention_days?: number;
+    max_retention_days?: number;
   };
 }
 
@@ -103,6 +108,10 @@ export default function SecurityClient() {
   const [allowPrivate, setAllowPrivate] = useState(false);
   const [hostAllowlist, setHostAllowlist] = useState("");
   const [residency, setResidency] = useState<string>("unspecified");
+  const [retentionEnabled, setRetentionEnabled] = useState(false);
+  const [retentionDays, setRetentionDays] = useState("90");
+  const [tickBusy, setTickBusy] = useState(false);
+  const [tickResult, setTickResult] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
@@ -118,6 +127,10 @@ export default function SecurityClient() {
       setAllowPrivate(Boolean(policy.webhook_allow_private_networks));
       setHostAllowlist((policy.webhook_host_allowlist ?? []).join("\n"));
       setResidency(policy.data_residency ?? "unspecified");
+      const r = policy.runs_retention_days;
+      setRetentionEnabled(typeof r === "number" && r > 0);
+      setRetentionDays(typeof r === "number" && r > 0 ? String(r) : "90");
+      setTickResult(null);
     }
   }, [policy, selected]);
 
@@ -156,6 +169,9 @@ export default function SecurityClient() {
           webhook_allow_private_networks: allowPrivate,
           webhook_host_allowlist: allowlist,
           data_residency: residency,
+          runs_retention_days: retentionEnabled
+            ? Math.max(1, Math.min(3650, parseInt(retentionDays, 10) || 0)) || null
+            : null,
         }),
       });
       const j = await r.json().catch(() => ({}));
@@ -422,6 +438,99 @@ export default function SecurityClient() {
         ) : null}
 
         {policy ? (
+          <Card>
+            <CardHeader
+              title="Data retention"
+              right={<Badge><Trash weight="duotone" size={11} /> {policy.runs_retention_days ?? "forever"}</Badge>}
+            />
+            <div className="px-4 py-4 space-y-4">
+              <div className="text-[12px] text-[var(--color-muted)]">
+                Auto-purge stored runs (predictions, cohorts, explanations, forecasts) older than the cutoff. Audit log entries are append-only and are not deleted. A scheduled job or your SIEM can call <MonoChip>POST /api/retention/tick</MonoChip> with this workspace id to enforce the policy on demand.
+              </div>
+              <div className="flex items-start gap-3">
+                <input
+                  id="retention-on"
+                  type="checkbox"
+                  checked={retentionEnabled}
+                  disabled={!isOwner}
+                  onChange={(e) => setRetentionEnabled(e.target.checked)}
+                  className="mt-1 h-4 w-4 accent-[var(--color-fg)]"
+                />
+                <div className="flex-1 min-w-0">
+                  <label htmlFor="retention-on" className="text-[13px] font-medium cursor-pointer">
+                    Auto-delete runs after a fixed window
+                  </label>
+                  <p className="text-[12px] text-[var(--color-muted)] mt-0.5">
+                    Off means stored runs are kept indefinitely. Turning this on satisfies GDPR / CCPA storage-minimization requirements.
+                  </p>
+                </div>
+              </div>
+              <div className="pl-7 flex items-end gap-2">
+                <div className="flex-1 max-w-[200px]">
+                  <Label><Clock weight="duotone" size={11} /> Days</Label>
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    min={limits?.min_retention_days ?? 1}
+                    max={limits?.max_retention_days ?? 3650}
+                    step={1}
+                    value={retentionDays}
+                    disabled={!isOwner || !retentionEnabled}
+                    onChange={(e) => setRetentionDays(e.target.value)}
+                  />
+                </div>
+                <div className="pb-1 text-[11px] font-mono text-[var(--color-muted)]">
+                  range {limits?.min_retention_days ?? 1}-{limits?.max_retention_days ?? 3650}d
+                </div>
+              </div>
+              <div className="pl-7 text-[11px] text-[var(--color-muted)] flex flex-wrap gap-2">
+                <button type="button" className="underline disabled:opacity-50" disabled={!isOwner} onClick={() => { setRetentionEnabled(true); setRetentionDays("30"); }}>30 days</button>
+                <button type="button" className="underline disabled:opacity-50" disabled={!isOwner} onClick={() => { setRetentionEnabled(true); setRetentionDays("90"); }}>90 days</button>
+                <button type="button" className="underline disabled:opacity-50" disabled={!isOwner} onClick={() => { setRetentionEnabled(true); setRetentionDays("365"); }}>1 year</button>
+                <button type="button" className="underline disabled:opacity-50" disabled={!isOwner} onClick={() => { setRetentionEnabled(true); setRetentionDays("2555"); }}>7 years (HIPAA)</button>
+              </div>
+              <div className="pl-7 flex flex-wrap items-center gap-3 pt-2 border-t border-[var(--color-border)]">
+                <Button
+                  variant="ghost"
+                  onClick={async () => {
+                    if (!selected || !isOwner) return;
+                    setTickBusy(true);
+                    setTickResult(null);
+                    try {
+                      const resp = await fetch("/api/retention/tick", {
+                        method: "POST",
+                        headers: { "content-type": "application/json" },
+                        body: JSON.stringify({ workspace_id: selected }),
+                      });
+                      const j = await resp.json();
+                      if (!resp.ok) throw new Error(j.detail ?? `failed (${resp.status})`);
+                      if (j.retention_days == null) {
+                        setTickResult("No retention policy set. Save a policy first, then run cleanup.");
+                      } else {
+                        setTickResult(`Deleted ${j.deleted_count} of ${j.candidate_count} candidate run(s) older than ${j.retention_days} day(s).`);
+                      }
+                    } catch (e) {
+                      setTickResult(e instanceof Error ? e.message : "cleanup failed");
+                    } finally {
+                      setTickBusy(false);
+                    }
+                  }}
+                  disabled={!isOwner || tickBusy}
+                >
+                  <Broom weight="duotone" size={13} /> {tickBusy ? "Running" : "Run cleanup now"}
+                </Button>
+                {tickResult ? (
+                  <span className="text-[11px] font-mono text-[var(--color-muted)]">{tickResult}</span>
+                ) : null}
+              </div>
+              <div className="pl-7 text-[11px] font-mono text-[var(--color-muted)] inline-flex items-center gap-2">
+                <ShieldCheck weight="duotone" size={12} /> Cross-tenant safe: a tick for this workspace only deletes runs owned by current members of this workspace.
+              </div>
+            </div>
+          </Card>
+        ) : null}
+
+        {policy ? (
           <div className="flex items-center gap-3">
             <Button onClick={save} disabled={!isOwner || busy}>
               <FloppyDisk weight="duotone" size={13} /> {busy ? "Saving" : "Save policy"}
@@ -449,6 +558,7 @@ export default function SecurityClient() {
               <div>webhook_allow_private_networks = <MonoChip>{String(policy.webhook_allow_private_networks)}</MonoChip></div>
               <div>webhook_host_allowlist = <MonoChip>{policy.webhook_host_allowlist.length ? policy.webhook_host_allowlist.join(", ") : "any public host"}</MonoChip></div>
               <div>data_residency = <MonoChip>{policy.data_residency}</MonoChip> (deploy: <MonoChip>{deployRegion}</MonoChip>)</div>
+              <div>runs_retention_days = <MonoChip>{policy.runs_retention_days ?? "keep forever"}</MonoChip></div>
               <div className="text-[11px] mt-2">
                 When a user belongs to multiple workspaces the tightest rule wins: the lowest session cap and require_mfa from any workspace applies.
               </div>
