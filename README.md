@@ -2,6 +2,47 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Per-API-key source IP allowlist
+
+A leaked API key is the single most common breach vector in B2B SaaS,
+so enterprise customers ask whether each key can be pinned to the IPs
+that are actually allowed to use it (NAT egress, office range, VPC
+block). Each `adh_*` key now carries an optional `allowed_cidrs` list
+of IPv4 or IPv6 CIDRs. When the list is empty the key works from any
+source IP (subject to the separate workspace-wide IP allowlist). When
+the list is set, every `/v1/*` endpoint extracts the client IP from
+`X-Forwarded-For` / `X-Real-IP` and returns `403 source ip not allowed
+for this api key` unless the IP falls inside at least one entry. The
+check fails closed when the proxy did not supply a client IP. The pin
+can be set at creation time, edited inline from the `/api-keys` page,
+and cleared without rotating the key. CIDR parsing, IPv4/IPv6
+matching, and the end-to-end gate are covered in
+`apps/web/tests/api-key-ip-allowlist.test.ts`.
+
+### Try it
+
+```bash
+# Mint a key pinned to a single NAT egress IP. The plaintext key is
+# returned exactly once.
+curl -sS -X POST http://localhost:3000/api/keys \
+  -H "content-type: application/json" \
+  -d '{"name":"prod-egress","scopes":["predict","read"],"allowed_cidrs":["203.0.113.42/32"]}'
+
+# Same key called from outside the pinned range: 403.
+curl -sS -X POST http://localhost:3000/v1/predict \
+  -H "x-forwarded-for: 198.51.100.7" \
+  -H "authorization: Bearer adh_..." \
+  -H "content-type: application/json" \
+  -d '{"user_id":"u_1","doses":[{"dose_id":"d_1","scheduled_at":"2025-01-01T08:00:00Z","dose_class":"statin","dose_strength_mg":20}]}' -i | head -1
+
+# Same key from the allowed IP: 200.
+curl -sS -X POST http://localhost:3000/v1/predict \
+  -H "x-forwarded-for: 203.0.113.42" \
+  -H "authorization: Bearer adh_..." \
+  -H "content-type: application/json" \
+  -d '{"user_id":"u_1","doses":[{"dose_id":"d_1","scheduled_at":"2025-01-01T08:00:00Z","dose_class":"statin","dose_strength_mg":20}]}' -i | head -1
+```
+
 ## Per-workspace data residency
 
 Enterprise buyers (especially EU healthcare and US public sector)
