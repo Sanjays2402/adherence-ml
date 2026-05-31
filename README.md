@@ -237,6 +237,20 @@ persisted to `apps/web/.data/api-keys.json`. Each successful call records
 last-used and increments a counter, and lands in the same run history under
 the `v1` tag.
 
+**API reference at /docs.** Every `/v1` route is documented at
+[http://localhost:3000/docs](http://localhost:3000/docs) with a copy-paste
+curl snippet that auto-substitutes your host and pasted key, plus a `test it`
+button that runs the GET endpoints from your browser against your own key.
+The reference is generated from `apps/web/lib/api-reference.ts` and a test
+asserts every documented path resolves to a real route file, so the page
+cannot drift out of sync with the code.
+
+```bash
+curl http://localhost:3000/v1/keys/me \
+  -H "authorization: Bearer adh_..."
+```
+
+
 If a secret leaks, hit `Rotate` on the API keys page (or `POST
 /api/keys/<id>/rotate`) to mint a new plaintext in place. Rotation keeps the
 key id, name, created date, last-used time, and total call count so charts

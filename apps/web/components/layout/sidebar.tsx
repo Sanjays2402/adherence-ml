@@ -26,6 +26,7 @@ import {
   CalendarCheck,
   EnvelopeSimple,
   Share,
+  BookOpen,
 } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import SidebarUser from "./sidebar-user";
@@ -47,6 +48,7 @@ const NAV = [
   { href: "/history", label: "History", icon: ClockCounterClockwise, hint: "Saved runs" },
   { href: "/shares", label: "Share links", icon: Share, hint: "Public links // revoke" },
   { href: "/api-keys", label: "API keys", icon: Key, hint: "Programmatic access" },
+  { href: "/docs", label: "API docs", icon: BookOpen, hint: "curl + live tester" },
   { href: "/usage", label: "Usage", icon: Gauge, hint: "Quota // billing" },
   { href: "/billing", label: "Billing", icon: Receipt, hint: "Plan // history" },
   { href: "/webhooks", label: "Webhooks", icon: Plugs, hint: "Outbound deliveries" },
