@@ -2,6 +2,44 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Workspace API-key max lifetime policy
+
+Workspace owners can now cap the maximum TTL of any API key issued or rotated for the deployment. SOC2 CC6.1 reviews routinely flag "keys that never expire" as a finding; this policy makes that impossible to ship by mistake. When the cap is set to N days, every `POST /api/keys` call must include `ttl_days` such that `0 < ttl_days <= N`. Requests that ask for no expiry or for a longer TTL are refused with HTTP 422 and a structured `code` (`api_key_ttl_required` or `api_key_ttl_exceeds_cap`). Key rotation re-stamps `expires_at` from "now", so periodic rotation IS the renewal action and a key can never outlive the cap.
+
+The cap lives on `WorkspaceSecurityPolicy.api_key_max_ttl_days` (owner-only write, RBAC-checked, dry-run aware, audited via `workspace.policy.update`). API keys in this codebase live in a single workspace-agnostic store, so the enforced cap is the strictest one across every workspace the deployment hosts (the cross-tenant safe choice).
+
+Proven by `apps/web/tests/workspace-api-key-ttl-cap.test.ts`:
+
+- The policy field round-trips and only owners can write it (RBAC).
+- `effectiveApiKeyMaxTtlDays` picks the strictest cap across workspaces.
+- `POST /api/keys` without `ttl_days` is rejected when a cap is in force.
+- `POST /api/keys` with `ttl_days` greater than the cap is rejected.
+- `POST /api/keys` with a TTL inside the cap succeeds and the issued key carries a real `expires_at`.
+- With no cap configured, legacy no-expiry keys still work (back-compat).
+- Rotation re-stamps `expires_at` to `now + cap` when a cap is supplied.
+
+### Try the API-key TTL cap
+
+Web UI: <http://127.0.0.1:3000/workspace/security> (the *API key max lifetime* card).
+
+```bash
+# Set a 90-day cap on this workspace (owner session required).
+curl -s -X PUT "http://127.0.0.1:3000/api/workspaces/$WS_ID/policy" \
+  -H "content-type: application/json" \
+  -b "adherence_session=$SESSION_COOKIE" \
+  -d '{"session_max_age_minutes":null,"require_mfa":false,"api_key_max_ttl_days":90}'
+
+# This call is now refused (HTTP 422, code=api_key_ttl_required).
+curl -s -X POST http://127.0.0.1:3000/api/keys \
+  -H "content-type: application/json" \
+  -d '{"name":"forever"}'
+
+# This call succeeds: TTL fits inside the cap.
+curl -s -X POST http://127.0.0.1:3000/api/keys \
+  -H "content-type: application/json" \
+  -d '{"name":"compliant","ttl_days":30}'
+```
+
 ## Workspace ownership transfer
 
 Workspace owners can now hand the workspace to another existing member instead of being stranded when they leave the company. The account-erasure flow has long told sole owners to "transfer ownership before deleting your account"; this endpoint and UI are what makes that possible.

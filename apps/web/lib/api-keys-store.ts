@@ -463,7 +463,10 @@ export async function createKey(
  * and audit logs stay continuous. Revoked keys cannot be rotated; callers
  * should issue a fresh key instead. Returns the new plaintext exactly once.
  */
-export async function rotateKey(id: string): Promise<NewApiKey | null> {
+export async function rotateKey(
+  id: string,
+  opts?: { capTtlDays?: number | null },
+): Promise<NewApiKey | null> {
   let issued: NewApiKey | null = null;
   writeQueue = writeQueue.then(async () => {
     const s = await readStore();
@@ -473,6 +476,16 @@ export async function rotateKey(id: string): Promise<NewApiKey | null> {
     k.prefix = plaintext.slice(0, 12);
     k.hash = hashKey(plaintext);
     k.rotated_at = Date.now();
+    // SOC2 control: when a workspace TTL cap is in force, rotation must
+    // re-stamp expires_at so a key cannot outlive the cap. We push the
+    // expiry forward to (now + cap) but never extend it past an existing
+    // earlier expires_at unless the operator explicitly opted in by
+    // calling rotation (rotation IS the renewal action).
+    const cap = opts?.capTtlDays;
+    if (typeof cap === "number" && cap > 0) {
+      const next = ttlToExpiresAt(cap);
+      k.expires_at = next;
+    }
     issued = { record: { ...k }, plaintext };
     await writeStore(s);
   });

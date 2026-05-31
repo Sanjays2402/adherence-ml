@@ -11,17 +11,20 @@ import {
   publicView,
   ttlToExpiresAt,
 } from "@/lib/api-keys-store";
+import { effectiveApiKeyMaxTtlDays } from "@/lib/workspaces-store";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET() {
   const keys = await listKeys();
-  // never leak the hash to the client
+  const cap = await effectiveApiKeyMaxTtlDays();
+  const presets = [7, 30, 90, 365].filter((d) => cap === null || d <= cap);
   return NextResponse.json({
     keys: keys.map(publicView),
     available_scopes: ALL_SCOPES,
-    ttl_presets_days: [7, 30, 90, 365],
+    ttl_presets_days: presets.length ? presets : (cap !== null ? [cap] : [7, 30, 90, 365]),
+    api_key_max_ttl_days: cap,
   });
 }
 
@@ -52,7 +55,31 @@ export async function POST(req: NextRequest) {
     );
   }
   const scopes = normalizeScopes(parsed.data.scopes);
-  const expiresAt = ttlToExpiresAt(parsed.data.ttl_days ?? null);
+  const requestedTtl = parsed.data.ttl_days ?? null;
+  const cap = await effectiveApiKeyMaxTtlDays();
+  if (cap !== null) {
+    if (requestedTtl === null || requestedTtl === 0) {
+      return NextResponse.json(
+        {
+          detail: `workspace policy requires api keys to expire within ${cap} days`,
+          code: "api_key_ttl_required",
+          max_ttl_days: cap,
+        },
+        { status: 422 },
+      );
+    }
+    if (requestedTtl > cap) {
+      return NextResponse.json(
+        {
+          detail: `requested ttl_days=${requestedTtl} exceeds workspace cap of ${cap}`,
+          code: "api_key_ttl_exceeds_cap",
+          max_ttl_days: cap,
+        },
+        { status: 422 },
+      );
+    }
+  }
+  const expiresAt = ttlToExpiresAt(requestedTtl);
   // Reject obviously malformed CIDR strings so callers get a 400 instead of
   // silently having entries dropped by normalizeAllowedCidrs.
   if (Array.isArray(parsed.data.allowed_cidrs)) {

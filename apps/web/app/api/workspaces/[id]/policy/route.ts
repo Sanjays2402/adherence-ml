@@ -12,6 +12,8 @@ import {
   DATA_RESIDENCY_REGIONS,
   RETENTION_MAX_DAYS,
   RETENTION_MIN_DAYS,
+  API_KEY_TTL_MIN_DAYS,
+  API_KEY_TTL_MAX_DAYS,
   type DataResidencyRegion,
   getWorkspaceForUser,
   publicPolicy,
@@ -47,6 +49,13 @@ const Body = z.object({
     .max(RETENTION_MAX_DAYS)
     .nullable()
     .optional(),
+  api_key_max_ttl_days: z
+    .number()
+    .int()
+    .min(API_KEY_TTL_MIN_DAYS)
+    .max(API_KEY_TTL_MAX_DAYS)
+    .nullable()
+    .optional(),
 });
 
 export async function GET(
@@ -70,6 +79,8 @@ export async function GET(
         regions: DATA_RESIDENCY_REGIONS,
         min_retention_days: RETENTION_MIN_DAYS,
         max_retention_days: RETENTION_MAX_DAYS,
+        min_api_key_ttl_days: API_KEY_TTL_MIN_DAYS,
+        max_api_key_ttl_days: API_KEY_TTL_MAX_DAYS,
       },
     }),
     policy.data_residency,

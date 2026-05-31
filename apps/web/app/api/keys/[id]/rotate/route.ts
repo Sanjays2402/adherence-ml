@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { rotateKey } from "@/lib/api-keys-store";
 import { requireDashboardAuth, auditAction } from "@/lib/dashboard-auth";
+import { effectiveApiKeyMaxTtlDays } from "@/lib/workspaces-store";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -16,7 +17,8 @@ export async function POST(
   });
   if (!gate.ok) return gate.response;
 
-  const issued = await rotateKey(id);
+  const cap = await effectiveApiKeyMaxTtlDays();
+  const issued = await rotateKey(id, { capTtlDays: cap });
   if (!issued) {
     await auditAction(req, gate.ctx, {
       action: "api_key.rotate.dashboard",

@@ -15,6 +15,7 @@ import {
   MapPin,
   Trash,
   Broom,
+  Key,
 } from "@phosphor-icons/react";
 import {
   PageHeader,
@@ -38,6 +39,7 @@ interface PublicPolicy {
   webhook_host_allowlist: string[];
   data_residency: string;
   runs_retention_days: number | null;
+  api_key_max_ttl_days: number | null;
   updated_at: number;
 }
 
@@ -51,6 +53,8 @@ interface PolicyResp {
     regions: string[];
     min_retention_days?: number;
     max_retention_days?: number;
+    min_api_key_ttl_days?: number;
+    max_api_key_ttl_days?: number;
   };
 }
 
@@ -110,6 +114,8 @@ export default function SecurityClient() {
   const [residency, setResidency] = useState<string>("unspecified");
   const [retentionEnabled, setRetentionEnabled] = useState(false);
   const [retentionDays, setRetentionDays] = useState("90");
+  const [keyTtlCapEnabled, setKeyTtlCapEnabled] = useState(false);
+  const [keyTtlCapDays, setKeyTtlCapDays] = useState("90");
   const [tickBusy, setTickBusy] = useState(false);
   const [tickResult, setTickResult] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -130,6 +136,9 @@ export default function SecurityClient() {
       const r = policy.runs_retention_days;
       setRetentionEnabled(typeof r === "number" && r > 0);
       setRetentionDays(typeof r === "number" && r > 0 ? String(r) : "90");
+      const k = policy.api_key_max_ttl_days;
+      setKeyTtlCapEnabled(typeof k === "number" && k > 0);
+      setKeyTtlCapDays(typeof k === "number" && k > 0 ? String(k) : "90");
       setTickResult(null);
     }
   }, [policy, selected]);
@@ -171,6 +180,9 @@ export default function SecurityClient() {
           data_residency: residency,
           runs_retention_days: retentionEnabled
             ? Math.max(1, Math.min(3650, parseInt(retentionDays, 10) || 0)) || null
+            : null,
+          api_key_max_ttl_days: keyTtlCapEnabled
+            ? Math.max(1, Math.min(3650, parseInt(keyTtlCapDays, 10) || 0)) || null
             : null,
         }),
       });
@@ -531,6 +543,65 @@ export default function SecurityClient() {
         ) : null}
 
         {policy ? (
+          <Card>
+            <CardHeader
+              title="API key max lifetime"
+              right={<Badge><Key weight="duotone" size={11} /> {policy.api_key_max_ttl_days ? `${policy.api_key_max_ttl_days}d cap` : "no cap"}</Badge>}
+            />
+            <div className="px-4 py-4 space-y-4">
+              <div className="text-[12px] text-[var(--color-muted)]">
+                Force every newly issued or rotated API key to carry an expiry within this window. Keys without a TTL, or with a longer TTL, are rejected with HTTP 422. Rotation re-stamps the expiry from "now" so periodic rotation IS the renewal. This is the SOC2 CC6.1 control auditors look for: no long-lived credentials.
+              </div>
+              <div className="flex items-start gap-3">
+                <input
+                  id="keyttl-on"
+                  type="checkbox"
+                  checked={keyTtlCapEnabled}
+                  disabled={!isOwner}
+                  onChange={(e) => setKeyTtlCapEnabled(e.target.checked)}
+                  className="mt-1 h-4 w-4 accent-[var(--color-fg)]"
+                />
+                <div className="flex-1 min-w-0">
+                  <label htmlFor="keyttl-on" className="text-[13px] font-medium cursor-pointer">
+                    Require a maximum TTL on every API key
+                  </label>
+                  <p className="text-[12px] text-[var(--color-muted)] mt-0.5">
+                    Off means callers can issue keys that never expire. Most enterprise procurement reviews flag that as a finding.
+                  </p>
+                </div>
+              </div>
+              <div className="pl-7 flex items-end gap-2">
+                <div className="flex-1 max-w-[200px]">
+                  <Label><Clock weight="duotone" size={11} /> Days</Label>
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    min={limits?.min_api_key_ttl_days ?? 1}
+                    max={limits?.max_api_key_ttl_days ?? 3650}
+                    step={1}
+                    value={keyTtlCapDays}
+                    disabled={!isOwner || !keyTtlCapEnabled}
+                    onChange={(e) => setKeyTtlCapDays(e.target.value)}
+                  />
+                </div>
+                <div className="pb-1 text-[11px] font-mono text-[var(--color-muted)]">
+                  range {limits?.min_api_key_ttl_days ?? 1}-{limits?.max_api_key_ttl_days ?? 3650}d
+                </div>
+              </div>
+              <div className="pl-7 text-[11px] text-[var(--color-muted)] flex flex-wrap gap-2">
+                <button type="button" className="underline disabled:opacity-50" disabled={!isOwner} onClick={() => { setKeyTtlCapEnabled(true); setKeyTtlCapDays("30"); }}>30 days</button>
+                <button type="button" className="underline disabled:opacity-50" disabled={!isOwner} onClick={() => { setKeyTtlCapEnabled(true); setKeyTtlCapDays("90"); }}>90 days (SOC2 typical)</button>
+                <button type="button" className="underline disabled:opacity-50" disabled={!isOwner} onClick={() => { setKeyTtlCapEnabled(true); setKeyTtlCapDays("180"); }}>180 days</button>
+                <button type="button" className="underline disabled:opacity-50" disabled={!isOwner} onClick={() => { setKeyTtlCapEnabled(true); setKeyTtlCapDays("365"); }}>1 year</button>
+              </div>
+              <div className="pl-7 text-[11px] font-mono text-[var(--color-muted)] inline-flex items-start gap-2">
+                <ShieldCheck weight="duotone" size={12} className="mt-0.5 shrink-0" /> Existing keys keep their current expiry. Rotate them to bring them under the cap.
+              </div>
+            </div>
+          </Card>
+        ) : null}
+
+        {policy ? (
           <div className="flex items-center gap-3">
             <Button onClick={save} disabled={!isOwner || busy}>
               <FloppyDisk weight="duotone" size={13} /> {busy ? "Saving" : "Save policy"}
@@ -559,6 +630,7 @@ export default function SecurityClient() {
               <div>webhook_host_allowlist = <MonoChip>{policy.webhook_host_allowlist.length ? policy.webhook_host_allowlist.join(", ") : "any public host"}</MonoChip></div>
               <div>data_residency = <MonoChip>{policy.data_residency}</MonoChip> (deploy: <MonoChip>{deployRegion}</MonoChip>)</div>
               <div>runs_retention_days = <MonoChip>{policy.runs_retention_days ?? "keep forever"}</MonoChip></div>
+              <div>api_key_max_ttl_days = <MonoChip>{policy.api_key_max_ttl_days ?? "no cap"}</MonoChip></div>
               <div className="text-[11px] mt-2">
                 When a user belongs to multiple workspaces the tightest rule wins: the lowest session cap and require_mfa from any workspace applies.
               </div>

@@ -104,8 +104,29 @@ export interface WorkspaceSecurityPolicy {
    * hash-chained per SOC2 guidance.
    */
   runs_retention_days: number | null;
+  /**
+   * Maximum allowed TTL (in days) for any newly created or rotated API key in
+   * this workspace. When set to a positive integer N, every call to
+   * createKey/rotateKey must specify ttl_days where 0 < ttl_days <= N, and
+   * "never expires" (null/0) is rejected. This is a SOC2 CC6.1 control: it
+   * prevents long-lived credentials from being issued by mistake and forces
+   * routine rotation. `null` or 0 means no cap (legacy behaviour, keys can be
+   * created without expiry). Capped at 10 years.
+   */
+  api_key_max_ttl_days: number | null;
   updated_at: number;
   updated_by: string;
+}
+
+export const API_KEY_TTL_MIN_DAYS = 1;
+export const API_KEY_TTL_MAX_DAYS = 3650;
+
+/** Normalize a user-supplied API-key TTL cap: positive int 1..3650, else null. */
+export function normalizeApiKeyMaxTtlDays(raw: unknown): number | null {
+  if (raw === null || raw === undefined || raw === "") return null;
+  const n = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.min(Math.max(Math.floor(n), API_KEY_TTL_MIN_DAYS), API_KEY_TTL_MAX_DAYS);
 }
 
 export const RETENTION_MIN_DAYS = 1;
@@ -1037,6 +1058,7 @@ export interface PublicWorkspaceSecurityPolicy {
   webhook_host_allowlist: string[];
   data_residency: DataResidencyRegion;
   runs_retention_days: number | null;
+  api_key_max_ttl_days: number | null;
   updated_at: number;
 }
 
@@ -1051,6 +1073,7 @@ export function publicPolicy(
       webhook_host_allowlist: [],
       data_residency: "unspecified",
       runs_retention_days: null,
+      api_key_max_ttl_days: null,
       updated_at: 0,
     };
   }
@@ -1066,6 +1089,9 @@ export function publicPolicy(
       : "unspecified",
     runs_retention_days: normalizeRetentionDays(
       (p as { runs_retention_days?: unknown }).runs_retention_days,
+    ),
+    api_key_max_ttl_days: normalizeApiKeyMaxTtlDays(
+      (p as { api_key_max_ttl_days?: unknown }).api_key_max_ttl_days,
     ),
     updated_at: p.updated_at,
   };
@@ -1089,6 +1115,7 @@ export async function setWorkspacePolicy(
     webhook_host_allowlist?: string[];
     data_residency?: DataResidencyRegion;
     runs_retention_days?: number | null;
+    api_key_max_ttl_days?: number | null;
   },
 ): Promise<PublicWorkspaceSecurityPolicy> {
   const store = await readStore();
@@ -1137,6 +1164,13 @@ export async function setWorkspacePolicy(
             runs_retention_days,
         ))
       : normalizeRetentionDays(next.runs_retention_days);
+  const apiKeyMaxTtl =
+    next.api_key_max_ttl_days === undefined
+      ? normalizeApiKeyMaxTtlDays(
+          (ws.security_policy as { api_key_max_ttl_days?: unknown } | null | undefined)?.
+            api_key_max_ttl_days,
+        )
+      : normalizeApiKeyMaxTtlDays(next.api_key_max_ttl_days);
   ws.security_policy = {
     session_max_age_minutes: cap,
     require_mfa: Boolean(next.require_mfa),
@@ -1144,6 +1178,7 @@ export async function setWorkspacePolicy(
     webhook_host_allowlist: hostAllowlist,
     data_residency: residency,
     runs_retention_days: retention,
+    api_key_max_ttl_days: apiKeyMaxTtl,
     updated_at: Date.now(),
     updated_by: actorUserId,
   };
@@ -1183,6 +1218,28 @@ export async function effectivePolicyForUser(
     }
   }
   return { session_max_age_minutes: cap, require_mfa: mfa, sources };
+}
+
+/**
+ * Strictest API-key TTL cap across every workspace (any membership counts).
+ * Returns the smallest positive cap, or null when no workspace sets one.
+ *
+ * API keys in this codebase live in a workspace-agnostic shared store. To
+ * keep the SOC2 "max credential lifetime" control meaningful, we apply the
+ * strictest cap any of the caller's workspaces declares.
+ */
+export async function effectiveApiKeyMaxTtlDays(): Promise<number | null> {
+  const store = await readStore();
+  let cap: number | null = null;
+  for (const ws of store.workspaces) {
+    const v = normalizeApiKeyMaxTtlDays(
+      (ws.security_policy as { api_key_max_ttl_days?: unknown } | null | undefined)?.
+        api_key_max_ttl_days,
+    );
+    if (v === null) continue;
+    if (cap === null || v < cap) cap = v;
+  }
+  return cap;
 }
 
 
