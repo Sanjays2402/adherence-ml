@@ -85,6 +85,7 @@ _CATALOG: tuple[ScopeRule, ...] = (
     # ----- Workspace administration: every mutation here is a deal-
     # blocker if a scoped key can bypass it.
     ScopeRule("*", "/v1/admin/api-keys",        "admin:keys",      "Manage API keys"),
+    ScopeRule("*", "/v1/admin/scim/tokens",     "admin:scim",      "Manage SCIM provisioning tokens"),
     ScopeRule("*", "/v1/admin/sessions",        "admin:sessions",  "Manage user sessions"),
     ScopeRule("*", "/v1/admin/mfa",             "admin:mfa",       "Manage admin MFA"),
     ScopeRule("*", "/v1/admin/sso",             "admin:sso",       "Configure SSO"),
@@ -115,6 +116,7 @@ EXEMPT_PREFIXES: tuple[str, ...] = (
     "/openapi.json", "/docs", "/redoc",
     "/v1/admin/sso",   # SSO sign-in must reach API before tenant context exists
     "/v1/auth/scopes", # introspection must be reachable to discover scopes
+    "/scim/v2",        # SCIM uses its own per-tenant bearer, not an API key
 )
 
 

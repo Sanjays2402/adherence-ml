@@ -2,6 +2,47 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## SCIM 2.0 user provisioning
+
+Enterprise IdPs (Okta, Azure AD / Entra ID, OneLogin, JumpCloud) can
+automatically provision and de-provision users into a workspace via
+SCIM 2.0 (RFC 7644). A workspace admin mints a per-tenant bearer token,
+pastes it into their IdP, and onboarding/offboarding tickets become
+group membership changes upstream.
+
+The SCIM bearer token is tenant-bound at issuance: the SCIM endpoints
+only ever read and write members of the workspace the token belongs to,
+regardless of what the IdP payload claims. Every provisioning mutation
+is recorded in `admin_audit_log` and flows through the existing SIEM
+drain.
+
+### Try it
+
+Local API: <http://127.0.0.1:8000>. SCIM discovery: <http://127.0.0.1:8000/scim/v2/ServiceProviderConfig>.
+
+```bash
+# 1. As a workspace admin, mint a SCIM token for your IdP.
+curl -s -X POST http://127.0.0.1:8000/v1/admin/scim/tokens \
+  -H "authorization: Bearer $ADMIN_JWT" \
+  -H 'content-type: application/json' \
+  -d '{"name":"okta-prod"}'
+# The `token` field is returned exactly once. Hand it to the IdP.
+
+# 2. From the IdP's egress (simulated here), provision a user.
+curl -s -X POST http://127.0.0.1:8000/scim/v2/Users \
+  -H "authorization: Bearer $SCIM_TOKEN" \
+  -H 'content-type: application/scim+json' \
+  -d '{"userName":"alice@acme.com","active":true,"roles":[{"value":"viewer","primary":true}]}'
+
+# 3. De-provision the user (PATCH active=false or DELETE).
+curl -s -X DELETE http://127.0.0.1:8000/scim/v2/Users/$USER_ID \
+  -H "authorization: Bearer $SCIM_TOKEN"
+
+# 4. Rotate: revoke the old SCIM token after the IdP picks up the new one.
+curl -s -X DELETE http://127.0.0.1:8000/v1/admin/scim/tokens/$TOKEN_ID \
+  -H "authorization: Bearer $ADMIN_JWT"
+```
+
 ## Workspace verified domains and SSO auto-join
 
 Workspace owners self-serve add email domains they own (for example
