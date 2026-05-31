@@ -87,6 +87,28 @@ curl -s -b cookies.txt http://localhost:3000/api/auth/me
 The user's email + sign-out control live in the sidebar footer. Anonymous
 visitors see a Sign in chip instead.
 
+### Sign in with GitHub
+
+The login page also supports GitHub OAuth as a one-click alternative to
+the magic link. To enable it, register an OAuth app at
+`https://github.com/settings/developers` with the callback URL
+`https://<your-host>/api/auth/github/callback`, then set:
+
+```bash
+export GITHUB_CLIENT_ID=Iv1.xxxxxxxxxxxxxxxx
+export GITHUB_CLIENT_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+export ADHERENCE_SESSION_SECRET=$(openssl rand -hex 32)
+```
+
+When those are present the *Continue with GitHub* button appears on
+[/login](http://localhost:3000/login). The flow uses a signed,
+HMAC-SHA256 state cookie (10 minute TTL) to prevent CSRF, then reads the
+user's verified primary email via the GitHub API (`read:user user:email`
+scopes only, no repo access). First-time users are created on the fly
+and share the same `adh_session` cookie + sidebar footer as magic-link
+sign-ins. If neither client id nor secret is set the button is hidden
+and the route returns the user to `/login?error=oauth_unconfigured`.
+
 ### Get started in three steps
 
 New workspaces land on [/onboarding](http://localhost:3000/onboarding): a guided

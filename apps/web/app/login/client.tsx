@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Envelope, PaperPlaneTilt, ShieldCheck, Spinner, Warning } from "@phosphor-icons/react";
+import { Envelope, GithubLogo, PaperPlaneTilt, ShieldCheck, Spinner, Warning } from "@phosphor-icons/react";
 
 interface SendResponse {
   ok?: boolean;
@@ -14,14 +14,24 @@ const ERROR_COPY: Record<string, string> = {
   missing_token: "That sign-in link is missing its token. Request a new one.",
   invalid_or_expired:
     "That link is invalid or has expired. Request a new one and use it within 15 minutes.",
+  oauth_state:
+    "GitHub sign-in could not be verified (state mismatch or expired). Try again.",
+  oauth_exchange:
+    "GitHub rejected the sign-in handshake. Try again in a moment.",
+  oauth_no_email:
+    "GitHub did not return a verified email. Add a verified email to your GitHub account and try again.",
+  oauth_unconfigured:
+    "GitHub sign-in is not configured on this server. Use the email link instead.",
 };
 
 export default function LoginClient({
   error,
   next,
+  githubEnabled,
 }: {
   error: string | null;
   next: string | null;
+  githubEnabled: boolean;
 }) {
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
@@ -161,6 +171,28 @@ export default function LoginClient({
         <p className="mt-4 text-[12px] text-[var(--color-muted)]">
           New here? Use any email. We create your account on first sign in.
         </p>
+
+        {githubEnabled ? (
+          <>
+            <div className="my-5 flex items-center gap-3" aria-hidden="true">
+              <div className="h-px flex-1 bg-[var(--color-border)]" />
+              <span className="text-[10px] font-mono uppercase tracking-widest text-[var(--color-subtle)]">
+                or
+              </span>
+              <div className="h-px flex-1 bg-[var(--color-border)]" />
+            </div>
+            <a
+              href={`/api/auth/github${next ? `?next=${encodeURIComponent(next)}` : ""}`}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[13px] font-medium text-[var(--color-fg)] transition-colors hover:bg-[var(--color-surface-2)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+            >
+              <GithubLogo weight="duotone" size={16} />
+              Continue with GitHub
+            </a>
+            <p className="mt-2 text-[11px] text-[var(--color-subtle)]">
+              We only read your verified primary email. No repos, no writes.
+            </p>
+          </>
+        ) : null}
       </div>
     </div>
   );

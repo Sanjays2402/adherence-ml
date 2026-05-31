@@ -141,6 +141,31 @@ export async function consumeMagicToken(plaintext: string): Promise<UserRecord |
   return user;
 }
 
+/**
+ * Get or create a user by email. Used by OAuth providers (GitHub, etc.)
+ * where the email is already verified by the IdP, so no magic link is
+ * required. Updates last_login_at on every call.
+ */
+export async function getOrCreateUserByEmail(email: string): Promise<UserRecord> {
+  const e = normalizeEmail(email);
+  const store = await readStore();
+  const now = Date.now();
+  let user = store.users.find((u) => u.email === e);
+  if (!user) {
+    user = {
+      id: newUserId(),
+      email: e,
+      created_at: now,
+      last_login_at: now,
+    };
+    store.users.push(user);
+  } else {
+    user.last_login_at = now;
+  }
+  await writeStore(store);
+  return user;
+}
+
 export async function getUserById(id: string): Promise<UserRecord | null> {
   if (!id) return null;
   const store = await readStore();

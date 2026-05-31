@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import LoginClient from "./client";
 import { getSession } from "@/lib/session";
+import { isGithubOAuthConfigured } from "@/lib/oauth-state";
 import { redirect } from "next/navigation";
 
 export const metadata: Metadata = {
@@ -20,5 +21,11 @@ export default async function LoginPage({
   if (ctx) {
     redirect(sp.next && sp.next.startsWith("/") ? sp.next : "/");
   }
-  return <LoginClient error={sp.error ?? null} next={sp.next ?? null} />;
+  return (
+    <LoginClient
+      error={sp.error ?? null}
+      next={sp.next ?? null}
+      githubEnabled={isGithubOAuthConfigured()}
+    />
+  );
 }
