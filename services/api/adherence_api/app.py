@@ -17,6 +17,7 @@ from adherence_api.routes import ip_allowlist as ip_allowlist_route
 from adherence_api.routes import quota as quota_route
 from adherence_api.routes import sso as sso_route
 from adherence_api.routes import admin_mfa as admin_mfa_route
+from adherence_api.routes import admin_sessions as admin_sessions_route
 from adherence_api.routes import (
     admin,
     cohort,
@@ -156,6 +157,7 @@ def create_app() -> FastAPI:
     app.include_router(ip_allowlist_route.router)
     app.include_router(sso_route.router)
     app.include_router(admin_mfa_route.router)
+    app.include_router(admin_sessions_route.router)
     app.include_router(quota_route.router)
     # Ensure quota + workspace tables exist before the first request.
     try:

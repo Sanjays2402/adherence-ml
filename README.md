@@ -2,6 +2,56 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## JWT session revocation (sign out everywhere)
+
+Until now, a stolen JWT was good until its `exp`. Enterprise security
+teams need a way to kill a session immediately when a laptop walks out
+the door, or to invalidate every outstanding token for an employee
+being offboarded. Every minted JWT now carries a `jti` claim, and two
+admin endpoints invalidate tokens without waiting on `exp`.
+
+* `POST /v1/admin/sessions/revoke` revokes one token by its `jti`.
+* `POST /v1/admin/sessions/revoke-all` revokes every token issued for a
+  `sub` (optionally scoped to a `tenant`) at or before `cutoff_iat`
+  (default: now). New tokens minted afterwards keep working, so a user
+  can be signed out of every device and then log back in cleanly.
+
+Both endpoints are admin-only, MFA-gated, support `?dry_run=true`, and
+write to `admin_audit_log` with the actor, target, request id, and
+reason. The revocation check runs inside `verify_jwt`, so every route
+that accepts a Bearer token enforces it; if the backing store is
+unreachable the check fails open and degrades gracefully (matching how
+the audit chain handles outages).
+
+### Try it
+
+```bash
+# Mint a viewer token.
+TOKEN=$(curl -sS -X POST http://localhost:8000/v1/admin/token \
+  -H "x-api-key: $ADMIN_KEY" -H "content-type: application/json" \
+  -d '{"subject":"alice","role":"viewer","tenant":"acme"}' | jq -r .token)
+
+# Read the jti claim (no signature check, just for the demo).
+JTI=$(python3 -c "import jwt,sys;print(jwt.decode(sys.argv[1],options={'verify_signature':False})['jti'])" "$TOKEN")
+
+# Token works.
+curl -sS http://localhost:8000/v1/quota/me -H "Authorization: Bearer $TOKEN"
+
+# Revoke just that one token.
+curl -sS -X POST http://localhost:8000/v1/admin/sessions/revoke \
+  -H "x-api-key: $ADMIN_KEY" -H "content-type: application/json" \
+  -d "{\"jti\":\"$JTI\",\"sub\":\"alice\",\"tenant\":\"acme\",\"reason\":\"laptop lost\"}"
+
+# Same token is now 401.
+curl -sS -o /dev/null -w "%{http_code}\n" http://localhost:8000/v1/quota/me \
+  -H "Authorization: Bearer $TOKEN"   # => 401
+
+# Sign Bob out of every device.
+curl -sS -X POST http://localhost:8000/v1/admin/sessions/revoke-all \
+  -H "x-api-key: $ADMIN_KEY" -H "content-type: application/json" \
+  -d '{"sub":"bob","tenant":"acme","reason":"offboarding"}'
+```
+
 ## Outbound webhook destination policy (SSRF defense)
 
 Procurement reviewers fail any SaaS that will POST to an arbitrary URL

@@ -1,6 +1,7 @@
 """Auth helpers: API key extraction, JWT mint/verify, RBAC."""
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
@@ -22,15 +23,36 @@ def mint_jwt(subject: str, role: Role, settings: Settings, *, tenant: str | None
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(seconds=settings.jwt_ttl_seconds)).timestamp()),
         "iss": "adherence-ml",
+        "jti": uuid.uuid4().hex,
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_alg)
 
 
 def verify_jwt(token: str, settings: Settings) -> dict:
+    """Decode and validate a JWT, then enforce revocation/superseded checks.
+
+    Raises :class:`AuthError` if the token was individually revoked (by jti)
+    or if the bearer's sessions were bulk-revoked after the token was issued
+    (per-(tenant,subject) "min_iat" cutoff). The revocation check is
+    best-effort: if the backing store is unavailable, the check fails open
+    and the request proceeds with only signature/expiry validation. This
+    matches the rest of the codebase (audit, mfa) which never let a degraded
+    DB take the API down, while still hard-failing once the store is healthy.
+    """
     try:
-        return jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_alg])
+        claims = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_alg])
     except jwt.PyJWTError as exc:
         raise AuthError(str(exc)) from exc
+    # Local import to avoid a circular import at module load time
+    # (revocation -> db -> settings -> ...).
+    try:
+        from adherence_common.revocation import check_token_revoked
+    except Exception:
+        return claims
+    reason = check_token_revoked(claims)
+    if reason is not None:
+        raise AuthError(reason)
+    return claims
 
 
 def resolve_api_key(key: str, settings: Settings) -> Role:

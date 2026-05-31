@@ -360,6 +360,36 @@ class TenantIpAllowlist(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class JWTRevocation(Base):
+    """JWT revocation entries: per-jti hard deny and per-principal bulk deny.
+
+    Two row shapes share the table:
+
+    * ``kind="jti"``: ``target_jti`` is the unique JWT id that must be
+      rejected. Useful for revoking a single leaked/laptop-lost token.
+    * ``kind="all"``: ``target_sub`` (and optional ``target_tenant``)
+      define a principal; every JWT issued at or before ``not_before_iat``
+      for that subject is rejected. Used by the "sign me out of every
+      device" admin action and by the "deactivate user" flow.
+
+    Rows are append-only. Re-issuing for the same principal simply adds a
+    newer ``not_before_iat`` row; verifiers pick the max cutoff in range.
+    The table is consulted on every JWT verify so it stays narrow and
+    indexed; production deployments should pair this with a short jwt TTL
+    so the working set stays small.
+    """
+    __tablename__ = "jwt_revocation"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    kind = Column(String(8), nullable=False, index=True)  # 'jti' | 'all'
+    target_jti = Column(String(64), nullable=True, index=True)
+    target_sub = Column(String(128), nullable=True, index=True)
+    target_tenant = Column(String(64), nullable=True, index=True)
+    not_before_iat = Column(Integer, nullable=True, index=True)
+    reason = Column(String(128), nullable=True)
+    revoked_by = Column(String(64), nullable=True)
+    revoked_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
 class TrainingRun(Base):
     __tablename__ = "training_runs"
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -439,6 +469,7 @@ def init_db() -> None:
     # Ensure ORM models from sibling modules are imported so their tables
     # are registered on Base.metadata before create_all runs.
     from adherence_common import quota as _quota  # noqa: F401
+    from adherence_common import revocation as _rev  # noqa: F401
     engine = _engine()
     Base.metadata.create_all(engine)
     try:
