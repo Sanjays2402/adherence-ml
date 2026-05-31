@@ -367,7 +367,11 @@ touching SSO sign-in.
 
 Workspace admins can see active lockouts at
 `/settings/login-throttle` and clear individual buckets; every clear is
-recorded in the dashboard audit log.
+recorded in the dashboard audit log. The same page exposes a per-scope
+throttle policy editor backed by `GET/PUT /api/auth/lockouts/policy`,
+so the failure window, attempt threshold, and lockout duration are
+tunable per deployment (clamped to safe bounds, audit-logged on every
+change, revertable to the built-in default).
 
 ### Try it
 
@@ -388,6 +392,12 @@ curl -sS http://localhost:3000/api/auth/lockouts?only_locked=1 \
 curl -sS -X POST http://localhost:3000/api/auth/lockouts \
   -H "content-type: application/json" -b cookies.txt \
   -d '{"scope":"magic_request","key":"abuser@example.com"}'
+
+# View and edit the throttle policy (per-deployment override):
+curl -sS http://localhost:3000/api/auth/lockouts/policy -b cookies.txt
+curl -sS -X PUT http://localhost:3000/api/auth/lockouts/policy \
+  -H "content-type: application/json" -b cookies.txt \
+  -d '{"policies":{"totp_verify":{"windowMs":300000,"maxAttempts":3,"lockoutMs":1800000}}}'
 ```
 
 will mint a JWT bound to the claiming tenant, create a `workspace_members`
