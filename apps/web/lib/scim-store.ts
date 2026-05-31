@@ -28,6 +28,13 @@ export interface ScimTokenRecord {
   last_used_ip: string | null;
   use_count: number;
   revoked_at: number | null;
+  // Rotation overlap window: when set and in the future the record
+  // still authenticates; the successor token has the same name and
+  // points back via rotated_from_id.
+  expires_at?: number | null;
+  rotated_at?: number | null;
+  rotated_from_id?: string | null;
+  rotated_to_id?: string | null;
 }
 
 export interface PublicScimToken {
@@ -40,6 +47,10 @@ export interface PublicScimToken {
   last_used_ip: string | null;
   use_count: number;
   revoked_at: number | null;
+  expires_at: number | null;
+  rotated_at: number | null;
+  rotated_from_id: string | null;
+  rotated_to_id: string | null;
 }
 
 interface Store {
@@ -99,6 +110,10 @@ export function publicView(t: ScimTokenRecord): PublicScimToken {
     last_used_ip: t.last_used_ip,
     use_count: t.use_count,
     revoked_at: t.revoked_at,
+    expires_at: t.expires_at ?? null,
+    rotated_at: t.rotated_at ?? null,
+    rotated_from_id: t.rotated_from_id ?? null,
+    rotated_to_id: t.rotated_to_id ?? null,
   };
 }
 
@@ -155,6 +170,65 @@ export async function revokeToken(
   return true;
 }
 
+// Rotation grace defaults match the FastAPI implementation in
+// packages/common/adherence_common/scim.py.
+export const DEFAULT_ROTATION_GRACE_SECONDS = 24 * 3600;
+export const MIN_ROTATION_GRACE_SECONDS = 60;
+export const MAX_ROTATION_GRACE_SECONDS = 7 * 24 * 3600;
+
+export async function rotateToken(
+  workspaceId: string,
+  tokenId: string,
+  opts: { graceSeconds?: number; rotatedBy: string } = { rotatedBy: "" },
+): Promise<{ plaintext: string; oldToken: PublicScimToken; newToken: PublicScimToken; graceSeconds: number } | null> {
+  const grace = Math.min(
+    Math.max(
+      Math.floor(opts.graceSeconds ?? DEFAULT_ROTATION_GRACE_SECONDS),
+      MIN_ROTATION_GRACE_SECONDS,
+    ),
+    MAX_ROTATION_GRACE_SECONDS,
+  );
+  const s = await readStore();
+  const old = s.tokens.find(
+    (x) => x.id === tokenId && x.workspace_id === workspaceId,
+  );
+  if (!old) return null;
+  if (old.revoked_at && (!old.expires_at || old.expires_at <= Date.now())) {
+    throw new Error("cannot rotate a revoked scim token");
+  }
+  if (old.rotated_to_id) {
+    throw new Error("scim token already rotated; rotate the successor instead");
+  }
+  const now = Date.now();
+  const expiresAt = now + grace * 1000;
+  const plaintext = "scim_v2_" + randomBytes(32).toString("base64url");
+  const successor: ScimTokenRecord = {
+    id: newId(),
+    workspace_id: workspaceId,
+    name: old.name,
+    prefix: plaintext.slice(0, 10),
+    hash: hashToken(plaintext),
+    created_at: now,
+    created_by: opts.rotatedBy || old.created_by,
+    last_used_at: null,
+    last_used_ip: null,
+    use_count: 0,
+    revoked_at: null,
+    rotated_from_id: old.id,
+  };
+  old.expires_at = expiresAt;
+  old.rotated_at = now;
+  old.rotated_to_id = successor.id;
+  s.tokens.push(successor);
+  await writeStore(s);
+  return {
+    plaintext,
+    oldToken: publicView(old),
+    newToken: publicView(successor),
+    graceSeconds: grace,
+  };
+}
+
 /**
  * Validate a presented bearer token and return the workspace it grants
  * access to. Returns null for unknown, revoked, or malformed tokens. Uses
@@ -171,17 +245,26 @@ export async function verifyToken(
   if (!stripped) return null;
   const candidateHash = Buffer.from(hashToken(stripped), "hex");
   const s = await readStore();
+  let mutated = false;
+  const now = Date.now();
   for (const t of s.tokens) {
     if (t.revoked_at) continue;
+    // Auto-tombstone a token whose rotation grace window has closed.
+    if (t.expires_at && t.expires_at <= now) {
+      t.revoked_at = t.expires_at;
+      mutated = true;
+      continue;
+    }
     const knownHash = Buffer.from(t.hash, "hex");
     if (knownHash.length !== candidateHash.length) continue;
     if (!timingSafeEqual(knownHash, candidateHash)) continue;
-    t.last_used_at = Date.now();
+    t.last_used_at = now;
     t.last_used_ip = ip;
     t.use_count += 1;
     await writeStore(s);
     return { workspaceId: t.workspace_id, tokenId: t.id };
   }
+  if (mutated) await writeStore(s);
   return null;
 }
 

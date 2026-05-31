@@ -88,6 +88,42 @@ describe("SCIM provisioning + cross-tenant isolation", () => {
     expect(await scim.revokeToken(wsA.id, token.id)).toBe(false);
   });
 
+  it("rotating a SCIM token keeps the old one valid during the grace window", async () => {
+    const ws = await import("../lib/workspaces-store");
+    const scim = await import("../lib/scim-store");
+    const [wsA] = await ws.listForUser("u_alice", "alice@example.com");
+    const [wsB] = await ws.listForUser("u_carol", "carol@example.com");
+    const { plaintext: oldPt, token: oldTok } = await scim.createToken(
+      wsA.id,
+      "u_alice",
+      "okta",
+    );
+
+    // Cross-tenant rotate must not find the token.
+    expect(
+      await scim.rotateToken(wsB.id, oldTok.id, { rotatedBy: "u_carol" }),
+    ).toBeNull();
+
+    const result = await scim.rotateToken(wsA.id, oldTok.id, {
+      graceSeconds: 3600,
+      rotatedBy: "u_alice",
+    });
+    expect(result).not.toBeNull();
+    expect(result!.plaintext).not.toBe(oldPt);
+    expect(result!.oldToken.expires_at).not.toBeNull();
+    expect(result!.newToken.rotated_from_id).toBe(oldTok.id);
+    expect(result!.oldToken.rotated_to_id).toBe(result!.newToken.id);
+
+    // Both tokens authenticate during the overlap.
+    expect(await scim.verifyToken(oldPt, null)).not.toBeNull();
+    expect(await scim.verifyToken(result!.plaintext, null)).not.toBeNull();
+
+    // Cannot rotate the predecessor a second time.
+    await expect(
+      scim.rotateToken(wsA.id, oldTok.id, { rotatedBy: "u_alice" }),
+    ).rejects.toThrow(/already rotated/);
+  });
+
   it("tracks last-used metadata on each verification", async () => {
     const ws = await import("../lib/workspaces-store");
     const scim = await import("../lib/scim-store");

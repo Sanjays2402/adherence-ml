@@ -13,6 +13,7 @@ import {
   ArrowLeft,
   Warning,
   PlugsConnected,
+  ArrowsClockwise,
 } from "@phosphor-icons/react";
 import {
   PageHeader,
@@ -40,6 +41,10 @@ type ScimToken = {
   last_used_ip: string | null;
   use_count: number;
   revoked_at: number | null;
+  expires_at: number | null;
+  rotated_at: number | null;
+  rotated_from_id: string | null;
+  rotated_to_id: string | null;
 };
 
 const fetcher = async (url: string) => {
@@ -131,6 +136,39 @@ export default function ScimClient() {
           const j = await r.json().catch(() => ({}));
           throw new Error(j.detail ?? `revoke failed (${r.status})`);
         }
+        tokens.mutate();
+      } catch (e2) {
+        setErr((e2 as Error).message);
+      }
+    },
+    [selected, tokens],
+  );
+
+  const rotate = useCallback(
+    async (tokenId: string, name: string) => {
+      if (!selected) return;
+      const hoursStr = prompt(
+        `Rotate SCIM token "${name}".\n\nThe old token stays valid alongside the new one for the grace window so your IdP can swap credentials without a failed-call gap.\n\nGrace window in hours (1 to 168):`,
+        "24",
+      );
+      if (hoursStr === null) return;
+      const hours = Number(hoursStr);
+      if (!Number.isFinite(hours) || hours < 1 || hours > 168) {
+        setErr("Grace window must be between 1 and 168 hours.");
+        return;
+      }
+      try {
+        const r = await fetch(
+          `/api/workspaces/${selected}/scim-tokens/${encodeURIComponent(tokenId)}/rotate`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ grace_seconds: Math.round(hours * 3600) }),
+          },
+        );
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.detail ?? `rotate failed (${r.status})`);
+        setRevealed({ id: j.new.id, plaintext: j.plaintext });
         tokens.mutate();
       } catch (e2) {
         setErr((e2 as Error).message);
@@ -364,6 +402,17 @@ export default function ScimClient() {
                   <ul className="grid gap-2">
                     {tokens.data!.items.map((t) => {
                       const revoked = t.revoked_at !== null;
+                      const inGrace =
+                        !revoked &&
+                        t.expires_at !== null &&
+                        t.expires_at > Date.now();
+                      const graceMs = inGrace && t.expires_at ? t.expires_at - Date.now() : 0;
+                      const graceLabel = graceMs
+                        ? graceMs >= 3_600_000
+                          ? `${Math.ceil(graceMs / 3_600_000)}h left`
+                          : `${Math.ceil(graceMs / 60_000)}m left`
+                        : "";
+                      const isSuccessor = t.rotated_from_id !== null;
                       return (
                         <li
                           key={t.id}
@@ -375,11 +424,16 @@ export default function ScimClient() {
                               <span className="truncate font-medium">{t.name}</span>
                               {revoked ? (
                                 <Badge tone="neutral">revoked</Badge>
+                              ) : inGrace ? (
+                                <Badge tone="warn">rotating - {graceLabel}</Badge>
                               ) : t.last_used_at ? (
                                 <Badge tone="accent">active</Badge>
                               ) : (
                                 <Badge tone="neutral">unused</Badge>
                               )}
+                              {isSuccessor ? (
+                                <Badge tone="neutral">rotated</Badge>
+                              ) : null}
                             </div>
                             <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-[var(--color-fg-muted)]">
                               <MonoChip>{t.prefix}...</MonoChip>
@@ -389,18 +443,36 @@ export default function ScimClient() {
                               {t.last_used_ip ? (
                                 <span>from {t.last_used_ip}</span>
                               ) : null}
+                              {inGrace && t.expires_at ? (
+                                <span>
+                                  expires {new Date(t.expires_at).toLocaleString()}
+                                </span>
+                              ) : null}
                             </div>
                           </div>
                           {!revoked ? (
-                            <button
-                              type="button"
-                              onClick={() => revoke(t.id, t.name)}
-                              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-red-500/40 bg-red-500/5 px-2.5 py-1.5 text-[12px] text-red-600 hover:bg-red-500/10 dark:text-red-400"
-                              aria-label={`Revoke ${t.name}`}
-                            >
-                              <Trash weight="duotone" size={13} />
-                              Revoke
-                            </button>
+                            <div className="flex shrink-0 items-center gap-2">
+                              {!inGrace && t.rotated_to_id === null ? (
+                                <button
+                                  type="button"
+                                  onClick={() => rotate(t.id, t.name)}
+                                  className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[12px] hover:bg-[var(--color-surface-2)]"
+                                  aria-label={`Rotate ${t.name}`}
+                                >
+                                  <ArrowsClockwise weight="duotone" size={13} />
+                                  Rotate
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                onClick={() => revoke(t.id, t.name)}
+                                className="inline-flex items-center gap-1 rounded-md border border-red-500/40 bg-red-500/5 px-2.5 py-1.5 text-[12px] text-red-600 hover:bg-red-500/10 dark:text-red-400"
+                                aria-label={`Revoke ${t.name}`}
+                              >
+                                <Trash weight="duotone" size={13} />
+                                Revoke
+                              </button>
+                            </div>
                           ) : null}
                         </li>
                       );

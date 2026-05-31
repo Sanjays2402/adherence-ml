@@ -654,6 +654,24 @@ def _ensure_tenant_columns(engine) -> None:
                     "ADD COLUMN member_seats_override INTEGER"
                 ))
 
+    # SCIM token rotation overlap window. Older deployments created
+    # ``scim_tokens`` without these columns; add them so a rotate call
+    # against an upgraded service does not crash. All three columns are
+    # nullable; absence means "never rotated".
+    if "scim_tokens" in existing_tables:
+        cols = {c["name"] for c in insp.get_columns("scim_tokens")}
+        for new_col, ddl_type in (
+            ("expires_at", "DATETIME"),
+            ("rotated_at", "DATETIME"),
+            ("rotated_from_id", "INTEGER"),
+            ("rotated_to_id", "INTEGER"),
+        ):
+            if new_col not in cols:
+                with engine.begin() as conn:
+                    conn.execute(text(
+                        f"ALTER TABLE scim_tokens ADD COLUMN {new_col} {ddl_type}"
+                    ))
+
 
 def init_db() -> None:
     # Ensure ORM models from sibling modules are imported so their tables

@@ -376,7 +376,16 @@ curl -s -X POST http://127.0.0.1:8000/scim/v2/Users \
 curl -s -X DELETE http://127.0.0.1:8000/scim/v2/Users/$USER_ID \
   -H "authorization: Bearer $SCIM_TOKEN"
 
-# 4. Rotate: revoke the old SCIM token after the IdP picks up the new one.
+# 4a. Zero-downtime rotation: mint a successor while the old token keeps
+#     working for a grace window so the IdP can swap credentials without
+#     a single failed provisioning call. Default grace is 24h (60s..7d).
+curl -s -X POST http://127.0.0.1:8000/v1/admin/scim/tokens/$TOKEN_ID/rotate \
+  -H "authorization: Bearer $ADMIN_JWT" \
+  -H 'content-type: application/json' \
+  -d '{"grace_seconds": 86400}'
+# Response: { "token": "scim_...", "old": {...}, "new": {...}, "grace_seconds": 86400 }
+# After the IdP is cut over (or the grace window elapses) the old token
+# is auto-tombstoned on the next presentation. To revoke immediately:
 curl -s -X DELETE http://127.0.0.1:8000/v1/admin/scim/tokens/$TOKEN_ID \
   -H "authorization: Bearer $ADMIN_JWT"
 ## CSP violation reporting (XSS canary)

@@ -206,3 +206,83 @@ def test_scim_revoked_token_cannot_provision(tmp_path, monkeypatch):
     # Revoked token now fails 401.
     r = client.get("/scim/v2/Users", headers=_h(scim_token))
     assert r.status_code == 401, r.text
+
+
+def test_scim_token_rotation_overlap_keeps_old_token_valid(tmp_path, monkeypatch):
+    """Both old and new SCIM tokens must work during the rotation grace
+    window, and tokens cannot rotate across tenant boundaries."""
+    _setup_env(tmp_path, monkeypatch)
+    from adherence_api.app import create_app
+
+    client = TestClient(create_app())
+    acme_admin = _mint_jwt(client, "owner@acme.test", "admin", "acme")
+    globex_admin = _mint_jwt(client, "owner@globex.test", "admin", "globex")
+
+    old_token = _mint_scim(client, acme_admin, "okta")
+
+    # Find token id for acme.
+    r = client.get("/v1/admin/scim/tokens", headers=_h(acme_admin))
+    assert r.status_code == 200, r.text
+    tok_id = r.json()["tokens"][0]["id"]
+
+    # Globex admin must not be able to rotate acme's token even with the id.
+    r = client.post(
+        f"/v1/admin/scim/tokens/{tok_id}/rotate",
+        json={"grace_seconds": 3600},
+        headers=_h(globex_admin),
+    )
+    assert r.status_code == 404, r.text
+
+    # Acme admin rotates with a 1-hour grace.
+    r = client.post(
+        f"/v1/admin/scim/tokens/{tok_id}/rotate",
+        json={"grace_seconds": 3600},
+        headers=_h(acme_admin),
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    new_token = body["token"]
+    assert new_token.startswith("scim_")
+    assert new_token != old_token
+    assert body["old"]["expires_at"] is not None
+    assert body["new"]["rotated_from_id"] == body["old"]["id"]
+    assert body["old"]["rotated_to_id"] == body["new"]["id"]
+
+    # Old token still works during the overlap window.
+    r = client.get("/scim/v2/Users", headers=_h(old_token))
+    assert r.status_code == 200, r.text
+    # New token also works.
+    r = client.get("/scim/v2/Users", headers=_h(new_token))
+    assert r.status_code == 200, r.text
+
+    # Force the grace window to expire and confirm the old token stops resolving
+    # while the new token keeps working.
+    from datetime import datetime, timedelta
+    from adherence_common.db import session
+    from adherence_common.scim import ScimToken
+    from sqlalchemy import select as _select
+    with session() as db:
+        row = db.execute(
+            _select(ScimToken).where(ScimToken.id == int(body["old"]["id"]))
+        ).scalar_one()
+        row.expires_at = datetime.utcnow() - timedelta(seconds=1)
+        db.commit()
+
+    r = client.get("/scim/v2/Users", headers=_h(old_token))
+    assert r.status_code == 401, r.text
+    r = client.get("/scim/v2/Users", headers=_h(new_token))
+    assert r.status_code == 200, r.text
+
+    # Rotating again must operate on the *successor*; the old (now revoked)
+    # row must not accept another rotation.
+    r = client.post(
+        f"/v1/admin/scim/tokens/{body['old']['id']}/rotate",
+        json={"grace_seconds": 3600},
+        headers=_h(acme_admin),
+    )
+    assert r.status_code == 400, r.text
+
+    # Audit log must contain scim.token.rotate scoped to acme.
+    from adherence_common.admin_audit import list_admin_actions
+    actions = [row.get("action") for row in list_admin_actions(limit=100)]
+    assert "scim.token.rotate" in actions

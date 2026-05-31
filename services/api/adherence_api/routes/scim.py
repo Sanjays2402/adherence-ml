@@ -503,6 +503,10 @@ def _token_view_to_response(v: scim_lib.ScimTokenView) -> dict:
         "created_at": v.created_at.isoformat() if v.created_at else "",
         "last_used_at": v.last_used_at.isoformat() if v.last_used_at else None,
         "revoked_at": v.revoked_at.isoformat() if v.revoked_at else None,
+        "expires_at": v.expires_at.isoformat() if v.expires_at else None,
+        "rotated_at": v.rotated_at.isoformat() if v.rotated_at else None,
+        "rotated_from_id": v.rotated_from_id,
+        "rotated_to_id": v.rotated_to_id,
     }
 
 
@@ -562,3 +566,62 @@ def revoke_scim_token(
         details={"name": view.name, "ip": _client_ip(request)},
     )
     return _token_view_to_response(view)
+
+
+class ScimTokenRotateRequest(BaseModel):
+    grace_seconds: int = Field(
+        default=scim_lib.DEFAULT_ROTATION_GRACE_SECONDS,
+        ge=scim_lib.MIN_ROTATION_GRACE_SECONDS,
+        le=scim_lib.MAX_ROTATION_GRACE_SECONDS,
+        description=(
+            "Seconds the old token stays valid alongside the new one. "
+            "Lets the IdP roll credentials without a failed-call window."
+        ),
+    )
+
+
+@router.post("/v1/admin/scim/tokens/{token_id}/rotate", status_code=201)
+def rotate_scim_token(
+    token_id: int,
+    request: Request,
+    body: ScimTokenRotateRequest | None = None,
+    principal: dict = Depends(require_admin),
+    tenant: str = Depends(current_tenant),
+):
+    """Rotate a SCIM bearer token with a zero-downtime overlap window.
+
+    Returns the brand-new token (plaintext shown once) plus the old
+    token's grace ``expires_at`` so the operator knows the deadline by
+    which the IdP must be cut over.
+    """
+    grace = (body.grace_seconds if body else scim_lib.DEFAULT_ROTATION_GRACE_SECONDS)
+    try:
+        old, new, plaintext = scim_lib.rotate_token(
+            tenant_id=tenant,
+            token_id=int(token_id),
+            grace_seconds=int(grace),
+            rotated_by=principal.get("sub"),
+        )
+    except LookupError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="scim token not found")
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    record_admin_action(
+        action="scim.token.rotate",
+        principal=principal,
+        target=f"scim_token:{old.id}",
+        details={
+            "name": new.name,
+            "old_token_id": old.id,
+            "new_token_id": new.id,
+            "grace_seconds": int(grace),
+            "expires_at": old.expires_at.isoformat() if old.expires_at else None,
+            "ip": _client_ip(request),
+        },
+    )
+    return {
+        "old": _token_view_to_response(old),
+        "new": _token_view_to_response(new),
+        "token": plaintext,
+        "grace_seconds": int(grace),
+    }

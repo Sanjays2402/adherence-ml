@@ -36,7 +36,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import Column, DateTime, Integer, String, UniqueConstraint, select
@@ -98,6 +98,24 @@ class ScimToken(Base):
     created_at = Column(DateTime, default=_now, nullable=False)
     last_used_at = Column(DateTime, nullable=True, index=True)
     revoked_at = Column(DateTime, nullable=True, index=True)
+    # Rotation overlap window. When an admin rotates a SCIM token we
+    # mint a brand-new row with a new plaintext and stamp the old row
+    # with ``expires_at`` set to (now + grace). Until that moment the
+    # old token still resolves, so the IdP can swap credentials with
+    # zero failed provisioning calls. After ``expires_at`` the old
+    # token is treated as revoked (and lazily marked so).
+    expires_at = Column(DateTime, nullable=True, index=True)
+    rotated_at = Column(DateTime, nullable=True)
+    rotated_from_id = Column(Integer, nullable=True)
+    rotated_to_id = Column(Integer, nullable=True)
+
+
+# Default rotation overlap window for SCIM bearer tokens. Matches the
+# webhook signing-secret rotation default so admins do not need to
+# memorise two different numbers.
+DEFAULT_ROTATION_GRACE_SECONDS = 24 * 3600
+MAX_ROTATION_GRACE_SECONDS = 7 * 24 * 3600
+MIN_ROTATION_GRACE_SECONDS = 60
 
 
 @dataclass(frozen=True)
@@ -109,6 +127,10 @@ class ScimTokenView:
     created_at: datetime
     last_used_at: Optional[datetime]
     revoked_at: Optional[datetime]
+    expires_at: Optional[datetime] = None
+    rotated_at: Optional[datetime] = None
+    rotated_from_id: Optional[int] = None
+    rotated_to_id: Optional[int] = None
 
 
 def _to_view(row: ScimToken) -> ScimTokenView:
@@ -120,6 +142,10 @@ def _to_view(row: ScimToken) -> ScimTokenView:
         created_at=row.created_at,
         last_used_at=row.last_used_at,
         revoked_at=row.revoked_at,
+        expires_at=getattr(row, "expires_at", None),
+        rotated_at=getattr(row, "rotated_at", None),
+        rotated_from_id=(int(row.rotated_from_id) if getattr(row, "rotated_from_id", None) is not None else None),
+        rotated_to_id=(int(row.rotated_to_id) if getattr(row, "rotated_to_id", None) is not None else None),
     )
 
 
@@ -141,7 +167,9 @@ def mint_token(
     with session() as db:
         existing = db.execute(
             select(ScimToken).where(
-                ScimToken.tenant_id == tid, ScimToken.name == nm
+                ScimToken.tenant_id == tid,
+                ScimToken.name == nm,
+                ScimToken.revoked_at.is_(None),
             )
         ).scalar_one_or_none()
         if existing is not None:
@@ -156,6 +184,85 @@ def mint_token(
         db.commit()
         db.refresh(row)
         return _to_view(row), plaintext
+
+
+def rotate_token(
+    tenant_id: str,
+    token_id: int,
+    *,
+    grace_seconds: int = DEFAULT_ROTATION_GRACE_SECONDS,
+    rotated_by: Optional[str] = None,
+) -> tuple[ScimTokenView, ScimTokenView, str]:
+    """Rotate a SCIM bearer token with an overlap window.
+
+    Mints a brand-new token under the same ``(tenant_id, name)`` and
+    stamps the predecessor with ``expires_at = now + grace_seconds``.
+    The predecessor stays resolvable until that moment, after which
+    :func:`resolve_token` treats it as revoked and lazily writes the
+    tombstone. Returns ``(old_view, new_view, new_plaintext)``.
+    """
+    tid = (tenant_id or "default").strip() or "default"
+    g = int(grace_seconds)
+    if g < MIN_ROTATION_GRACE_SECONDS:
+        raise ValueError(
+            f"grace_seconds must be >= {MIN_ROTATION_GRACE_SECONDS}"
+        )
+    if g > MAX_ROTATION_GRACE_SECONDS:
+        raise ValueError(
+            f"grace_seconds must be <= {MAX_ROTATION_GRACE_SECONDS}"
+        )
+    now = _now()
+    expires_at = now + timedelta(seconds=g)
+    plaintext = "scim_" + secrets.token_urlsafe(32)
+    new_hash = _hash_token(plaintext)
+    with session() as db:
+        old = db.execute(
+            select(ScimToken).where(
+                ScimToken.tenant_id == tid, ScimToken.id == int(token_id)
+            )
+        ).scalar_one_or_none()
+        if old is None:
+            raise LookupError("scim token not found")
+        if old.revoked_at is not None and (
+            old.expires_at is None or old.expires_at <= now
+        ):
+            raise ValueError("cannot rotate a revoked scim token")
+        if old.rotated_to_id is not None:
+            raise ValueError("scim token already rotated; rotate the successor instead")
+        # The new row must be unique on (tenant_id, name). We free the
+        # name by appending a short rotation suffix to the predecessor.
+        rot_suffix = f" (rotated {now.strftime('%Y-%m-%dT%H:%M:%SZ')})"
+        new_old_name = (str(old.name)[: 128 - len(rot_suffix)]) + rot_suffix
+        # Defensive: if a previous rotated row collides, append a counter.
+        i = 0
+        candidate = new_old_name
+        while db.execute(
+            select(ScimToken).where(
+                ScimToken.tenant_id == tid, ScimToken.name == candidate
+            )
+        ).scalar_one_or_none() is not None:
+            i += 1
+            candidate = f"{new_old_name} #{i}"[:128]
+        original_name = str(old.name)
+        old.name = candidate
+        old.expires_at = expires_at
+        old.rotated_at = now
+        db.add(old)
+        db.flush()
+        new_row = ScimToken(
+            tenant_id=tid,
+            name=original_name,
+            token_hash=new_hash,
+            created_by=(rotated_by[:128] if rotated_by else old.created_by),
+            rotated_from_id=int(old.id),
+        )
+        db.add(new_row)
+        db.flush()
+        old.rotated_to_id = int(new_row.id)
+        db.commit()
+        db.refresh(old)
+        db.refresh(new_row)
+        return _to_view(old), _to_view(new_row), plaintext
 
 
 def list_tokens(tenant_id: str) -> list[ScimTokenView]:
@@ -188,19 +295,35 @@ def revoke_token(tenant_id: str, token_id: int) -> ScimTokenView | None:
 
 def resolve_token(plaintext: str) -> ScimTokenView | None:
     """Resolve a bearer token to its tenant binding, or None if invalid
-    / revoked. Updates ``last_used_at`` on a successful lookup so the
-    admin UI can show stale credentials.
+    / revoked / past its rotation grace. Updates ``last_used_at`` on a
+    successful lookup so the admin UI can show stale credentials.
+
+    During a rotation overlap window the predecessor row has
+    ``expires_at`` in the future and ``revoked_at`` is still NULL; the
+    token remains resolvable until that moment. Once the window closes
+    we tombstone the row in the same transaction so subsequent calls
+    are answered without re-running the time check.
     """
     if not plaintext:
         return None
     h = _hash_token(plaintext)
+    now = _now()
     with session() as db:
         row = db.execute(
             select(ScimToken).where(ScimToken.token_hash == h)
         ).scalar_one_or_none()
-        if row is None or row.revoked_at is not None:
+        if row is None:
             return None
-        row.last_used_at = _now()
+        if row.revoked_at is not None:
+            return None
+        exp = getattr(row, "expires_at", None)
+        if exp is not None and exp <= now:
+            # Grace window has closed; tombstone the predecessor so the
+            # next caller short-circuits on revoked_at.
+            row.revoked_at = exp
+            db.commit()
+            return None
+        row.last_used_at = now
         db.commit()
         db.refresh(row)
         return _to_view(row)
