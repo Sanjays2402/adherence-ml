@@ -36,6 +36,25 @@ install chip. On Chrome, Edge, and Android the chip surfaces the native
 to Home Screen. Dismissals are remembered for 14 days. Launching from the
 home screen runs the app standalone with the existing dark theme.
 
+### Settings and your data
+
+Visit [/settings](http://localhost:3000/settings) for the workspace profile
+(display name, contact email, org, timezone), notification preferences
+(high-risk email, weekly digest, webhook master switch, slow-run toast), and
+the data controls. Hit `download .json` to pull a single bundle with every
+run, API key (hashes only), usage day-bucket, share link, webhook endpoint,
+and delivery attempt. The danger zone wipes every file under
+`ADHERENCE_DATA_DIR` after you type the confirmation phrase, so a customer
+can honor a GDPR delete request with one click. Try it:
+
+```bash
+curl -s http://localhost:3000/api/settings | jq .
+curl -s http://localhost:3000/api/settings/export -o adherence-export.json
+curl -s -X POST http://localhost:3000/api/settings/wipe \
+  -H 'content-type: application/json' \
+  -d '{"confirm":"DELETE EVERYTHING"}'
+```
+
 ### Webhooks
 
 Register an HTTP endpoint and adherence.ml will POST a signed JSON envelope to

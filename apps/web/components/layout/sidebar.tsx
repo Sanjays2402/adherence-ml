@@ -19,6 +19,7 @@ import {
   House,
   Sparkle,
   UploadSimple,
+  Gear,
 } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 
@@ -38,6 +39,7 @@ const NAV = [
   { href: "/api-keys", label: "API keys", icon: Key, hint: "Programmatic access" },
   { href: "/usage", label: "Usage", icon: Gauge, hint: "Quota // billing" },
   { href: "/webhooks", label: "Webhooks", icon: Plugs, hint: "Outbound deliveries" },
+  { href: "/settings", label: "Settings", icon: Gear, hint: "Profile // data // wipe" },
 ];
 
 export default function Sidebar() {
