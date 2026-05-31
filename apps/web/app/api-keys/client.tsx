@@ -25,6 +25,21 @@ import {
   Badge,
   MonoChip,
 } from "@/components/ui/primitives";
+import { cn } from "@/lib/utils";
+
+const GRACE_PRESETS: { label: string; minutes: number; hint: string }[] = [
+  { label: "Hard cutover", minutes: 0, hint: "Old secret dies immediately" },
+  { label: "1 hour", minutes: 60, hint: "Quick safety net" },
+  { label: "24 hours", minutes: 60 * 24, hint: "Recommended default" },
+  { label: "7 days", minutes: 60 * 24 * 7, hint: "Slow rollouts" },
+];
+
+function humanGrace(minutes: number): string {
+  if (minutes <= 0) return "no grace window";
+  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 60 * 24) return `${Math.round(minutes / 60)}h`;
+  return `${Math.round(minutes / (60 * 24))}d`;
+}
 
 type Scope = "predict" | "read" | "webhooks";
 
@@ -40,6 +55,9 @@ type KeyRow = {
   scopes: Scope[];
   expires_at: number | null;
   expired: boolean;
+  previous_prefix?: string | null;
+  previous_expires_at?: number | null;
+  grace_active?: boolean;
 };
 
 type ListResp = { keys: KeyRow[]; available_scopes: Scope[]; ttl_presets_days: number[] };
@@ -100,9 +118,22 @@ export default function KeysClient() {
   const [ttlDays, setTtlDays] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
   const [createErr, setCreateErr] = useState<string | null>(null);
-  const [issued, setIssued] = useState<{ name: string; key: string; scopes?: Scope[]; rotated?: boolean } | null>(null);
+  const [issued, setIssued] = useState<{
+    name: string;
+    key: string;
+    scopes?: Scope[];
+    rotated?: boolean;
+    previous_prefix?: string | null;
+    previous_expires_at?: number | null;
+    grace_minutes?: number;
+  } | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [rotatingId, setRotatingId] = useState<string | null>(null);
+  // null = dialog closed; otherwise the key currently being rotated
+  const [rotateTarget, setRotateTarget] = useState<KeyRow | null>(null);
+  // 0 = hard cutover; minutes otherwise. Defaults to a safe 24h.
+  const [graceMinutes, setGraceMinutes] = useState<number>(60 * 24);
+  const [cuttingId, setCuttingId] = useState<string | null>(null);
 
   const onCreate = useCallback(async () => {
     setCreateErr(null);
@@ -150,26 +181,58 @@ export default function KeysClient() {
   );
 
   const onRotate = useCallback(
-    async (k: KeyRow) => {
-      if (
-        !confirm(
-          `Rotate "${k.name}"? The old secret stops working immediately. Make sure you can update every client that uses it.`,
-        )
-      ) {
-        return;
-      }
+    async (k: KeyRow, grace: number) => {
       setRotatingId(k.id);
       try {
-        const res = await fetch(`/api/keys/${k.id}/rotate`, { method: "POST" });
+        const res = await fetch(`/api/keys/${k.id}/rotate`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ grace_minutes: grace }),
+        });
         const json = await res.json();
         if (!res.ok) {
           alert(json?.detail ?? "rotate failed");
           return;
         }
-        setIssued({ name: json.name, key: json.key, scopes: json.scopes, rotated: true });
+        setIssued({
+          name: json.name,
+          key: json.key,
+          scopes: k.scopes,
+          rotated: true,
+          previous_prefix: json.previous_prefix ?? null,
+          previous_expires_at: json.previous_expires_at ?? null,
+          grace_minutes: json.grace_minutes ?? grace,
+        });
+        setRotateTarget(null);
         mutate();
       } finally {
         setRotatingId(null);
+      }
+    },
+    [mutate],
+  );
+
+  const onCutGrace = useCallback(
+    async (id: string) => {
+      if (
+        !confirm(
+          "Cut off the previous secret now? Any client still using the old key will start getting 401 immediately.",
+        )
+      ) {
+        return;
+      }
+      setCuttingId(id);
+      try {
+        const res = await fetch(`/api/keys/${id}/revoke-previous`, {
+          method: "POST",
+        });
+        if (!res.ok && res.status !== 404) {
+          const json = await res.json().catch(() => ({}));
+          alert(json?.detail ?? "failed to cut grace window");
+        }
+        mutate();
+      } finally {
+        setCuttingId(null);
       }
     },
     [mutate],
@@ -238,13 +301,91 @@ export default function KeysClient() {
         description="Programmatic access to /v1: predict, create, read, rename, retag, share, and delete runs. Each key is shown once at creation."
       />
 
+      {rotateTarget ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="rotate-dialog-title"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && rotatingId !== rotateTarget.id) {
+              setRotateTarget(null);
+            }
+          }}
+        >
+          <Card className="w-full max-w-md border-[var(--color-border)] bg-[var(--color-bg)]">
+            <CardHeader
+              title={`Rotate \"${rotateTarget.name}\"`}
+              hint="Pick how long the previous secret should keep working so deployed clients have time to update."
+              right={<ArrowsClockwise weight="duotone" size={16} />}
+            />
+            <div className="p-4 pt-2 space-y-4">
+              <fieldset className="space-y-2">
+                <legend className="text-[11px] uppercase tracking-wider text-[var(--color-muted)]">
+                  Grace window
+                </legend>
+                <div className="grid grid-cols-2 gap-2">
+                  {GRACE_PRESETS.map((g) => (
+                    <label
+                      key={g.minutes}
+                      className={cn(
+                        "flex flex-col gap-0.5 rounded border p-2 cursor-pointer text-[12px]",
+                        graceMinutes === g.minutes
+                          ? "border-[var(--color-accent)] bg-[var(--color-surface)]"
+                          : "border-[var(--color-border)] hover:bg-[var(--color-surface)]",
+                      )}
+                    >
+                      <input
+                        type="radio"
+                        name="grace"
+                        className="sr-only"
+                        checked={graceMinutes === g.minutes}
+                        onChange={() => setGraceMinutes(g.minutes)}
+                      />
+                      <span className="font-medium">{g.label}</span>
+                      <span className="text-[10px] text-[var(--color-muted)]">{g.hint}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+              <div className="flex items-start gap-2 text-[11px] text-[var(--color-muted)]">
+                <Warning weight="duotone" size={14} className="mt-0.5 shrink-0" />
+                <span>
+                  {graceMinutes === 0
+                    ? "Hard cutover. Any client still calling /v1 with the old secret will start getting 401 the instant you rotate."
+                    : `Both secrets work until the window closes. /v1/keys/me will return via_grace: true for callers still using the old secret so you know when rollout is done.`}
+                </span>
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setRotateTarget(null)}
+                  disabled={rotatingId === rotateTarget.id}
+                  className="text-[12px] px-3 py-1.5 rounded border border-[var(--color-border)] hover:bg-[var(--color-surface)] disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <Button
+                  onClick={() => onRotate(rotateTarget, graceMinutes)}
+                  disabled={rotatingId === rotateTarget.id}
+                >
+                  {rotatingId === rotateTarget.id ? "Rotating..." : "Rotate key"}
+                </Button>
+              </div>
+            </div>
+          </Card>
+        </div>
+      ) : null}
+
       {issued ? (
         <Card className="border-[var(--color-accent)]/40">
           <CardHeader
             title={`${issued.rotated ? "Key rotated" : "Key created"}: ${issued.name}`}
             hint={
               issued.rotated
-                ? "The previous secret is now invalid. Copy the new one and update every client that uses it."
+                ? (issued.grace_minutes && issued.grace_minutes > 0
+                    ? `The previous secret keeps working for ${humanGrace(issued.grace_minutes)} so you can roll this out with zero downtime.`
+                    : "The previous secret is now invalid. Copy the new one and update every client that uses it.")
                 : "Copy it now. We store only a hash, so you cannot view it again."
             }
             right={<ShieldCheck weight="duotone" size={16} className="text-[var(--color-accent)]" />}
@@ -423,7 +564,26 @@ export default function KeysClient() {
                   {keys.map((k) => (
                     <tr key={k.id} className="border-t border-[var(--color-border)]">
                       <td className="px-4 py-2 font-medium">{k.name}</td>
-                      <td className="px-4 py-2"><MonoChip>{k.prefix}...</MonoChip></td>
+                      <td className="px-4 py-2"><MonoChip>{k.prefix}...</MonoChip>{k.grace_active && k.previous_prefix ? (
+                        <div className="mt-1 inline-flex flex-col gap-1">
+                          <span className="inline-flex items-center gap-1 text-[10px] text-[var(--color-muted)]">
+                            <span className="opacity-60">prev</span>
+                            <MonoChip>{k.previous_prefix}...</MonoChip>
+                          </span>
+                          <span className="text-[10px] text-amber-600 dark:text-amber-400">
+                            previous secret valid {relativeFromNow(k.previous_expires_at ?? null)}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => onCutGrace(k.id)}
+                            disabled={cuttingId === k.id}
+                            className="self-start inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-[var(--color-border)] hover:border-[var(--color-accent)]/40 disabled:opacity-50"
+                            title="Immediately stop accepting the previous secret"
+                          >
+                            {cuttingId === k.id ? "cutting..." : "cut off now"}
+                          </button>
+                        </div>
+                      ) : null}</td>
                       <td className="px-4 py-2">
                         <div className="inline-flex flex-wrap gap-1">
                           {(k.scopes ?? []).map((s) => (
@@ -476,7 +636,10 @@ export default function KeysClient() {
                             <>
                               <button
                                 type="button"
-                                onClick={() => onRotate(k)}
+                                onClick={() => {
+                                  setGraceMinutes(60 * 24);
+                                  setRotateTarget(k);
+                                }}
                                 disabled={rotatingId === k.id}
                                 className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-surface)] hover:border-[var(--color-accent)]/40 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)] disabled:opacity-50"
                                 aria-label={`rotate ${k.name}`}

@@ -39,6 +39,15 @@ export interface ApiKeyRecord {
   use_count: number;
   revoked: boolean;
   rotated_at?: number | null;
+  /**
+   * Grace-period rotation: when set, the previous secret remains valid until
+   * `previous_expires_at`, letting callers roll out the new key without
+   * dropping in-flight traffic. Cleared on revoke-previous, expiry, or the
+   * next rotation.
+   */
+  previous_hash?: string | null;
+  previous_prefix?: string | null;
+  previous_expires_at?: number | null;
   scopes?: KeyScope[];
   /**
    * Absolute expiry timestamp in epoch milliseconds. `null` or omitted means
@@ -76,8 +85,21 @@ export function scopesOf(rec: Pick<ApiKeyRecord, "scopes">): KeyScope[] {
   return rec.scopes && rec.scopes.length > 0 ? rec.scopes : [...DEFAULT_SCOPES];
 }
 
+/** True when a previous-secret grace window is set and still in the future. */
+export function hasActiveGrace(
+  rec: Pick<ApiKeyRecord, "previous_hash" | "previous_expires_at">,
+  now: number = Date.now(),
+): boolean {
+  return (
+    !!rec.previous_hash &&
+    typeof rec.previous_expires_at === "number" &&
+    rec.previous_expires_at > now
+  );
+}
+
 /** Public-safe view of a key for UI/API responses (never includes the hash). */
 export function publicView(k: ApiKeyRecord) {
+  const graceActive = hasActiveGrace(k);
   return {
     id: k.id,
     name: k.name,
@@ -90,6 +112,9 @@ export function publicView(k: ApiKeyRecord) {
     scopes: scopesOf(k),
     expires_at: k.expires_at ?? null,
     expired: isExpired(k),
+    previous_prefix: graceActive ? k.previous_prefix ?? null : null,
+    previous_expires_at: graceActive ? k.previous_expires_at ?? null : null,
+    grace_active: graceActive,
   };
 }
 
@@ -180,27 +205,81 @@ export async function createKey(
   return { record, plaintext };
 }
 
+/** Cap grace windows to 30 days to keep "temporary" actually temporary. */
+export const MAX_GRACE_MINUTES = 30 * 24 * 60;
+
+export function normalizeGraceMinutes(
+  raw: number | null | undefined,
+): number {
+  if (raw === null || raw === undefined) return 0;
+  if (!Number.isFinite(raw) || raw <= 0) return 0;
+  return Math.min(Math.floor(raw), MAX_GRACE_MINUTES);
+}
+
 /**
  * Rotate a key: generate a new plaintext + hash + prefix in place while
  * preserving id, name, created_at, last_used_at, and use_count so dashboards
  * and audit logs stay continuous. Revoked keys cannot be rotated; callers
  * should issue a fresh key instead. Returns the new plaintext exactly once.
+ *
+ * When `graceMinutes > 0`, the previous secret keeps working until the grace
+ * window elapses so callers can roll out the new key with zero downtime.
+ * `graceMinutes = 0` is the legacy hard-cutover behaviour.
  */
-export async function rotateKey(id: string): Promise<NewApiKey | null> {
+export async function rotateKey(
+  id: string,
+  graceMinutes: number = 0,
+): Promise<NewApiKey | null> {
   let issued: NewApiKey | null = null;
   writeQueue = writeQueue.then(async () => {
     const s = await readStore();
     const k = s.keys.find((k) => k.id === id);
     if (!k || k.revoked || isExpired(k)) return;
+    const grace = normalizeGraceMinutes(graceMinutes);
+    const oldHash = k.hash;
+    const oldPrefix = k.prefix;
     const plaintext = "adh_" + randomBytes(24).toString("base64url");
     k.prefix = plaintext.slice(0, 12);
     k.hash = hashKey(plaintext);
     k.rotated_at = Date.now();
+    if (grace > 0) {
+      k.previous_hash = oldHash;
+      k.previous_prefix = oldPrefix;
+      k.previous_expires_at = k.rotated_at + grace * 60 * 1000;
+    } else {
+      k.previous_hash = null;
+      k.previous_prefix = null;
+      k.previous_expires_at = null;
+    }
     issued = { record: { ...k }, plaintext };
     await writeStore(s);
   });
   await writeQueue;
   return issued;
+}
+
+/**
+ * Immediately end an active grace window so the previous secret stops working.
+ * Returns the updated public view, or `null` if the key is missing or had no
+ * active grace to revoke.
+ */
+export async function revokePreviousSecret(
+  id: string,
+): Promise<ApiKeyRecord | null> {
+  let updated: ApiKeyRecord | null = null;
+  writeQueue = writeQueue.then(async () => {
+    const s = await readStore();
+    const k = s.keys.find((k) => k.id === id);
+    if (!k) return;
+    if (!hasActiveGrace(k)) return;
+    k.previous_hash = null;
+    k.previous_prefix = null;
+    k.previous_expires_at = null;
+    updated = { ...k };
+    await writeStore(s);
+  });
+  await writeQueue;
+  return updated;
 }
 
 export async function revokeKey(id: string): Promise<boolean> {
@@ -221,22 +300,62 @@ export async function revokeKey(id: string): Promise<boolean> {
  * Validate a presented key. Returns the matching record on success.
  * Records usage (last_used_at, use_count) as a side effect.
  */
+export interface VerifyResult {
+  record: ApiKeyRecord;
+  /** True when the caller authenticated with the previous (grace) secret. */
+  viaGrace: boolean;
+}
+
 export async function verifyKey(plaintext: string): Promise<ApiKeyRecord | null> {
+  const r = await verifyKeyDetailed(plaintext);
+  return r ? r.record : null;
+}
+
+/**
+ * Like `verifyKey` but also reports whether the request authenticated via the
+ * previous-secret grace window. Used by `/v1/keys/me` so callers can tell
+ * their integration is still on the old secret and finish rolling out.
+ */
+export async function verifyKeyDetailed(
+  plaintext: string,
+): Promise<VerifyResult | null> {
   if (!plaintext || typeof plaintext !== "string") return null;
   const h = hashKey(plaintext);
-  let match: ApiKeyRecord | null = null;
+  let result: VerifyResult | null = null;
   writeQueue = writeQueue.then(async () => {
     const s = await readStore();
-    const k = s.keys.find((k) => k.hash === h && !k.revoked);
+    const now = Date.now();
+    // Try the current secret first, then the grace secret.
+    let viaGrace = false;
+    let k = s.keys.find((k) => !k.revoked && !isExpired(k, now) && k.hash === h);
+    if (!k) {
+      k = s.keys.find(
+        (k) =>
+          !k.revoked &&
+          !isExpired(k, now) &&
+          hasActiveGrace(k, now) &&
+          k.previous_hash === h,
+      );
+      if (k) viaGrace = true;
+    }
     if (!k) return;
-    if (isExpired(k)) return; // expired keys are inert, same as revoked
-    k.last_used_at = Date.now();
+    k.last_used_at = now;
     k.use_count += 1;
-    match = { ...k };
+    // Opportunistically clear an expired grace window we just stepped past.
+    if (
+      !viaGrace &&
+      k.previous_expires_at &&
+      k.previous_expires_at <= now
+    ) {
+      k.previous_hash = null;
+      k.previous_prefix = null;
+      k.previous_expires_at = null;
+    }
+    result = { record: { ...k }, viaGrace };
     await writeStore(s);
   });
   await writeQueue;
-  return match;
+  return result;
 }
 
 export function extractKey(headers: Headers): string | null {
