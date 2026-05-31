@@ -12,8 +12,16 @@
  * Runs on the Edge runtime. Keep this file dependency-free.
  */
 import { NextRequest, NextResponse } from "next/server";
+import {
+  buildSecurityHeaders,
+  isApiPath,
+  isPublicSharePath,
+  newNonce,
+  shouldEnableHsts,
+} from "@/lib/security-headers";
 
 const HEADER = "x-request-id";
+const NONCE_HEADER = "x-csp-nonce";
 
 function newId(): string {
   // crypto.randomUUID is available on Edge.
@@ -35,15 +43,33 @@ export function middleware(req: NextRequest) {
   const incoming = req.headers.get(HEADER);
   const rid = incoming && /^[A-Za-z0-9_-]{6,128}$/.test(incoming) ? incoming : newId();
 
+  const nonce = newNonce();
   const reqHeaders = new Headers(req.headers);
   reqHeaders.set(HEADER, rid);
   reqHeaders.set("x-request-started-at", String(t0));
+  // Server components can read this header to thread the nonce into
+  // <script nonce=...> tags when we need inline bootstrap.
+  reqHeaders.set(NONCE_HEADER, nonce);
 
   const res = NextResponse.next({ request: { headers: reqHeaders } });
   res.headers.set(HEADER, rid);
 
-  // Structured access log. Skip Next internals + static assets to avoid noise.
+  // Stamp enterprise security headers on every response. One source of
+  // truth in lib/security-headers.ts; tested in tests/security-headers.test.ts;
+  // surfaced in /settings/security-headers for the SOC2 reviewer.
   const path = req.nextUrl.pathname;
+  const headers = buildSecurityHeaders({
+    nonce,
+    isApi: isApiPath(path),
+    isPublicShare: isPublicSharePath(path),
+    extraConnectSrc: process.env.ADHERENCE_CSP_CONNECT_SRC,
+    hsts: shouldEnableHsts(process.env as Record<string, string | undefined>),
+  });
+  for (const [k, v] of Object.entries(headers)) {
+    res.headers.set(k, v);
+  }
+
+  // Structured access log. Skip Next internals + static assets to avoid noise.
   if (!path.startsWith("/_next") && !path.startsWith("/favicon")) {
     const line = {
       ts: new Date(t0).toISOString(),
