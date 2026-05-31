@@ -237,6 +237,16 @@ curl http://localhost:3000/v1/keys/me \
   -H "authorization: Bearer adh_YOUR_KEY"
 ```
 
+Click `usage` on any row in the API keys table to open the per-key dashboard
+at `/api-keys/<id>`. It shows total calls, last-24h and last-7d counts, a
+14-day call-volume chart, breakdowns by endpoint and HTTP status, and the
+last 100 requests with timestamp, method, path, status, and latency. The
+page auto-refreshes every 5 seconds, so a customer running a test can watch
+their first call land in real time. Events are appended to
+`apps/web/.data/api-key-usage.jsonl` and capped at 5 MB / 5,000 rows by an
+automatic compaction pass, so the file stays bounded in dev. `GET
+/api/keys/<id>/usage?limit=N` returns the same payload as JSON.
+
 ### Run history
 
 Every scored prediction, cohort sweep, and forecast call made through the web

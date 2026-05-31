@@ -440,33 +440,41 @@ export default function KeysClient() {
                         )}
                       </td>
                       <td className="px-4 py-2 text-right">
-                        {!k.revoked && !k.expired ? (
-                          <div className="inline-flex items-center gap-1 justify-end">
-                            <button
-                              type="button"
-                              onClick={() => onRotate(k)}
-                              disabled={rotatingId === k.id}
-                              className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-surface)] hover:border-[var(--color-accent)]/40 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)] disabled:opacity-50"
-                              aria-label={`rotate ${k.name}`}
-                              title="Issue a new secret for this key without changing its name or history"
-                            >
-                              <ArrowsClockwise weight="duotone" size={12} />
-                              {rotatingId === k.id ? "..." : "rotate"}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => onRevoke(k.id)}
-                              disabled={revokingId === k.id}
-                              className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-surface)] hover:border-[var(--color-high)]/40 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)] disabled:opacity-50"
-                              aria-label={`revoke ${k.name}`}
-                            >
-                              <Trash weight="duotone" size={12} />
-                              {revokingId === k.id ? "..." : "revoke"}
-                            </button>
-                          </div>
-                        ) : (
-                          <span className="text-[11px] text-[var(--color-muted)]">--</span>
-                        )}
+                        <div className="inline-flex items-center gap-1 justify-end">
+                          <a
+                            href={`/api-keys/${k.id}`}
+                            className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-surface)] hover:border-[var(--color-accent)]/40 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
+                            aria-label={`view usage for ${k.name}`}
+                            title="See recent requests and a 14-day call volume chart"
+                          >
+                            usage
+                          </a>
+                          {!k.revoked && !k.expired ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => onRotate(k)}
+                                disabled={rotatingId === k.id}
+                                className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-surface)] hover:border-[var(--color-accent)]/40 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)] disabled:opacity-50"
+                                aria-label={`rotate ${k.name}`}
+                                title="Issue a new secret for this key without changing its name or history"
+                              >
+                                <ArrowsClockwise weight="duotone" size={12} />
+                                {rotatingId === k.id ? "..." : "rotate"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => onRevoke(k.id)}
+                                disabled={revokingId === k.id}
+                                className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-surface)] hover:border-[var(--color-high)]/40 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)] disabled:opacity-50"
+                                aria-label={`revoke ${k.name}`}
+                              >
+                                <Trash weight="duotone" size={12} />
+                                {revokingId === k.id ? "..." : "revoke"}
+                              </button>
+                            </>
+                          ) : null}
+                        </div>
                       </td>
                     </tr>
                   ))}

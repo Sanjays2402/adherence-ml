@@ -10,6 +10,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { extractKey, hasScope, verifyKey } from "@/lib/api-keys-store";
+import { recordKeyUsage } from "@/lib/api-key-usage-store";
 import { getRun } from "@/lib/runs-store";
 
 export const dynamic = "force-dynamic";
@@ -51,9 +52,25 @@ export async function GET(
 
   const rec = await getRun(id);
   if (!rec) {
+    void recordKeyUsage({
+      key_id: key.id,
+      ts: Date.now(),
+      method: "GET",
+      path: "/v1/runs/[id]",
+      status: 404,
+      latency_ms: 0,
+    }).catch(() => {});
     return NextResponse.json({ detail: "run not found" }, { status: 404 });
   }
 
+  void recordKeyUsage({
+    key_id: key.id,
+    ts: Date.now(),
+    method: "GET",
+    path: "/v1/runs/[id]",
+    status: 200,
+    latency_ms: 0,
+  }).catch(() => {});
   return NextResponse.json({
     id: rec.id,
     created_at: rec.created_at,

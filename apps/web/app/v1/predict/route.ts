@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { ApiError, apiFetch } from "@/lib/api";
 import { extractKey, hasScope, verifyKey } from "@/lib/api-keys-store";
+import { recordKeyUsage } from "@/lib/api-key-usage-store";
 import { appendRun, newRunId } from "@/lib/runs-store";
 import { FREE_DAILY_QUOTA, recordUsage, usedToday } from "@/lib/usage-store";
 import { dailyQuota as planDailyQuota } from "@/lib/plan-store";
@@ -142,6 +143,14 @@ export async function POST(req: NextRequest) {
       // bookkeeping must never break the call
     }
     const remaining = Math.max(0, quota - used - 1);
+    void recordKeyUsage({
+      key_id: key.id,
+      ts: Date.now(),
+      method: "POST",
+      path: "/v1/predict",
+      status: 200,
+      latency_ms: latency,
+    }).catch(() => {});
     return NextResponse.json(data, {
       headers: {
         "x-latency-ms": String(latency),
@@ -151,6 +160,15 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (err) {
+    const status = err instanceof ApiError ? err.status : 502;
+    void recordKeyUsage({
+      key_id: key.id,
+      ts: Date.now(),
+      method: "POST",
+      path: "/v1/predict",
+      status,
+      latency_ms: Date.now() - t0,
+    }).catch(() => {});
     if (err instanceof ApiError) {
       return NextResponse.json(
         typeof err.body === "object" && err.body !== null

@@ -8,6 +8,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { extractKey, hasScope, scopesOf, verifyKey } from "@/lib/api-keys-store";
+import { recordKeyUsage } from "@/lib/api-key-usage-store";
 
 
 export const dynamic = "force-dynamic";
@@ -27,6 +28,14 @@ export async function GET(req: NextRequest) {
   }
   const scopes = scopesOf(key);
   if (!hasScope(key, "read")) {
+    void recordKeyUsage({
+      key_id: key.id,
+      ts: Date.now(),
+      method: "GET",
+      path: "/v1/keys/me",
+      status: 403,
+      latency_ms: 0,
+    }).catch(() => {});
     return NextResponse.json(
       {
         detail: "this api key is missing the 'read' scope.",
@@ -36,6 +45,14 @@ export async function GET(req: NextRequest) {
       { status: 403 },
     );
   }
+  void recordKeyUsage({
+    key_id: key.id,
+    ts: Date.now(),
+    method: "GET",
+    path: "/v1/keys/me",
+    status: 200,
+    latency_ms: 0,
+  }).catch(() => {});
   return NextResponse.json({
     id: key.id,
     name: key.name,

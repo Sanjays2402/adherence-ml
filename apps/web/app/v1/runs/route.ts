@@ -10,6 +10,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { extractKey, hasScope, verifyKey } from "@/lib/api-keys-store";
+import { recordKeyUsage } from "@/lib/api-key-usage-store";
 import { listRuns, type RunKind } from "@/lib/runs-store";
 
 export const dynamic = "force-dynamic";
@@ -51,6 +52,14 @@ export async function GET(req: NextRequest) {
   const q = sp.get("q") ?? undefined;
 
   const { items, total } = await listRuns({ kind, limit, offset, q });
+  void recordKeyUsage({
+    key_id: key.id,
+    ts: Date.now(),
+    method: "GET",
+    path: "/v1/runs",
+    status: 200,
+    latency_ms: 0,
+  }).catch(() => {});
   return NextResponse.json({
     total,
     limit,
