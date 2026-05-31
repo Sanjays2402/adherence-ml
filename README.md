@@ -253,7 +253,9 @@ Share a single run publicly from its detail page with the `Create public link`
 button. That mints a 22-character token and exposes the run read-only at
 `/share/<token>`. Anyone with the link can view it without signing in, the
 owner can revoke it at any time, and the public page is `noindex` so it stays
-out of search. Use the `Download JSON` button to grab the full payload as a
+out of search. Public share links unfurl in Slack, iMessage, Twitter, and
+LinkedIn with a generated 1200x630 OG card (`/share/<token>/opengraph-image`)
+showing the run title, kind, top miss probability, risk tier, and tags. Use the `Download JSON` button to grab the full payload as a
 timestamped file, or `Download PDF` for a one-page printable report (handy
 for sharing with a clinician or attaching to a chart note). The PDF renderer
 is zero-dependency, so no headless browser is needed in production.

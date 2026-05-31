@@ -16,6 +16,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { token } = await params;
   const rec = await getRunByShareToken(token);
   if (!rec) return { title: "Shared run not found // adherence.ml" };
+  const ogPath = `/share/${token}/opengraph-image`;
   return {
     title: `${rec.title} // adherence.ml`,
     description: rec.summary || `Shared ${rec.kind} run`,
@@ -23,11 +24,20 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       title: rec.title,
       description: rec.summary || `Shared ${rec.kind} run`,
       type: "article",
+      images: [
+        {
+          url: ogPath,
+          width: 1200,
+          height: 630,
+          alt: rec.title,
+        },
+      ],
     },
     twitter: {
       card: "summary_large_image",
       title: rec.title,
       description: rec.summary || `Shared ${rec.kind} run`,
+      images: [ogPath],
     },
     robots: { index: false, follow: false },
   };
