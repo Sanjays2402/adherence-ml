@@ -14,6 +14,7 @@ from adherence_api.middleware import RequestIdMiddleware
 from adherence_api.ip_allowlist_middleware import IpAllowlistMiddleware
 from adherence_api.ratelimit_middleware import RateLimitMiddleware
 from adherence_api.routes import ip_allowlist as ip_allowlist_route
+from adherence_api.routes import sso as sso_route
 from adherence_api.routes import (
     admin,
     cohort,
@@ -114,6 +115,10 @@ def create_app() -> FastAPI:
         exempt_prefixes=(
             "/v1/health", "/healthz", "/readyz", "/metrics",
             "/openapi.json", "/docs", "/redoc",
+            # SSO sign-in must reach the API before the caller has a
+            # tenant/IP context. Auth is enforced by IdP signature
+            # verification on /oidc/exchange instead.
+            "/v1/admin/sso",
         ),
     )
     app.add_middleware(SecurityHeadersMiddleware, settings=s)
@@ -147,5 +152,6 @@ def create_app() -> FastAPI:
     app.include_router(mutes_route.router)
     app.include_router(gdpr_route.router)
     app.include_router(ip_allowlist_route.router)
+    app.include_router(sso_route.router)
     log.info("api ready", version=__version__)
     return app

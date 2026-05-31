@@ -123,6 +123,29 @@ class Settings(BaseSettings):
     # cohort routes without redis (only async queues degrade).
     readyz_require_redis: bool = False
 
+    # OIDC SSO (Google Workspace, Okta, Azure AD, generic OIDC). Empty
+    # ``oidc_providers`` disables SSO entirely; the existing API-key and
+    # HS256-JWT auth paths remain the source of truth in that case.
+    # Format: ``name:client_id,name:client_id``.
+    oidc_providers: str = ""
+    # Format: ``name:https://issuer.example.com``. ``google*`` defaults to
+    # https://accounts.google.com when omitted.
+    oidc_issuers: str = ""
+    # Optional per-provider JWKS override (skips discovery).
+    oidc_jwks_uris: str = ""
+    # Email-domain to role map, e.g. ``acme.com:admin,partner.io:viewer``.
+    oidc_domain_role_map: str = ""
+    # Email-domain to tenant id map; falls back to ``default_tenant``.
+    oidc_domain_tenant_map: str = ""
+    # Role assigned when the domain is not mapped and require-match is off.
+    oidc_default_role: str = "viewer"
+    # When true, unmapped email domains are rejected at SSO exchange time.
+    oidc_require_domain_match: bool = False
+    # When true, ID tokens with ``email_verified=false`` are rejected.
+    oidc_require_verified_email: bool = True
+    oidc_jwks_cache_seconds: int = 3600
+    oidc_clock_skew_seconds: int = 60
+
     # Intervention recommender
     intervention_cooldown_minutes: int = 120
     notification_default_daily_limit: int = 6

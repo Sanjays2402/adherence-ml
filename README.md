@@ -312,6 +312,41 @@ Try it:
     # => HTTP/1.1 403
     # => {"error":{"code":"sso_required",...},"sso":{"start_url":"/api/auth/sso/start?workspace=ws_...",...}}
 
+## API-side OIDC for machine-to-machine clients
+
+The FastAPI service can also accept third-party OIDC ID tokens directly,
+for CLI users, CI jobs, and partner integrations that already hold a
+Google Workspace, Okta, or Azure AD token but don't want a long-lived
+API key. The ID token is verified against the IdP's JWKS (RS256 / ES256
+families, `iss`, `aud`, `exp`, `email_verified` enforced) and exchanged
+for a short-lived internal JWT. Every exchange is written to
+`admin_audit_log` so security teams can review SSO sign-ins alongside
+token mints and key rotations.
+
+Configure via environment:
+
+    ADHERENCE_OIDC_PROVIDERS="google:1234567890.apps.googleusercontent.com"
+    ADHERENCE_OIDC_ISSUERS="google:https://accounts.google.com"
+    ADHERENCE_OIDC_DOMAIN_ROLE_MAP="acme.com:admin,partner.io:viewer"
+    ADHERENCE_OIDC_DOMAIN_TENANT_MAP="acme.com:acme,partner.io:partner"
+    ADHERENCE_OIDC_REQUIRE_DOMAIN_MATCH=true   # reject unmapped domains
+    ADHERENCE_OIDC_REQUIRE_VERIFIED_EMAIL=true # default on
+
+Try it locally (API on :8000):
+
+    # 1. List configured providers (safe to call from a sign-in page;
+    #    audience is suffix-only in the response)
+    curl http://localhost:8000/v1/admin/sso/providers
+
+    # 2. Exchange a real ID token from your IdP for an internal JWT
+    curl -X POST http://localhost:8000/v1/admin/sso/oidc/exchange \
+      -H 'content-type: application/json' \
+      -d '{"provider":"google","id_token":"<paste id_token here>"}'
+    # => {"token":"eyJ...","expires_in":3600,"role":"admin","tenant":"acme",...}
+
+    # 3. Use the minted token like any other bearer credential
+    curl http://localhost:8000/v1/health -H 'authorization: Bearer eyJ...'
+
 ## Dashboard audit log
 
 Every mutating dashboard action (settings change, workspace export, full
