@@ -147,6 +147,31 @@ export interface WipeReport {
   data_dir: string;
 }
 
+export interface WipePreview {
+  data_dir: string;
+  would_remove: Array<{ file: string; size_bytes: number }>;
+  would_skip: string[];
+  total_bytes: number;
+}
+
+export async function previewWipe(): Promise<WipePreview> {
+  ensureDir();
+  const would_remove: Array<{ file: string; size_bytes: number }> = [];
+  const would_skip: string[] = [];
+  let total_bytes = 0;
+  for (const f of MANAGED_FILES) {
+    const p = path.join(DATA_DIR, f);
+    if (existsSync(p)) {
+      const st = await fs.stat(p);
+      would_remove.push({ file: f, size_bytes: st.size });
+      total_bytes += st.size;
+    } else {
+      would_skip.push(f);
+    }
+  }
+  return { data_dir: DATA_DIR, would_remove, would_skip, total_bytes };
+}
+
 export async function wipeAllData(): Promise<WipeReport> {
   ensureDir();
   const removed: string[] = [];

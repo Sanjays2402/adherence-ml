@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { readSettings, writeSettings, validatePatch } from "@/lib/settings-store";
+import { requireDashboardAuth, auditAction } from "@/lib/dashboard-auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -32,6 +33,9 @@ const PatchSchema = z.object({
 });
 
 export async function PATCH(req: NextRequest) {
+  const auth = await requireDashboardAuth(req, { action: "settings.patch" });
+  if (!auth.ok) return auth.response;
+
   let body: unknown;
   try {
     body = await req.json();
@@ -47,6 +51,33 @@ export async function PATCH(req: NextRequest) {
   }
   const err = validatePatch(parsed.data);
   if (err) return NextResponse.json({ detail: err }, { status: 400 });
+  const before = await readSettings();
   const next = await writeSettings(parsed.data);
+
+  const diff: Record<string, { before: unknown; after: unknown }> = {};
+  if (parsed.data.profile) {
+    for (const k of Object.keys(parsed.data.profile)) {
+      const key = k as keyof typeof before.profile;
+      if (before.profile[key] !== next.profile[key]) {
+        diff[`profile.${k}`] = { before: before.profile[key], after: next.profile[key] };
+      }
+    }
+  }
+  if (parsed.data.notifications) {
+    for (const k of Object.keys(parsed.data.notifications)) {
+      const key = k as keyof typeof before.notifications;
+      if (before.notifications[key] !== next.notifications[key]) {
+        diff[`notifications.${k}`] = {
+          before: before.notifications[key],
+          after: next.notifications[key],
+        };
+      }
+    }
+  }
+  await auditAction(req, auth.ctx, {
+    action: "settings.patch",
+    target: "workspace.settings",
+    metadata: { diff, fields: Object.keys(diff) },
+  });
   return NextResponse.json(next);
 }

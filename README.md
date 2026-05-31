@@ -12,9 +12,34 @@ Every mutating dashboard action (settings change, workspace export, full
 wipe) now lands in a hash-chained, append-only audit log so security teams
 can reconstruct who changed what, when, and from which IP. Each entry links
 to the previous one by SHA-256, so any tampered row flips the chain status
-to broken in the UI. Destructive endpoints (`/api/settings/wipe`) also
-support `dry_run: true` for safe previews and require an explicit confirm
-string.
+to broken in the UI.
+
+## Enterprise dry-run mode
+
+Every destructive endpoint accepts `?dry_run=true` (or `X-Dry-Run: true`)
+and returns a server-authored preview of what the call would do without
+touching any state. Responses set `X-Dry-Run: true` and a uniform JSON
+envelope (`{ dry_run, would, preview: { resource, id, summary, cascade,
+before } }`) so change-control review can show operators exactly which
+rows would be removed and which cascades they trigger. Coverage:
+
+- `DELETE /api/keys/:id` (revoke API key)
+- `DELETE /api/webhooks/:id` (delete endpoint, lists orphaned delivery rows)
+- `DELETE /api/runs/:id` (delete saved prediction)
+- `DELETE /api/shares/:id` (revoke public share link)
+- `DELETE /api/saved-searches/:id`
+- `DELETE /api/schedules/:id`
+- `DELETE /api/workspaces/:id?user_id=` (remove member)
+- `DELETE /api/workspaces/:id/invites?invite_id=` (revoke pending invite)
+- `DELETE /api/notifications/:id` (dismiss personal notification)
+- `POST /api/settings/wipe` (GDPR data wipe, reports total bytes + file list)
+
+The API Keys page calls the dry-run path before every revoke and surfaces
+the server summary in the confirmation prompt, so the same review story
+works from the dashboard.
+
+Destructive endpoints (`/api/settings/wipe`) also still require an explicit
+confirm string for the real call.
 
 The entries are surfaced at the bottom of the existing Audit page, with
 filters by action and outcome, and a one-click `.jsonl` export for SIEM
@@ -32,11 +57,11 @@ open http://localhost:3000/audit
 curl -s --cookie 'adh_session=...' \
   'http://localhost:3000/api/audit/dashboard?limit=50&outcome=denied' | jq
 
-# Dry-run a wipe without deleting anything
-curl -s -X POST --cookie 'adh_session=...' \
-  -H 'content-type: application/json' \
-  -d '{"confirm":"DELETE EVERYTHING","dry_run":true}' \
-  http://localhost:3000/api/settings/wipe | jq
+# Dry-run a wipe without deleting anything (no confirm needed for previews)
+curl -s -X POST 'http://localhost:3000/api/settings/wipe?dry_run=true' | jq
+
+# Dry-run an API key revoke (cookie-authed dashboard route)
+curl -s -X DELETE 'http://localhost:3000/api/keys/KEY_ID?dry_run=true' | jq
 
 # Export the chain for offline review
 curl -s --cookie 'adh_session=...' \

@@ -4,9 +4,11 @@ import { getSession } from "@/lib/session";
 import {
   createInvite,
   getWorkspaceForUser,
+  listInvites,
   revokeInvite,
   ROLES,
 } from "@/lib/workspaces-store";
+import { dryRunBody, isDryRun, withDryRunHeaders } from "@/lib/dry-run";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -81,6 +83,30 @@ export async function DELETE(
   const url = new URL(req.url);
   const inviteId = url.searchParams.get("invite_id");
   if (!inviteId) return NextResponse.json({ detail: "invite_id required" }, { status: 400 });
+
+  if (isDryRun(req)) {
+    const invites = await listInvites(id);
+    const inv = invites.find((i) => i.id === inviteId);
+    if (!inv || inv.accepted_at || inv.revoked_at) {
+      return NextResponse.json({ detail: "not found or already used" }, { status: 404 });
+    }
+    return withDryRunHeaders(
+      NextResponse.json(
+        dryRunBody({
+          resource: "workspace_invite",
+          id: inviteId,
+          summary: `revoke pending invite for ${inv.email} (role ${inv.role}); their accept link will stop working`,
+          before: {
+            id: inv.id,
+            email: inv.email,
+            role: inv.role,
+            expires_at: inv.expires_at,
+          },
+        }),
+      ),
+    );
+  }
+
   const ok = await revokeInvite(id, inviteId);
   if (!ok) return NextResponse.json({ detail: "not found or already used" }, { status: 404 });
   return NextResponse.json({ ok: true });

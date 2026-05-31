@@ -9,8 +9,10 @@ import { z } from "zod";
 import { getSession } from "@/lib/session";
 import {
   deleteSavedSearch,
+  getSavedSearch,
   renameSavedSearch,
 } from "@/lib/saved-searches-store";
+import { dryRunBody, isDryRun, withDryRunHeaders } from "@/lib/dry-run";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -58,6 +60,22 @@ export async function DELETE(
   const { id } = await ctx.params;
   const session = await getSession(req);
   const uid = session?.user.id ?? ANON;
+  if (isDryRun(req)) {
+    const rec = await getSavedSearch(uid, id);
+    if (!rec) {
+      return NextResponse.json({ error: "not_found" }, { status: 404 });
+    }
+    return withDryRunHeaders(
+      NextResponse.json(
+        dryRunBody({
+          resource: "saved_search",
+          id,
+          summary: `delete saved search '${rec.name}' for user ${uid}`,
+          before: rec as unknown as Record<string, unknown>,
+        }),
+      ),
+    );
+  }
   const ok = await deleteSavedSearch(uid, id);
   if (!ok) {
     return NextResponse.json({ error: "not_found" }, { status: 404 });

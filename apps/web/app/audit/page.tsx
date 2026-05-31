@@ -1,4 +1,5 @@
 import AuditClient from "./client";
+import DashboardAuditPanel from "./dashboard-panel";
 import { api, ApiError } from "@/lib/api";
 import type { AuditListResponse, AuditStatsResponse } from "@/lib/types";
 
@@ -22,5 +23,10 @@ export default async function AuditPage() {
     settle(api.get<AuditStatsResponse>("/v1/audit/stats?window_hours=24")),
     settle(api.get<AuditListResponse>("/v1/audit/list?limit=100")),
   ]);
-  return <AuditClient initialStats={stats} initialList={list} />;
+  return (
+    <div className="space-y-6">
+      <AuditClient initialStats={stats} initialList={list} />
+      <DashboardAuditPanel />
+    </div>
+  );
 }

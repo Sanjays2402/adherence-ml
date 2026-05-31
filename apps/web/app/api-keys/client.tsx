@@ -140,6 +140,24 @@ export default function KeysClient() {
     async (id: string) => {
       setRevokingId(id);
       try {
+        // Enterprise dry-run: ask the API what would happen before we commit.
+        // This proves the destructive call is reviewable and gives the
+        // operator a final, server-authored summary to confirm against.
+        let summary = "This will immediately invalidate the key.";
+        try {
+          const previewRes = await fetch(`/api/keys/${id}?dry_run=true`, {
+            method: "DELETE",
+          });
+          if (previewRes.ok) {
+            const preview = await previewRes.json();
+            if (preview?.preview?.summary) summary = preview.preview.summary;
+          }
+        } catch {
+          /* preview is advisory; fall through to confirmation */
+        }
+        if (!confirm(`Revoke this key?\n\n${summary}`)) {
+          return;
+        }
         await fetch(`/api/keys/${id}`, { method: "DELETE" });
         mutate();
       } finally {
