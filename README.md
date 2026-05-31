@@ -414,6 +414,37 @@ curl -sS -X POST http://localhost:3000/api/batch \
   -d '{"csv":"user_id,dose_id,scheduled_at,dose_class,dose_strength_mg\nu1,d1,2025-06-01T08:00:00Z,cardio,10\n"}'
 ```
 
+### Batch over the public API
+
+The browser flow above is convenient, but production integrations should
+use the key-authenticated `POST /v1/batch` endpoint. It accepts the same
+CSV schema, returns CSV or JSON, and meters every row against the daily
+plan quota (the request is rejected with `429` before any scoring runs if
+the batch would exceed the remaining quota). Each successful batch shows
+up in `/history` under the API key used to call it. Limits: 1000 rows,
+100 users, 512 KB per request. Requires the `predict` scope.
+
+```bash
+curl -sS -X POST 'http://localhost:3000/v1/batch?format=csv' \
+  -H 'authorization: Bearer adh_YOUR_KEY' \
+  -H 'content-type: text/csv' \
+  --data-binary @doses.csv
+```
+
+Or JSON in, JSON out:
+
+```bash
+curl -sS -X POST http://localhost:3000/v1/batch \
+  -H 'authorization: Bearer adh_YOUR_KEY' \
+  -H 'content-type: application/json' \
+  -d '{"csv":"user_id,dose_id,scheduled_at,dose_class,dose_strength_mg\nu1,d1,2025-06-01T08:00:00Z,cardio,10\n","top_k":3}'
+```
+
+Response headers include `x-quota-limit`, `x-quota-used`,
+`x-quota-remaining`, `x-batch-rows`, `x-batch-users`, and `x-latency-ms`
+so clients can back off cleanly. `GET /v1/batch` returns the full schema
+and limits as JSON.
+
 ## Features
 
 - Landing demo (`/`) with three click-to-run patient scenarios, live miss

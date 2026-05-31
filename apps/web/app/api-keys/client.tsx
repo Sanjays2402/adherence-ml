@@ -166,6 +166,11 @@ export default function KeysClient() {
   const curlMe = `curl http://localhost:3000/v1/keys/me \\
   -H "authorization: Bearer ${sampleKey}"`;
 
+  const curlBatch = `curl -X POST 'http://localhost:3000/v1/batch?format=csv' \\
+  -H "authorization: Bearer ${sampleKey}" \\
+  -H "content-type: text/csv" \\
+  --data-binary $'user_id,dose_id,scheduled_at,dose_class,dose_strength_mg\\nu_1,d_1,2025-01-01T08:00:00Z,cardio,20\\nu_1,d_2,2025-01-01T20:00:00Z,cardio,20'`;
+
   const curl = `curl -X POST http://localhost:3000/v1/predict \\
   -H "authorization: Bearer ${sampleKey}" \\
   -H "content-type: application/json" \\
@@ -415,6 +420,13 @@ export default function KeysClient() {
           </div>
           <pre className="text-[11px] font-mono p-3 rounded bg-[var(--color-surface)] border border-[var(--color-border)] overflow-x-auto whitespace-pre">
 {curlMe}
+          </pre>
+          <div className="flex items-center justify-between pt-2">
+            <span className="text-[11px] text-[var(--color-muted)]">POST /v1/batch (CSV in, CSV or JSON out, one prediction per row counts against quota)</span>
+            <CopyBtn text={curlBatch} label="copy curl" />
+          </div>
+          <pre className="text-[11px] font-mono p-3 rounded bg-[var(--color-surface)] border border-[var(--color-border)] overflow-x-auto whitespace-pre">
+{curlBatch}
           </pre>
           <p className="text-[11px] text-[var(--color-muted)]">
             Successful calls also appear in your <a href="/history" className="underline">history</a>.
