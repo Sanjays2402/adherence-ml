@@ -14,6 +14,7 @@ import {
   Eye,
   ArrowSquareOut,
   ShieldCheck,
+  ArrowsLeftRight,
 } from "@phosphor-icons/react";
 import {
   PageHeader,
@@ -212,6 +213,45 @@ export default function WorkspaceClient() {
       const reason = j?.detail ?? `request failed (${r.status})`;
       if (reason === "last_owner") setToast("Cannot demote the last owner.");
       else if (reason === "forbidden") setToast("Only owners can change roles.");
+      else setToast(String(reason));
+    },
+    [selected, detail],
+  );
+
+  const transferOwnership = useCallback(
+    async (member: Member) => {
+      if (!selected || !detail.data) return;
+      const wsName = detail.data.workspace.name;
+      const confirmed = window.confirm(
+        `Transfer ownership of "${wsName}" to ${member.email}?\n\n` +
+          `You will be demoted to editor. ${member.email} will become the owner ` +
+          `and you will lose owner-only powers (members, billing, security policy, ` +
+          `SSO, audit log).\n\nThis cannot be undone without the new owner's help.`,
+      );
+      if (!confirmed) return;
+      const r = await fetch(
+        `/api/workspaces/${selected}/transfer-ownership`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            target_user_id: member.user_id,
+            demote_to: "editor",
+          }),
+        },
+      );
+      if (r.ok) {
+        await detail.mutate();
+        setToast(`Ownership transferred to ${member.email}.`);
+        return;
+      }
+      const j = await r.json().catch(() => ({}));
+      const reason = j?.detail ?? `request failed (${r.status})`;
+      if (reason === "forbidden")
+        setToast("Only the current owner can transfer ownership.");
+      else if (reason === "not_found") setToast("Member not found.");
+      else if (reason === "self")
+        setToast("Cannot transfer ownership to yourself.");
       else setToast(String(reason));
     },
     [selected, detail],
@@ -481,6 +521,16 @@ export default function WorkspaceClient() {
                             {m.role}
                           </span>
                         )}
+                        {d.role === "owner" && m.role !== "owner" ? (
+                          <Button
+                            variant="ghost"
+                            onClick={() => transferOwnership(m)}
+                            aria-label={`Transfer ownership to ${m.email}`}
+                            title="Transfer ownership"
+                          >
+                            <ArrowsLeftRight weight="duotone" size={13} />
+                          </Button>
+                        ) : null}
                         {d.role === "owner" ? (
                           <Button
                             variant="danger"

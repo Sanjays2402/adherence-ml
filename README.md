@@ -2,6 +2,40 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Workspace ownership transfer
+
+Workspace owners can now hand the workspace to another existing member instead of being stranded when they leave the company. The account-erasure flow has long told sole owners to "transfer ownership before deleting your account"; this endpoint and UI are what makes that possible.
+
+`POST /api/workspaces/{id}/transfer-ownership` is owner-only. The body takes `{ target_user_id, demote_to? }` where `demote_to` is `editor` (default) or `viewer`. The route refuses cross-tenant targets (`not_found`), non-owner callers (`forbidden`), and transfer-to-self (`400`). It supports `?dry_run=true` and writes a tamper-evident audit row (`workspace.ownership.transfer`) on every success or denial, including the previous owner, the new owner, and the demoted role.
+
+The **Members** card in `/workspace` shows a transfer-ownership button beside the trash icon for each non-owner member (owners only). The browser confirms the demotion before the request is sent.
+
+Proven by `apps/web/tests/workspace-transfer-ownership.test.ts`:
+
+- Roles flip and persist (target becomes `owner`, caller becomes `editor`).
+- Transfer-to-self is refused.
+- An editor cannot hand the workspace to anyone (cross-role denial).
+- A target who is not a member of this workspace is refused (cross-tenant denial); the other workspace is untouched.
+- `demote_to: "owner"` is rejected (`invalid_role`).
+
+### Try ownership transfer
+
+Web UI: <http://127.0.0.1:3000/workspace> (Members card, arrows-left-right button).
+
+```bash
+# Dry-run: see who would become owner without committing.
+curl -s -X POST "http://127.0.0.1:3000/api/workspaces/$WS_ID/transfer-ownership?dry_run=true" \
+  -H "content-type: application/json" \
+  -b "adherence_session=$SESSION_COOKIE" \
+  -d '{"target_user_id":"u_bob","demote_to":"editor"}'
+
+# Commit the transfer.
+curl -s -X POST "http://127.0.0.1:3000/api/workspaces/$WS_ID/transfer-ownership" \
+  -H "content-type: application/json" \
+  -b "adherence_session=$SESSION_COOKIE" \
+  -d '{"target_user_id":"u_bob"}'
+```
+
 ## Per-subscription webhook delivery health
 
 Operators previously had to page through individual `webhook_deliveries` rows (or trip the circuit breaker) to know whether an outbound subscription was healthy. The API now exposes a rolling-window health summary so a workspace admin can answer "is this receiver healthy right now" with a single request, without leaking another tenant's numbers.

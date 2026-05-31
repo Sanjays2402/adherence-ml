@@ -929,6 +929,47 @@ export async function changeMemberRoleByOwner(
 }
 
 /**
+ * Transfer workspace ownership from `actingUserId` (current owner) to
+ * `targetUserId` (existing member). The acting user is demoted to `demoteTo`
+ * (default: 'editor'). The target user becomes 'owner'. Used by an owner who
+ * wants to hand off the workspace before leaving the company / deleting their
+ * account. Refuses if:
+ *   - acting user is not an owner of this workspace ('forbidden')
+ *   - target user is not a member ('not_found')
+ *   - target user IS the acting user ('self')
+ *   - demoteTo is 'owner' (use changeMemberRoleByOwner to add a co-owner)
+ *     ('invalid_role')
+ */
+export async function transferOwnership(
+  workspaceId: string,
+  actingUserId: string,
+  targetUserId: string,
+  demoteTo: Exclude<Role, "owner"> = "editor",
+): Promise<
+  | { acting: Member; target: Member }
+  | "forbidden"
+  | "not_found"
+  | "self"
+  | "invalid_role"
+> {
+  if (demoteTo !== "editor" && demoteTo !== "viewer") return "invalid_role";
+  if (actingUserId === targetUserId) return "self";
+  const store = await readStore();
+  const acting = store.members.find(
+    (m) => m.workspace_id === workspaceId && m.user_id === actingUserId,
+  );
+  if (!acting || acting.role !== "owner") return "forbidden";
+  const target = store.members.find(
+    (m) => m.workspace_id === workspaceId && m.user_id === targetUserId,
+  );
+  if (!target) return "not_found";
+  target.role = "owner";
+  acting.role = demoteTo;
+  await writeStore(store);
+  return { acting, target };
+}
+
+/**
  * SCIM-driven role update. Same safety: refuses to demote the last owner.
  */
 export async function setMemberRole(
