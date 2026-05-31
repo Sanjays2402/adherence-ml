@@ -142,6 +142,27 @@ API surface:
 
 Unit test: `pnpm --filter @adherence/web test`.
 
+### Onboarding
+
+First-run users land at
+[http://localhost:3000/onboarding](http://localhost:3000/onboarding):
+a three-step checklist (explore the demo, issue an API key, save a run)
+with per-step completion tracking and a one-click sample-workspace
+seeder. The seeder is idempotent and creates three saved runs across the
+demo personas, one demo API key (auto-revoked so it cannot hit
+production), and one inactive webhook endpoint at
+`https://example.com/adherence/webhook`. State lives in
+`apps/web/.data/onboarding.json`. Unit-tested in
+`tests/onboarding-store.test.ts`.
+
+```bash
+curl http://localhost:3000/api/onboarding
+curl -X POST http://localhost:3000/api/onboarding/seed
+curl -X PATCH http://localhost:3000/api/onboarding \
+  -H 'content-type: application/json' \
+  -d '{"step":"explore_demo","done":true}'
+```
+
 ## Try it
 
 With the API on `:8000` and the web app on `:3000`, open
