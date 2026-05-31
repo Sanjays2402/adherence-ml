@@ -29,6 +29,7 @@ curl -sS -X POST 'http://127.0.0.1:3000/api/webhooks/ep_abc123/rotate?dry_run=tr
 
 # End the grace window immediately.
 curl -sS -X DELETE http://127.0.0.1:3000/api/webhooks/ep_abc123/rotate
+```
 
 ## Per-workspace people seat enforcement
 
