@@ -299,6 +299,26 @@ honor the active search, kind, and date-range filters, so you can pull just
 "failed predict runs in the last 7 days" without post-processing. The detail
 page is a plain server route so links are shareable in incognito.
 
+**Saved views.** Once your filter bar is dialed in (search, kind, date range,
+tags, pinned-only) click *save view*, give it a name, and it appears as a
+one-click chip above the filters. Saved views are per-user (anonymous sessions
+share an `_anon` bucket) and persist in `apps/web/.data/saved-searches.jsonl`,
+so power users can build a working set of views like *Failed predicts this
+week* or *VIP cohort* and flip between them without re-typing.
+
+```bash
+# create a saved view via the API
+curl -s -X POST http://localhost:3000/api/saved-searches \
+  -H 'content-type: application/json' \
+  -d '{"name":"Pinned predicts","filters":{"kind":"predict","pinned_only":true,"q":"","from":"","to":"","tags":[]}}'
+
+# list, rename, delete
+curl -s http://localhost:3000/api/saved-searches
+curl -s -X PATCH http://localhost:3000/api/saved-searches/<id> \
+  -H 'content-type: application/json' -d '{"name":"Top urgent cases"}'
+curl -s -X DELETE http://localhost:3000/api/saved-searches/<id>
+```
+
 API surface:
 
 - `GET /api/runs?q=&kind=&from=&to=&tag=&pinned=1&limit=&offset=` list with search, date range, multi-tag (repeat `tag=` for AND match), pinned-only filter, pagination

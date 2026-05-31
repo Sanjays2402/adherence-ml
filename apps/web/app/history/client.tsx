@@ -18,6 +18,9 @@ import {
 } from "@phosphor-icons/react";
 import { PageHeader, Card } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
+import SavedSearchesBar, {
+  type SavedSearchFilters,
+} from "./saved-searches-bar";
 
 type Run = {
   id: string;
@@ -272,6 +275,19 @@ export default function HistoryClient() {
 
   return (
     <div className="flex flex-col min-h-screen">
+      <SavedSearchesBar
+        current={{ q, kind, from, to, tags: selectedTags, pinned_only: pinnedOnly }}
+        filterCount={filterCount}
+        onApply={(f: SavedSearchFilters) => {
+          setQ(f.q);
+          setKind(f.kind);
+          setFrom(f.from);
+          setTo(f.to);
+          setSelectedTags(f.tags);
+          setPinnedOnly(f.pinned_only);
+        }}
+        onToast={(m) => setToast(m)}
+      />
       <PageHeader
         eyebrow="history"
         title="Run history"
