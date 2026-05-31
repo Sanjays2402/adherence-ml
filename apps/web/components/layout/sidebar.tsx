@@ -22,6 +22,7 @@ import {
   Gear,
   Rocket,
   Receipt,
+  UsersFour,
 } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import SidebarUser from "./sidebar-user";
@@ -46,12 +47,14 @@ const NAV = [
   { href: "/billing", label: "Billing", icon: Receipt, hint: "Plan // history" },
   { href: "/webhooks", label: "Webhooks", icon: Plugs, hint: "Outbound deliveries" },
   { href: "/notifications", label: "Notifications", icon: Bell, hint: "Activity feed" },
+  { href: "/workspace", label: "Workspace", icon: UsersFour, hint: "Members // invites" },
   { href: "/settings", label: "Settings", icon: Gear, hint: "Profile // data // wipe" },
 ];
 
 export default function Sidebar() {
   const pathname = usePathname();
   if (pathname?.startsWith("/r/")) return null;
+  if (pathname?.startsWith("/invite/")) return null;
   if (pathname === "/login" || pathname === "/verify") return null;
   return (
     <aside className="md:w-60 md:border-r md:border-[var(--color-border)] md:min-h-screen md:sticky md:top-0 bg-[var(--color-surface)]/60 backdrop-blur">

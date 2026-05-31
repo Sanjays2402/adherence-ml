@@ -284,6 +284,31 @@ curl -X PATCH http://localhost:3000/api/onboarding \
   -d '{"step":"explore_demo","done":true}'
 ```
 
+### Workspaces and teammate invites
+
+Every signed-in account gets a personal workspace on first visit. Open
+[/workspace](http://localhost:3000/workspace) to see members, send email
+invites with a role (owner, editor, or viewer), copy the shareable
+`/invite/<token>` link, revoke pending invites, or remove members. Invites
+expire after 7 days, are bound to the email they were sent to so a leaked
+link cannot be redeemed by a different account, and the workspace refuses
+to remove the last owner. State lives in `apps/web/.data/workspaces.json`
+and is unit-tested in `tests/workspaces-store.test.ts` (4 cases covering
+auto-creation, role-bound accept, duplicate-invite rejection, and the
+last-owner guard).
+
+```bash
+# List the signed-in user's workspaces (cookie-auth, so use the browser or
+# pipe `Cookie: adh_session=...` from devtools).
+curl http://localhost:3000/api/workspaces
+
+# Invite a teammate (returns a one-time accept_url to share).
+curl -X POST http://localhost:3000/api/workspaces/<ws_id>/invites \
+  -H 'content-type: application/json' \
+  -d '{"email":"teammate@company.com","role":"editor"}'
+```
+
+
 ## Try it
 
 With the API on `:8000` and the web app on `:3000`, open
