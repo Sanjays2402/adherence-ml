@@ -19,6 +19,24 @@ from adherence_common.db import DoseOutcome, init_db, session
 from adherence_common.inbound_webhook import verify as verify_inbound
 from adherence_common.inbound_webhook_ip import check as check_inbound_ip
 from adherence_common.logging import get_logger
+from adherence_common.pii_policy import scrub_text
+
+
+def _source_tenant(mapping_csv: str, source: str) -> str | None:
+    """Resolve ``source`` to a workspace tenant via the operator-provided
+    ``inbound_source_tenants`` mapping. Returns ``None`` when no mapping
+    is configured for the source, in which case the caller should skip
+    value-level scrubbing."""
+    if not mapping_csv or not source:
+        return None
+    for entry in mapping_csv.split(","):
+        if ":" not in entry:
+            continue
+        src, tid = entry.split(":", 1)
+        if src.strip() == source.strip():
+            tid = tid.strip()
+            return tid or None
+    return None
 
 router = APIRouter(prefix="/v1/webhooks", tags=["webhooks"])
 log = get_logger(__name__)
@@ -117,6 +135,9 @@ async def medtracker_event(
     except ValidationError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.errors())
     init_db()
+    pii_tenant = _source_tenant(
+        settings.inbound_source_tenants, payload.source,
+    )
     accepted = 0
     dupes = 0
     with session() as s:
@@ -130,7 +151,10 @@ async def medtracker_event(
                 observed_at=ev.observed_at,
                 outcome=ev.outcome,
                 delay_minutes=ev.delay_minutes,
-                notes=ev.notes,
+                notes=(
+                    scrub_text(pii_tenant, ev.notes)
+                    if (pii_tenant and ev.notes) else ev.notes
+                ),
             )
             s.add(row)
             try:

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 
 from adherence_common.auth import resolve_api_key, require_role, verify_jwt
 from adherence_common.api_keys import resolve_db_key
@@ -107,14 +107,26 @@ def require_scope(scope: str):
     return _dep
 
 
-def current_tenant(p=Depends(current_principal)) -> str:
+def current_tenant(
+    request: Request,
+    p=Depends(current_principal),
+) -> str:
     """Resolve the calling principal's tenant id.
 
     Returns the tenant stamped on the DB-backed API key, the ``tenant``
     claim from a JWT, or the deployment-wide ``default_tenant`` for
     legacy env-mapped keys.
+
+    Also stashes the resolved tenant on ``request.state.tenant`` so
+    response middleware (e.g. ``X-Data-Residency``) can stamp
+    tenant-scoped headers without re-parsing auth.
     """
-    return str(p.get("tenant") or "default")
+    tenant = str(p.get("tenant") or "default")
+    try:
+        request.state.tenant = tenant
+    except Exception:  # pragma: no cover - defensive
+        pass
+    return tenant
 
 
 def require_tenant_access(

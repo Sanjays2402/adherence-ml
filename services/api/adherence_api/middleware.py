@@ -77,6 +77,18 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
         response.headers["x-request-id"] = rid
         response.headers["x-trace-id"] = ctx.trace_id
         response.headers["traceparent"] = ctx.traceparent()
+        # Stamp the active data-residency region for tenant-bound
+        # requests so callers (and security reviewers running curl) can
+        # confirm the contractual region without reading docs. We only
+        # stamp when a tenant was resolved on the request, which keeps
+        # public endpoints (health, metrics, docs) unaffected.
+        tenant = getattr(request.state, "tenant", None)
+        if tenant:
+            try:
+                from adherence_common.residency import get_region
+                response.headers["x-data-residency"] = get_region(str(tenant))
+            except Exception:  # pragma: no cover - defensive
+                pass
         return response
 
 

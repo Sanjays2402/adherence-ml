@@ -16,7 +16,7 @@ at least 30 days before a new subprocessor takes effect.
 
 Workspaces declare a residency hint (`us`, `eu`) on creation. The API
 echoes the active region in the `X-Data-Residency` response header and
-the `/v1/admin/workspace/region` endpoint. Primary storage and worker
+the `/v1/workspace/residency` endpoint. Primary storage and worker
 fleets are pinned to that region; only subprocessors marked global
 above may see metadata outside it.
 

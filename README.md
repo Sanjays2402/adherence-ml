@@ -2,6 +2,43 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Per-workspace data residency
+
+Enterprise buyers (especially EU healthcare and US public sector)
+require a contractually enforceable region pin. A workspace admin can
+now pin their tenant to one of the supported regions via
+`/v1/workspace/residency`. The choice is the single source of truth
+that the runtime consults: every tenant-bound response carries an
+`X-Data-Residency` header echoing the active region, every mutation is
+admin-MFA gated and lands in the admin audit chain, and the pin is
+strictly tenant-scoped so changing `acme` cannot affect `globex`.
+Unknown region codes are rejected before they touch the audit chain.
+When no pin is set, the deployment default (`us`) is used. Behavior is
+verified end-to-end in `tests/integration/test_residency.py`.
+
+### Try it
+
+```bash
+# View the active region for your workspace (default until pinned).
+curl -sS http://localhost:8000/v1/workspace/residency \
+  -H "Authorization: Bearer $WORKSPACE_JWT" -i | head -20
+
+# Preview a pin to eu without mutating anything.
+curl -sS -X PUT "http://localhost:8000/v1/workspace/residency?dry_run=true" \
+  -H "Authorization: Bearer $WORKSPACE_JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"region":"eu"}'
+
+# Pin the workspace to eu. The response (and every later tenant-bound
+# response) carries `X-Data-Residency: eu`.
+curl -sS -X PUT http://localhost:8000/v1/workspace/residency \
+  -H "Authorization: Bearer $WORKSPACE_JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"region":"eu"}'
+```
+
+Local API: <http://localhost:8000>. Dashboard: <http://localhost:3000>.
+
 ## Outbound webhook circuit breaker
 
 A dead receiver should not burn retries forever. Every outbound
