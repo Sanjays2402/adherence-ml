@@ -50,6 +50,10 @@ class APIKeyRecord(Base):
     expires_at = Column(DateTime, nullable=True, index=True)
     revoked_at = Column(DateTime, nullable=True, index=True)
     last_used_at = Column(DateTime, nullable=True)
+    # Comma-separated list of CIDRs (or bare IPs). Empty/NULL means the
+    # key is not restricted by source IP. Enforced by middleware on every
+    # request whose credential resolves to this key.
+    ip_allowlist_csv = Column(String(1024), nullable=True)
 
 
 VALID_ROLES = {"admin", "service", "viewer"}
@@ -62,6 +66,7 @@ class ResolvedKey:
     scopes: frozenset[str]
     record_id: int
     tenant_id: str = "default"
+    ip_allowlist: tuple[str, ...] = ()
 
 
 def _hash(plain: str) -> str:
@@ -174,10 +179,15 @@ def resolve_db_key(plain: str) -> ResolvedKey | None:
         if row.expires_at is not None and row.expires_at <= now:
             raise AuthError("api key expired")
         rid = row.id
+        ip_raw = (row.ip_allowlist_csv or "")
+        ip_list = tuple(
+            s.strip() for s in ip_raw.split(",") if s.strip()
+        )
         resolved = ResolvedKey(
             name=row.name, role=row.role,
             scopes=_parse_scopes(row.scopes_csv), record_id=rid,
             tenant_id=(row.tenant_id or "default"),
+            ip_allowlist=ip_list,
         )
     # best-effort last_used_at; ignore failures
     try:
@@ -191,3 +201,93 @@ def resolve_db_key(plain: str) -> ResolvedKey | None:
     except Exception:
         pass
     return resolved
+
+
+# ---- Per-key IP/CIDR allowlist -------------------------------------------
+
+import ipaddress as _ipaddress
+
+
+def parse_cidrs(values: Iterable[str]) -> list[str]:
+    """Validate and normalize CIDRs / bare IPs. Raises ValueError on bad input.
+
+    Returns a deduplicated, sorted list of canonical strings ready to persist.
+    Bare IPs are pinned to a single-host network ("/32" or "/128").
+    """
+    out: set[str] = set()
+    for raw in values:
+        s = (raw or "").strip()
+        if not s:
+            continue
+        if "/" not in s:
+            try:
+                addr = _ipaddress.ip_address(s)
+            except ValueError as exc:
+                raise ValueError(f"invalid ip: {s}") from exc
+            net = _ipaddress.ip_network(
+                f"{addr}/{32 if addr.version == 4 else 128}",
+                strict=True,
+            )
+        else:
+            try:
+                net = _ipaddress.ip_network(s, strict=False)
+            except ValueError as exc:
+                raise ValueError(f"invalid cidr: {s}") from exc
+        out.add(str(net))
+    return sorted(out)
+
+
+def ip_matches_allowlist(ip: str, cidrs: Iterable[str]) -> bool:
+    """Return True if ``ip`` is inside any CIDR in ``cidrs``.
+
+    Empty ``cidrs`` means no restriction (caller should treat as allowed).
+    Malformed entries are skipped defensively so a bad row cannot lock out
+    every caller.
+    """
+    items = [c for c in cidrs if c]
+    if not items:
+        return True
+    try:
+        addr = _ipaddress.ip_address((ip or "").strip())
+    except ValueError:
+        return False
+    for c in items:
+        try:
+            net = _ipaddress.ip_network(c, strict=False)
+        except ValueError:
+            continue
+        if addr in net:
+            return True
+    return False
+
+
+def set_key_ip_allowlist(name: str, cidrs: Iterable[str]) -> APIKeyRecord:
+    """Replace the per-key IP allowlist. Empty list clears the restriction.
+
+    Raises ValueError on bad input (caller surfaces 400). Raises LookupError
+    if the named key does not exist.
+    """
+    cleaned = parse_cidrs(cidrs)
+    csv = ",".join(cleaned) if cleaned else None
+    init_db()
+    with session() as s:
+        row = s.execute(
+            select(APIKeyRecord).where(APIKeyRecord.name == name)
+        ).scalar_one_or_none()
+        if row is None:
+            raise LookupError(f"api key {name!r} not found")
+        row.ip_allowlist_csv = csv
+        s.commit()
+        s.refresh(row)
+        return row
+
+
+def get_key_ip_allowlist(name: str) -> list[str]:
+    init_db()
+    with session() as s:
+        row = s.execute(
+            select(APIKeyRecord).where(APIKeyRecord.name == name)
+        ).scalar_one_or_none()
+        if row is None:
+            raise LookupError(f"api key {name!r} not found")
+        return [c for c in (row.ip_allowlist_csv or "").split(",") if c]

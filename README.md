@@ -1,5 +1,59 @@
 # adherence-ml
 
+Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
+
+## Per-key source IP allowlist (CIDR-pinned API keys)
+
+Every API key can now be restricted to a specific set of source IPs / CIDRs.
+Procurement scenario: a partner is issued one service key and must call only
+from their NAT egress. If the key leaks, the stolen credential is useless
+from any other network.
+
+- Stored on `api_key_records.ip_allowlist_csv` (idempotent migration; existing
+  keys default to NULL = no restriction).
+- Enforced in `IpAllowlistMiddleware` before any route handler runs. Blocked
+  requests get a structured `403 {"error": "api_key_ip_not_allowed", ...}`
+  and a `api_key_ip_allowlist_block` log line.
+- IPv4 and IPv6, CIDR notation or bare IPs (auto-pinned to `/32` or `/128`).
+  Honours `X-Forwarded-For` / `X-Real-IP` like the rest of the API.
+- Every mutation is written to the admin audit log
+  (`api_key.ip_allowlist.set`) and requires admin role + a fresh MFA challenge,
+  just like key creation and revocation.
+- Layered on top of the existing tenant-level allowlist. A request must pass
+  both gates (key allowlist first, then tenant allowlist).
+
+### Try it
+
+```bash
+ADMIN="x-api-key: $ADHERENCE_ADMIN_KEY"
+
+# 1. Mint a service key for a partner.
+curl -s -X POST http://localhost:8000/v1/admin/api-keys \
+  -H "$ADMIN" -H 'Content-Type: application/json' \
+  -d '{"name":"partner-prod","role":"service","scopes":["predict"]}'
+# -> {"key":"ak_...","name":"partner-prod",...}
+
+# 2. Pin the key to the partner's NAT range.
+curl -s -X PUT http://localhost:8000/v1/admin/api-keys/partner-prod/ip-allowlist \
+  -H "$ADMIN" -H 'Content-Type: application/json' \
+  -d '{"cidrs":["10.10.0.0/16","198.51.100.7"]}'
+# -> {"name":"partner-prod","cidrs":["10.10.0.0/16","198.51.100.7/32"]}
+
+# 3. From outside the range: 403.
+curl -i http://localhost:8000/v1/webhooks/medtracker/recent \
+  -H 'x-api-key: ak_...' -H 'x-forwarded-for: 203.0.113.5'
+# HTTP/1.1 403 Forbidden
+# {"error":"api_key_ip_not_allowed","detail":"...","key":"partner-prod"}
+
+# 4. Inspect / clear the allowlist.
+curl -s http://localhost:8000/v1/admin/api-keys/partner-prod/ip-allowlist -H "$ADMIN"
+curl -s -X PUT http://localhost:8000/v1/admin/api-keys/partner-prod/ip-allowlist \
+  -H "$ADMIN" -H 'Content-Type: application/json' -d '{"cidrs":[]}'
+```
+
+The enforced list is also surfaced on `GET /v1/admin/api-keys` as the
+`ip_allowlist` field of each row.
+
 ML risk scoring for medication adherence. Predicts which upcoming doses a user
 is likely to miss in the next 24 hours and turns those scores into ranked
 interventions.

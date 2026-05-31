@@ -19,7 +19,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from adherence_common.api_keys import resolve_db_key
+from adherence_common.api_keys import ip_matches_allowlist, resolve_db_key
 from adherence_common.auth import verify_jwt
 from adherence_common.errors import AuthError
 from adherence_common.ip_allowlist import is_allowed
@@ -39,7 +39,13 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else ""
 
 
-def _tenant_from_request(request: Request, settings: Settings) -> str:
+def _resolve_credential(request: Request, settings: Settings) -> tuple[str, str | None, tuple[str, ...]]:
+    """Return (tenant_id, key_name_or_None, per_key_cidrs).
+
+    Best-effort: any auth resolution failure falls back to the deployment
+    default tenant with no per-key restriction so unauthenticated probes
+    and the open landing page continue to work.
+    """
     api_key = request.headers.get("x-api-key")
     if api_key:
         try:
@@ -49,7 +55,11 @@ def _tenant_from_request(request: Request, settings: Settings) -> str:
         except Exception:
             row = None
         if row is not None and getattr(row, "tenant_id", None):
-            return str(row.tenant_id)
+            return (
+                str(row.tenant_id),
+                getattr(row, "name", None),
+                tuple(getattr(row, "ip_allowlist", ()) or ()),
+            )
     auth = request.headers.get("authorization", "")
     if auth.lower().startswith("bearer "):
         token = auth.split(" ", 1)[1]
@@ -57,10 +67,15 @@ def _tenant_from_request(request: Request, settings: Settings) -> str:
             claims = verify_jwt(token, settings)
             tid = claims.get("tenant")
             if tid:
-                return str(tid)
+                return (str(tid), None, ())
         except Exception:
             pass
-    return settings.default_tenant
+    return (settings.default_tenant, None, ())
+
+
+def _tenant_from_request(request: Request, settings: Settings) -> str:
+    tenant, _, _ = _resolve_credential(request, settings)
+    return tenant
 
 
 class IpAllowlistMiddleware(BaseHTTPMiddleware):
@@ -75,8 +90,31 @@ class IpAllowlistMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         if any(path.startswith(p) for p in self.exempt):
             return await call_next(request)
-        tenant = _tenant_from_request(request, self.settings)
+        tenant, key_name, key_cidrs = _resolve_credential(request, self.settings)
         ip = _client_ip(request)
+        # Per-key allowlist first: even if the tenant has no allowlist, a
+        # caller may have pinned this specific API key to a known set of
+        # source ranges (e.g. their production egress).
+        if key_cidrs and not ip_matches_allowlist(ip, key_cidrs):
+            log.warning(
+                "api_key_ip_allowlist_block",
+                tenant=tenant, key=key_name, ip=ip, path=path,
+                method=request.method,
+            )
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "error": "api_key_ip_not_allowed",
+                    "detail": (
+                        "This API key is restricted to a specific set of "
+                        "source IPs. Your client IP is not in that list. "
+                        "Ask an admin to update the key's IP allowlist under "
+                        "/v1/admin/api-keys/{name}/ip-allowlist."
+                    ),
+                    "tenant_id": tenant,
+                    "key": key_name,
+                },
+            )
         if is_allowed(tenant, ip):
             return await call_next(request)
         log.warning(

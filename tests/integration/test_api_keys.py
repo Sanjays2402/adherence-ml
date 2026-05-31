@@ -168,3 +168,109 @@ def test_env_keys_still_work(tmp_path, monkeypatch):
     c = _client(tmp_path, monkeypatch)
     r = c.get("/v1/admin/models", headers={"x-api-key": "adm"})
     assert r.status_code == 200
+
+
+def test_per_key_ip_allowlist_blocks_then_admits(tmp_path, monkeypatch):
+    """A per-key CIDR allowlist must reject foreign source IPs.
+
+    Real enterprise scenario: a partner is issued a service key and pins
+    it to their NAT egress range. Requests from any other IP must 403,
+    requests from inside the range must succeed, even when the workspace
+    has no tenant-level allowlist configured.
+    """
+    from adherence_common import api_keys as ak
+
+    c = _client(tmp_path, monkeypatch)
+    admin = {"x-api-key": "adm"}
+
+    # Issue a service key.
+    body = c.post(
+        "/v1/admin/api-keys",
+        json={"name": "partner-prod", "role": "service", "scopes": ["predict"]},
+        headers=admin,
+    ).json()
+    plain = body["key"]
+
+    # No restriction yet: call succeeds.
+    r = c.get(
+        "/v1/webhooks/medtracker/recent?limit=1",
+        headers={"x-api-key": plain, "x-forwarded-for": "203.0.113.5"},
+    )
+    assert r.status_code == 200, r.text
+
+    # Pin the key to 10.10.0.0/16 (and one host).
+    r = c.put(
+        "/v1/admin/api-keys/partner-prod/ip-allowlist",
+        json={"cidrs": ["10.10.0.0/16", "198.51.100.7"]},
+        headers=admin,
+    )
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["name"] == "partner-prod"
+    assert "10.10.0.0/16" in out["cidrs"]
+    assert "198.51.100.7/32" in out["cidrs"]
+
+    # Round-trip: the key list must surface the new allowlist.
+    rows = c.get("/v1/admin/api-keys", headers=admin).json()
+    me = next(r for r in rows if r["name"] == "partner-prod")
+    assert me["ip_allowlist"] == out["cidrs"]
+
+    # Foreign IP is blocked with the new error code.
+    r = c.get(
+        "/v1/webhooks/medtracker/recent?limit=1",
+        headers={"x-api-key": plain, "x-forwarded-for": "203.0.113.5"},
+    )
+    assert r.status_code == 403
+    body = r.json()
+    assert body.get("error") == "api_key_ip_not_allowed"
+    assert body.get("key") == "partner-prod"
+
+    # An IP inside the allowlist passes.
+    r = c.get(
+        "/v1/webhooks/medtracker/recent?limit=1",
+        headers={"x-api-key": plain, "x-forwarded-for": "10.10.4.99"},
+    )
+    assert r.status_code == 200, r.text
+
+    # A bare-IP entry also matches exactly.
+    r = c.get(
+        "/v1/webhooks/medtracker/recent?limit=1",
+        headers={"x-api-key": plain, "x-forwarded-for": "198.51.100.7"},
+    )
+    assert r.status_code == 200, r.text
+
+    # Clearing the list removes the restriction.
+    r = c.put(
+        "/v1/admin/api-keys/partner-prod/ip-allowlist",
+        json={"cidrs": []},
+        headers=admin,
+    )
+    assert r.status_code == 200
+    assert r.json()["cidrs"] == []
+
+    r = c.get(
+        "/v1/webhooks/medtracker/recent?limit=1",
+        headers={"x-api-key": plain, "x-forwarded-for": "203.0.113.5"},
+    )
+    assert r.status_code == 200
+
+    # Bad CIDR returns a structured 400 and writes an audit failure row.
+    r = c.put(
+        "/v1/admin/api-keys/partner-prod/ip-allowlist",
+        json={"cidrs": ["not-an-ip"]},
+        headers=admin,
+    )
+    assert r.status_code == 400
+    assert "invalid" in r.json()["detail"].lower()
+
+    # Unknown key name -> 404.
+    r = c.put(
+        "/v1/admin/api-keys/does-not-exist/ip-allowlist",
+        json={"cidrs": ["10.0.0.0/24"]},
+        headers=admin,
+    )
+    assert r.status_code == 404
+
+    # Direct helpers behave too.
+    ak.set_key_ip_allowlist("partner-prod", ["192.0.2.0/24"])
+    assert ak.get_key_ip_allowlist("partner-prod") == ["192.0.2.0/24"]

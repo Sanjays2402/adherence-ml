@@ -116,10 +116,12 @@ class APIKeyOut(BaseModel):
     expires_at: str | None
     revoked_at: str | None
     last_used_at: str | None
+    ip_allowlist: list[str] = Field(default_factory=list)
 
 
 def _key_row_to_out(row) -> APIKeyOut:
-    scopes = sorted(s for s in (row.scopes_csv or "").split(",") if s)
+    scopes = sorted(s for s in (row.scopes_csv or "") .split(",") if s)
+    ip_allowlist = [c for c in (getattr(row, "ip_allowlist_csv", "") or "").split(",") if c]
     return APIKeyOut(
         id=row.id, name=row.name, role=row.role, scopes=scopes,
         tenant_id=(row.tenant_id or "default"),
@@ -129,6 +131,7 @@ def _key_row_to_out(row) -> APIKeyOut:
         expires_at=row.expires_at.isoformat() if row.expires_at else None,
         revoked_at=row.revoked_at.isoformat() if row.revoked_at else None,
         last_used_at=row.last_used_at.isoformat() if row.last_used_at else None,
+        ip_allowlist=ip_allowlist,
     )
 
 
@@ -398,3 +401,71 @@ def read_admin_audit(
         tenant_id=tenant_filter, action=action, caller=caller, limit=limit
     )
     return [AdminAuditRow(**r) for r in rows]
+
+
+# ---- Per-key IP/CIDR allowlist -------------------------------------------
+
+class APIKeyIpAllowlistIn(BaseModel):
+    cidrs: list[str] = Field(
+        default_factory=list,
+        max_length=64,
+        description=(
+            "Source IPs or CIDRs (IPv4 or IPv6) this key is allowed to "
+            "call from. Empty list clears the restriction."
+        ),
+    )
+
+
+class APIKeyIpAllowlistOut(BaseModel):
+    name: str
+    cidrs: list[str]
+
+
+@router.get("/api-keys/{name}/ip-allowlist", response_model=APIKeyIpAllowlistOut)
+def get_api_key_ip_allowlist(
+    name: str,
+    p=Depends(require_admin),
+) -> APIKeyIpAllowlistOut:
+    try:
+        cidrs = ak.get_key_ip_allowlist(name)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return APIKeyIpAllowlistOut(name=name, cidrs=cidrs)
+
+
+@router.put("/api-keys/{name}/ip-allowlist", response_model=APIKeyIpAllowlistOut)
+def put_api_key_ip_allowlist(
+    name: str,
+    body: APIKeyIpAllowlistIn,
+    request: Request,
+    p=Depends(require_admin_mfa),
+) -> APIKeyIpAllowlistOut:
+    """Replace the per-key source IP allowlist.
+
+    Empty list clears the restriction (key may be used from any IP that
+    the tenant-level allowlist permits). Each entry is validated as a
+    CIDR or bare IP; bare IPs are pinned to /32 or /128.
+    """
+    try:
+        row = ak.set_key_ip_allowlist(name, body.cidrs)
+    except LookupError as exc:
+        record_admin_action(
+            action="api_key.ip_allowlist.set", principal=p, target=name,
+            details={"cidrs": body.cidrs}, ok=False, error="not found",
+            request_id=_rid(request),
+        )
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        record_admin_action(
+            action="api_key.ip_allowlist.set", principal=p, target=name,
+            details={"cidrs": body.cidrs}, ok=False, error=str(exc),
+            request_id=_rid(request),
+        )
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    cidrs = [c for c in (row.ip_allowlist_csv or "").split(",") if c]
+    record_admin_action(
+        action="api_key.ip_allowlist.set", principal=p, target=name,
+        details={"cidrs": cidrs, "count": len(cidrs)},
+        request_id=_rid(request),
+    )
+    return APIKeyIpAllowlistOut(name=name, cidrs=cidrs)

@@ -412,6 +412,15 @@ def _ensure_tenant_columns(engine) -> None:
         )
         with engine.begin() as conn:
             conn.execute(text(ddl))
+    # Per-key IP/CIDR allowlist: nullable text column on api_key_records.
+    if "api_key_records" in existing_tables:
+        cols = {c["name"] for c in insp.get_columns("api_key_records")}
+        if "ip_allowlist_csv" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE api_key_records "
+                    "ADD COLUMN ip_allowlist_csv VARCHAR(1024)"
+                ))
 
 
 def init_db() -> None:
