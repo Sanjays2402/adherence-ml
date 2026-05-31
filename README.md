@@ -2,6 +2,65 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Outbound webhook destination policy (SSRF defense)
+
+Procurement reviewers fail any SaaS that will POST to an arbitrary URL
+the customer supplies. A subscription pointed at
+`http://169.254.169.254/` or `http://127.0.0.1:6379/` turns the
+outbound dispatcher into a confused deputy that can leak cloud-metadata
+credentials or hit internal services.
+
+The outbound subscription system now enforces a strict destination
+policy at TWO points:
+
+1. **Subscription create time** in `PUT /v1/webhooks/outbound/subscriptions`:
+   bad URLs are rejected with `400 outbound_blocked` and a structured
+   reason before the row is ever written.
+2. **Dispatch time** in `outbound.dispatch`: DNS is re-resolved and the
+   policy is re-evaluated on every send (DNS rebinding defense). When
+   the policy refuses, a `WebhookDelivery` row is written with
+   `state="blocked"` and no HTTP request is made; the refusal shows up
+   in `GET /v1/webhooks/outbound/deliveries` and in structured logs as
+   `outbound_webhook_blocked`.
+
+Deny-by-default categories:
+
+- Plain HTTP (set `ADHERENCE_OUTBOUND_ALLOW_HTTP=true` only in dev).
+- Loopback (`127.0.0.0/8`, `::1`), private (`10/8`, `172.16/12`,
+  `192.168/16`, `fc00::/7`), link-local (`169.254/16`, `fe80::/10`),
+  multicast, reserved, unspecified.
+- URL userinfo (`http://user:pass@host`).
+- Non-http/https schemes.
+
+Always blocked, regardless of toggles:
+
+- AWS / GCP / Azure metadata endpoints (`169.254.169.254`,
+  `metadata.google.internal`, `fd00:ec2::254`).
+
+Optional hostname allowlist via `ADHERENCE_OUTBOUND_HOST_ALLOWLIST`:
+entries are exact-match (`hooks.example.com`) or suffix-match
+(`.partner.io` matches any subdomain but not the bare apex).
+
+### Try it
+
+```bash
+# Live policy snapshot.
+curl -sS http://localhost:8000/v1/webhooks/outbound/policy \
+  -H "x-api-key: $ADMIN_KEY"
+
+# Dry-run a URL before creating the subscription.
+curl -sS -X POST http://localhost:8000/v1/webhooks/outbound/policy/check \
+  -H "x-api-key: $ADMIN_KEY" -H "content-type: application/json" \
+  -d '{"url":"http://169.254.169.254/latest/meta-data/iam/"}'
+# => {"allowed":false,"reason":"cloud metadata endpoint ...","resolved_ips":[]}
+
+# Refused at create time.
+curl -sS -X PUT http://localhost:8000/v1/webhooks/outbound/subscriptions \
+  -H "x-api-key: $ADMIN_KEY" -H "content-type: application/json" \
+  -d '{"name":"evil","url":"http://127.0.0.1:6379/","active":true}'
+# => 400 {"detail":{"code":"outbound_blocked","reason":"..."}}
+```
+
 ## Per-workspace seat enforcement
 
 Every plan tier already advertised a `seats` number (free=3, pro=25,

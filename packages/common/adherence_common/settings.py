@@ -93,6 +93,18 @@ class Settings(BaseSettings):
     inbound_webhook_max_skew_seconds: int = 300
     inbound_webhook_require_signed: bool = False
 
+    # Outbound webhook destination policy (SSRF defense). Subscriptions
+    # are validated at create time AND at dispatch time (DNS rebinding
+    # defense). Defaults deny private/loopback/link-local IPs and plain
+    # HTTP; cloud metadata endpoints are always blocked.
+    # See packages/common/adherence_common/outbound_policy.py.
+    outbound_allow_private: bool = False  # set true ONLY in dev/test
+    outbound_allow_http: bool = False     # set true ONLY in dev/test
+    # Optional comma-separated allowlist of destination hostnames. Empty
+    # disables hostname allowlisting (IP-class checks still apply).
+    # Entries: ``hooks.example.com`` (exact) or ``.example.com`` (suffix).
+    outbound_host_allowlist: str = ""
+
     # Sentry error tracking. Empty DSN disables shipping. Other knobs are still
     # parsed so they can be set ahead of enabling Sentry without restart churn.
     sentry_dsn: str | None = None

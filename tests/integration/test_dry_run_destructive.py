@@ -25,6 +25,8 @@ def _setup(tmp_path, monkeypatch):
     monkeypatch.setenv("ADHERENCE_DB_URL", f"sqlite:///{tmp_path}/dry.db")
     monkeypatch.setenv("ADHERENCE_MLFLOW_TRACKING_URI", f"file:{tmp_path}/mlruns")
     monkeypatch.setenv("ADHERENCE_RATE_LIMIT_ENABLED", "false")
+    monkeypatch.setenv("ADHERENCE_OUTBOUND_ALLOW_PRIVATE", "true")
+    monkeypatch.setenv("ADHERENCE_OUTBOUND_ALLOW_HTTP", "true")
     reload_settings()
     from adherence_common import audit as audit_mod, deliveries as dmod
     audit_mod._INITIALIZED = False

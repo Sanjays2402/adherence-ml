@@ -30,6 +30,7 @@ from adherence_common.db import (
     WebhookDelivery, WebhookSubscription, init_db, session,
 )
 from adherence_common.logging import get_logger
+from adherence_common import outbound_policy
 
 log = get_logger(__name__)
 
@@ -120,6 +121,36 @@ def dispatch(
                       default=str).encode("utf-8")
     out_ids: list[int] = []
     for sub in targets:
+        # SSRF defense, re-evaluated on every dispatch so a subscription
+        # whose DNS has been rebound to a private IP since creation is
+        # blocked here and recorded as state='blocked'. No HTTP attempt.
+        decision = outbound_policy.evaluate(sub.url)
+        if not decision.allowed:
+            try:
+                _ensure_table()
+                with session() as s:
+                    row = WebhookDelivery(
+                        subscription_id=sub.id,
+                        event_type=event_type,
+                        payload_json=payload,
+                        attempt=0,
+                        status_code=None,
+                        latency_ms=None,
+                        error=f"outbound_blocked: {decision.reason}",
+                        state="blocked",
+                    )
+                    s.add(row)
+                    s.commit()
+                    s.refresh(row)
+                    out_ids.append(row.id)
+            except SQLAlchemyError as exc:  # pragma: no cover
+                log.warning("webhook_block_record_failed", error=str(exc))
+            log.warning(
+                "outbound_webhook_blocked",
+                subscription_id=sub.id, url=sub.url,
+                reason=decision.reason,
+            )
+            continue
         sig = sign(sub.secret, body)
         last_status: int | None = None
         last_error: str | None = None

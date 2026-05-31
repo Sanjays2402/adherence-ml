@@ -20,6 +20,7 @@ from adherence_api.deps import require_admin
 from adherence_api.dry_run import dry_run_response
 from adherence_api.routes.predict import _caller_id
 from adherence_common import outbound as outbound_mod
+from adherence_common import outbound_policy
 from adherence_common.db import (
     WebhookDelivery, WebhookSubscription, init_db, session,
 )
@@ -71,6 +72,17 @@ def upsert_subscription(
 ) -> SubscriptionOut:
     init_db()
     caller = _caller_id(request, p)
+    try:
+        decision = outbound_policy.ensure_allowed(str(body.url))
+    except outbound_policy.OutboundPolicyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "outbound_blocked",
+                "reason": str(exc),
+                "url": str(body.url),
+            },
+        )
     secret_val = body.secret or secrets.token_urlsafe(32)
     csv = ",".join(sorted({e.strip() for e in body.event_types if e.strip()}))
     with session() as s:
@@ -211,3 +223,48 @@ def test_send(body: TestSendIn, p=Depends(require_admin)) -> TestSendOut:
     """Send a test event to all subscriptions matching ``event_type``."""
     ids = outbound_mod.dispatch(body.event_type, body.payload)
     return TestSendOut(delivery_ids=ids)
+
+
+class PolicyOut(BaseModel):
+    allow_http: bool
+    allow_private: bool
+    host_allowlist: list[str]
+
+
+class PolicyCheckIn(BaseModel):
+    url: str
+
+
+class PolicyCheckOut(BaseModel):
+    allowed: bool
+    reason: str | None
+    resolved_ips: list[str]
+
+
+@router.get("/policy", response_model=PolicyOut)
+def get_policy(p=Depends(require_admin)) -> PolicyOut:
+    """Return the active outbound destination policy. Used by the
+    webhook UI to explain why a URL was rejected."""
+    from adherence_common.settings import get_settings
+    s = get_settings()
+    allowlist = [
+        e.strip()
+        for e in (s.outbound_host_allowlist or "").split(",")
+        if e.strip()
+    ]
+    return PolicyOut(
+        allow_http=bool(s.outbound_allow_http),
+        allow_private=bool(s.outbound_allow_private),
+        host_allowlist=allowlist,
+    )
+
+
+@router.post("/policy/check", response_model=PolicyCheckOut)
+def check_policy(body: PolicyCheckIn, p=Depends(require_admin)) -> PolicyCheckOut:
+    """Dry-run a URL against the policy without creating a subscription."""
+    decision = outbound_policy.evaluate(body.url)
+    return PolicyCheckOut(
+        allowed=decision.allowed,
+        reason=decision.reason,
+        resolved_ips=list(decision.resolved_ips),
+    )
