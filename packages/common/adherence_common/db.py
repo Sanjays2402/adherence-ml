@@ -471,6 +471,7 @@ def init_db() -> None:
     from adherence_common import quota as _quota  # noqa: F401
     from adherence_common import revocation as _rev  # noqa: F401
     from adherence_common import memberships as _mem  # noqa: F401
+    from adherence_common import session_policy as _sp  # noqa: F401
     engine = _engine()
     Base.metadata.create_all(engine)
     try:

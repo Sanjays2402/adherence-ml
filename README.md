@@ -180,6 +180,53 @@ curl -sS -X POST http://localhost:8000/v1/admin/sessions/revoke-all \
   -d '{"sub":"bob","tenant":"acme","reason":"offboarding"}'
 ```
 
+## Per-workspace session max-age policy
+
+The global `jwt_ttl_seconds` applies uniformly across all tenants,
+which does not fit regulated workspaces that need a tighter cap (a
+healthcare tenant may want 30 minute sessions while a sandbox tenant
+allows 24 hours). A workspace admin can now set a per-tenant cap that
+short-circuits any JWT older than `max_age_seconds`, regardless of how
+long the global TTL would have honoured it.
+
+* `GET /v1/workspace/session-policy` returns the current cap (or `null`
+  when the tenant uses the global TTL).
+* `PUT /v1/workspace/session-policy` sets `max_age_seconds` in the
+  range `[60, 2592000]` (1 minute to 30 days).
+* `DELETE /v1/workspace/session-policy` lifts the cap.
+
+The enforcement runs inside `verify_jwt` alongside the revocation check
+and is tenant-scoped: capping tenant `acme` does not affect tokens
+issued for tenant `globex`. The check fails open on backend errors so a
+single DB hiccup never locks every client out. Every mutation is
+admin-only, MFA-gated, supports `?dry_run=true`, and lands in
+`admin_audit_log` with the actor, request id, and the new value.
+
+### Try it
+
+```bash
+# Mint an admin token for the tenant whose cap you want to manage.
+ADMIN_TOKEN=$(curl -sS -X POST http://localhost:8000/v1/admin/token \
+  -H "x-api-key: $ADMIN_KEY" -H "content-type: application/json" \
+  -d '{"subject":"alice","role":"admin","tenant":"acme"}' | jq -r .token)
+
+# Read current policy.
+curl -sS http://localhost:8000/v1/workspace/session-policy \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+
+# Cap acme sessions to 15 minutes.
+curl -sS -X PUT http://localhost:8000/v1/workspace/session-policy \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H "content-type: application/json" \
+  -d '{"max_age_seconds": 900}'
+
+# Tokens minted before that change keep working until they hit the cap;
+# anything older than 15 minutes is now rejected with HTTP 401.
+
+# Lift the cap.
+curl -sS -X DELETE http://localhost:8000/v1/workspace/session-policy \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
 ## Outbound webhook destination policy (SSRF defense)
 
 Procurement reviewers fail any SaaS that will POST to an arbitrary URL

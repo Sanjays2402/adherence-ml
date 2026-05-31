@@ -52,6 +52,15 @@ def verify_jwt(token: str, settings: Settings) -> dict:
     reason = check_token_revoked(claims)
     if reason is not None:
         raise AuthError(reason)
+    # Per-workspace session-max-age policy. Fail-open on errors, identical
+    # to the revocation check above.
+    try:
+        from adherence_common.session_policy import enforce_session_age
+    except Exception:
+        return claims
+    age_reason = enforce_session_age(claims)
+    if age_reason is not None:
+        raise AuthError(age_reason)
     return claims
 
 
