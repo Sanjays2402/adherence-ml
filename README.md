@@ -34,7 +34,7 @@ curl -X PATCH 'http://localhost:3000/api/workspaces/WS_ID?dry_run=true' \
 Run the RBAC isolation test:
 
 ```bash
-pnpm --filter @adherence/web exec tsx lib/__tests__/workspace-role-rbac.test.ts
+pnpm --filter @adherence/web exec vitest run tests/workspace-role-rbac.test.ts
 ```
 
 ## SCIM 2.0 user provisioning (Okta, Azure AD, Google Workspace)
