@@ -226,6 +226,61 @@ def revoke_key(name: str, *, by: str | None = None) -> bool:
         return True
 
 
+def _auto_revoke_if_dormant(s, row: APIKeyRecord, now: datetime) -> None:
+    """If the row's tenant has ``max_dormant_days`` configured and the
+    key has been idle longer than that window, mark it revoked in-place
+    inside the open session ``s`` and raise ``AuthError``.
+
+    The function is best-effort about the policy lookup (fail-open via
+    :func:`dormant_threshold_seconds`) but strict about enforcement once
+    a threshold is known: a stale key is always rejected.
+    """
+    # Late import to avoid a hard cycle between api_keys and api_key_policy.
+    from adherence_common.api_key_policy import (  # noqa: WPS433
+        dormant_threshold_seconds,
+    )
+    threshold = dormant_threshold_seconds(row.tenant_id or "default")
+    if threshold is None:
+        return
+    reference = row.last_used_at or row.rotated_at or row.created_at
+    if reference is None:
+        return
+    age = (now - reference).total_seconds()
+    if age < threshold:
+        return
+    row.revoked_at = now
+    days = int(threshold // 86400)
+    note = (row.note or "").rstrip()
+    stamp = f"[auto-disabled: dormant {days}d @ {now.isoformat()}]"
+    row.note = f"{note} {stamp}".strip() if note else stamp
+    try:
+        s.commit()
+    except Exception:  # pragma: no cover - defensive
+        s.rollback()
+    # Best-effort admin audit so SOC2 reviewers can see automated
+    # revocations next to manual ones. Failure must not mask the auth
+    # outcome.
+    try:
+        from adherence_common.admin_audit import record_admin_action  # noqa: WPS433
+        record_admin_action(
+            action="api_key.auto_disabled.dormant",
+            principal={"sub": "system", "role": "system"},
+            target=str(row.name),
+            details={
+                "tenant_id": row.tenant_id,
+                "max_dormant_days": days,
+                "idle_seconds": int(age),
+                "last_used_at": (
+                    row.last_used_at.isoformat() if row.last_used_at else None
+                ),
+            },
+            ok=True,
+        )
+    except Exception:
+        pass
+    raise AuthError("api key auto-disabled (dormant)")
+
+
 def resolve_db_key(plain: str) -> ResolvedKey | None:
     """Return a ResolvedKey or None if the plaintext is not a valid DB key.
 
@@ -247,6 +302,14 @@ def resolve_db_key(plain: str) -> ResolvedKey | None:
             raise AuthError("api key revoked")
         if row.expires_at is not None and row.expires_at <= now:
             raise AuthError("api key expired")
+        # Per-workspace dormancy auto-disable. When the workspace policy
+        # sets max_dormant_days and this key has been idle for longer
+        # than that window we revoke it in-place (with an audit row) and
+        # surface AuthError so the caller cannot transparently fall back
+        # to env keys. Reference age is the most recent of created_at /
+        # rotated_at / last_used_at so a freshly minted key always gets
+        # at least its first dormancy window of usable time.
+        _auto_revoke_if_dormant(s, row, now)
         rid = row.id
         ip_raw = (row.ip_allowlist_csv or "")
         ip_list = tuple(

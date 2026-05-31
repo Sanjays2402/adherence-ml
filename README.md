@@ -1084,13 +1084,19 @@ Endpoints under `/v1/workspace/api-key-policy`:
 * `GET    /v1/workspace/api-key-policy` returns the current policy
   (`max_ttl_seconds: null` means no per-tenant cap).
 * `PUT    /v1/workspace/api-key-policy` sets `max_ttl_seconds`,
-  `require_expiry`, and an optional `max_active_keys` cap (admin only,
-  MFA-gated, dry-run aware). The active-key cap rejects
+  `require_expiry`, an optional `max_active_keys` cap, and an optional
+  `max_dormant_days` inactivity window (admin only, MFA-gated, dry-run
+  aware). The active-key cap rejects
   `api_key.create` with HTTP 400 `active_key_limit_exceeded` once the
   workspace already has that many non-revoked, non-expired keys, and
   sits *below* the plan seat ceiling so a 100-seat plan can be locked
   to (say) 5 active keys in a production tenant without changing
-  billing.
+  billing. When `max_dormant_days` is set, any API key whose
+  `last_used_at` (or `created_at` for never-used keys) is older than
+  that window is auto-revoked the next time it is presented, and an
+  admin-audit row `api_key.auto_disabled.dormant` is written; the
+  caller receives `401 api key auto-disabled (dormant)` and no
+  silent env-key fallback occurs.
 * `DELETE /v1/workspace/api-key-policy` lifts the cap.
 
 Try it locally:
@@ -1100,12 +1106,13 @@ Try it locally:
 curl -sS http://localhost:8000/v1/workspace/api-key-policy \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 
-# Force 7-day rotation, require every key to declare an expiry, and
-# also cap the workspace to at most 5 simultaneously-active keys.
+# Force 7-day rotation, require every key to declare an expiry, cap
+# the workspace to at most 5 simultaneously-active keys, and auto-revoke
+# any key that goes 30 days without use.
 curl -sS -X PUT http://localhost:8000/v1/workspace/api-key-policy \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "content-type: application/json" \
-  -d '{"max_ttl_seconds": 604800, "require_expiry": true, "max_active_keys": 5}'
+  -d '{"max_ttl_seconds": 604800, "require_expiry": true, "max_active_keys": 5, "max_dormant_days": 30}'
 
 # A 90-day key request now fails with api_key_policy_violation.
 curl -sS -X POST http://localhost:8000/v1/admin/api-keys \

@@ -32,8 +32,10 @@ from adherence_api.routes.admin_mfa import require_admin_mfa
 from adherence_common.admin_audit import record_admin_action
 from adherence_common.api_key_policy import (
     MAX_MAX_ACTIVE_KEYS,
+    MAX_MAX_DORMANT_DAYS,
     MAX_MAX_TTL_SECONDS,
     MIN_MAX_ACTIVE_KEYS,
+    MIN_MAX_DORMANT_DAYS,
     MIN_MAX_TTL_SECONDS,
     clear_policy,
     get_policy,
@@ -74,12 +76,24 @@ class PolicyOut(BaseModel):
             "with HTTP 400 once the count reaches the cap."
         ),
     )
+    max_dormant_days: Optional[int] = Field(
+        None,
+        description=(
+            "Optional inactivity window in days. When set, an API key "
+            "whose last_used_at (or created_at, for never-used keys) is "
+            "older than this value is auto-revoked on its next resolve "
+            "attempt and an admin-audit row is written. None disables "
+            "the dormancy sweep for this workspace."
+        ),
+    )
     updated_at: Optional[int] = None
     updated_by: Optional[str] = None
     min_allowed_seconds: int = MIN_MAX_TTL_SECONDS
     max_allowed_seconds: int = MAX_MAX_TTL_SECONDS
     min_allowed_active_keys: int = MIN_MAX_ACTIVE_KEYS
     max_allowed_active_keys: int = MAX_MAX_ACTIVE_KEYS
+    min_allowed_dormant_days: int = MIN_MAX_DORMANT_DAYS
+    max_allowed_dormant_days: int = MAX_MAX_DORMANT_DAYS
 
 
 class PolicyIn(BaseModel):
@@ -109,6 +123,15 @@ class PolicyIn(BaseModel):
             "Omit or set to null to leave the cap unset (plan seats still apply)."
         ),
     )
+    max_dormant_days: Optional[int] = Field(
+        None,
+        ge=MIN_MAX_DORMANT_DAYS,
+        le=MAX_MAX_DORMANT_DAYS,
+        description=(
+            "Optional inactivity window in days. Keys idle longer than "
+            "this auto-revoke on next use. Omit or null to disable."
+        ),
+    )
 
 
 def _view(tenant_id: str) -> PolicyOut:
@@ -120,6 +143,7 @@ def _view(tenant_id: str) -> PolicyOut:
         max_ttl_seconds=pv.max_ttl_seconds,
         require_expiry=pv.require_expiry,
         max_active_keys=pv.max_active_keys,
+        max_dormant_days=pv.max_dormant_days,
         updated_at=pv.updated_at,
         updated_by=pv.updated_by,
     )
@@ -152,6 +176,7 @@ def write_policy(
                 "max_ttl_seconds": body.max_ttl_seconds,
                 "require_expiry": body.require_expiry,
                 "max_active_keys": body.max_active_keys,
+                "max_dormant_days": body.max_dormant_days,
                 "dry_run": True,
             },
             request_id=_rid(request),
@@ -163,6 +188,7 @@ def write_policy(
                 max_ttl_seconds=body.max_ttl_seconds,
                 require_expiry=body.require_expiry,
                 max_active_keys=body.max_active_keys,
+                max_dormant_days=body.max_dormant_days,
             )
         )
     try:
@@ -171,6 +197,7 @@ def write_policy(
             max_ttl_seconds=body.max_ttl_seconds,
             require_expiry=body.require_expiry,
             max_active_keys=body.max_active_keys,
+            max_dormant_days=body.max_dormant_days,
             updated_by=caller,
         )
     except ValueError as exc:
@@ -182,6 +209,7 @@ def write_policy(
                 "max_ttl_seconds": body.max_ttl_seconds,
                 "require_expiry": body.require_expiry,
                 "max_active_keys": body.max_active_keys,
+                "max_dormant_days": body.max_dormant_days,
             },
             ok=False,
             error=str(exc),
@@ -198,6 +226,7 @@ def write_policy(
             "max_ttl_seconds": pv.max_ttl_seconds,
             "require_expiry": pv.require_expiry,
             "max_active_keys": pv.max_active_keys,
+            "max_dormant_days": pv.max_dormant_days,
         },
         request_id=_rid(request),
     )
@@ -206,6 +235,7 @@ def write_policy(
         max_ttl_seconds=pv.max_ttl_seconds,
         require_expiry=pv.require_expiry,
         max_active_keys=pv.max_active_keys,
+        max_dormant_days=pv.max_dormant_days,
         updated_at=pv.updated_at,
         updated_by=pv.updated_by,
     )
