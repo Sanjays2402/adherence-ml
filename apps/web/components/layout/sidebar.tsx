@@ -23,6 +23,7 @@ import {
   Rocket,
   Receipt,
   UsersFour,
+  CalendarCheck,
 } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import SidebarUser from "./sidebar-user";
@@ -46,6 +47,7 @@ const NAV = [
   { href: "/usage", label: "Usage", icon: Gauge, hint: "Quota // billing" },
   { href: "/billing", label: "Billing", icon: Receipt, hint: "Plan // history" },
   { href: "/webhooks", label: "Webhooks", icon: Plugs, hint: "Outbound deliveries" },
+  { href: "/schedules", label: "Schedules", icon: CalendarCheck, hint: "Recurring predictions" },
   { href: "/notifications", label: "Notifications", icon: Bell, hint: "Activity feed" },
   { href: "/workspace", label: "Workspace", icon: UsersFour, hint: "Members // invites" },
   { href: "/settings", label: "Settings", icon: Gear, hint: "Profile // data // wipe" },

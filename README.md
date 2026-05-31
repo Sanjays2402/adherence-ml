@@ -380,6 +380,36 @@ curl -s -X POST http://localhost:3000/api/shares \
   }'
 # -> {"id":"...","url":"/r/..."}  open http://localhost:3000/r/<id>
 ```
+
+Recurring predictions (schedules):
+
+```bash
+# 1. create a daily schedule that fires at 08:00 UTC against patient u_123
+curl -s -X POST http://localhost:3000/api/schedules \
+  -H 'content-type: application/json' \
+  -d '{
+    "name":"Morning statin check",
+    "cadence":"daily",
+    "hour_utc":8,
+    "payload":{
+      "user_id":"u_123",
+      "doses":[{"dose_id":"d1","scheduled_at":"2026-06-01T08:00:00Z","dose_class":"statin","dose_strength_mg":20}]
+    }
+  }'
+
+# 2. fire every due schedule now (also wired for external cron;
+#    set ADHERENCE_CRON_SECRET in prod and pass it as x-cron-secret)
+curl -s -X POST http://localhost:3000/api/schedules/tick
+
+# 3. list schedules with next_run_at, success/failure counters, recent runs
+curl -s http://localhost:3000/api/schedules | jq
+```
+
+Each fire calls `/v1/predict` upstream, appends the result to history with a
+`scheduled` tag (browse them at `/history?tag=scheduled` or in the schedule's
+drawer), and fans out as a `run.created` webhook event. Pause, resume, or
+delete schedules in the UI at
+[http://localhost:3000/schedules](http://localhost:3000/schedules).
 [http://localhost:3000/compare](http://localhost:3000/compare) scores all
 three personas in parallel and ranks who needs an intervention first with a
 composite triage score and a cohort-wide top-reasons chart aggregated from
@@ -471,6 +501,13 @@ so clients can back off cleanly. `GET /v1/batch` returns the full schema
 and limits as JSON.
 
 ## Features
+
+- Recurring schedules (`/schedules`): create a daily or weekly cadence over
+  any saved prediction payload. The cron tick (`POST /api/schedules/tick`)
+  fires every due job through `/v1/predict`, streams results into history
+  with a `scheduled` tag, and emits a `run.created` webhook. Protected with
+  `ADHERENCE_CRON_SECRET` when set; recent runs, latency, and failure
+  reasons surface inline per schedule.
 
 - Landing demo (`/`) with three click-to-run patient scenarios, live miss
   probability, risk tier bars, latency, and SHAP reason codes.
