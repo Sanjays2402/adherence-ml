@@ -1,0 +1,296 @@
+"use client";
+
+import { useCallback, useState } from "react";
+import useSWR from "swr";
+import {
+  Key,
+  Copy,
+  Check,
+  Trash,
+  Plus,
+  Terminal,
+  Warning,
+  ShieldCheck,
+} from "@phosphor-icons/react";
+import {
+  PageHeader,
+  Card,
+  CardHeader,
+  Button,
+  Input,
+  Empty,
+  ErrorBox,
+  Skeleton,
+  Badge,
+  MonoChip,
+} from "@/components/ui/primitives";
+
+type KeyRow = {
+  id: string;
+  name: string;
+  prefix: string;
+  created_at: number;
+  last_used_at: number | null;
+  use_count: number;
+  revoked: boolean;
+};
+
+type ListResp = { keys: KeyRow[] };
+
+const fetcher = (url: string) => fetch(url).then((r) => r.json());
+
+function fmt(ms: number | null): string {
+  if (!ms) return "never";
+  const d = new Date(ms);
+  return d.toISOString().replace("T", " ").slice(0, 16) + "Z";
+}
+
+function CopyBtn({ text, label = "copy" }: { text: string; label?: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          setDone(true);
+          setTimeout(() => setDone(false), 1500);
+        } catch {
+          /* noop */
+        }
+      }}
+      className="inline-flex items-center gap-1 text-[11px] font-mono px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-surface)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
+      aria-label={label}
+    >
+      {done ? <Check weight="bold" size={12} /> : <Copy weight="duotone" size={12} />}
+      {done ? "copied" : label}
+    </button>
+  );
+}
+
+export default function KeysClient() {
+  const { data, error, isLoading, mutate } = useSWR<ListResp>("/api/keys", fetcher, {
+    refreshInterval: 0,
+  });
+  const [name, setName] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [createErr, setCreateErr] = useState<string | null>(null);
+  const [issued, setIssued] = useState<{ name: string; key: string } | null>(null);
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+
+  const onCreate = useCallback(async () => {
+    setCreateErr(null);
+    if (!name.trim()) {
+      setCreateErr("name is required");
+      return;
+    }
+    setCreating(true);
+    try {
+      const res = await fetch("/api/keys", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: name.trim() }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setCreateErr(json?.detail ?? "failed to create key");
+        return;
+      }
+      setIssued({ name: json.name, key: json.key });
+      setName("");
+      mutate();
+    } catch (e) {
+      setCreateErr(e instanceof Error ? e.message : "network error");
+    } finally {
+      setCreating(false);
+    }
+  }, [name, mutate]);
+
+  const onRevoke = useCallback(
+    async (id: string) => {
+      setRevokingId(id);
+      try {
+        await fetch(`/api/keys/${id}`, { method: "DELETE" });
+        mutate();
+      } finally {
+        setRevokingId(null);
+      }
+    },
+    [mutate],
+  );
+
+  const keys = data?.keys ?? [];
+  const active = keys.filter((k) => !k.revoked).length;
+
+  const sampleKey = issued?.key ?? "adh_YOUR_KEY_HERE";
+  const curl = `curl -X POST http://localhost:3000/v1/predict \\
+  -H "authorization: Bearer ${sampleKey}" \\
+  -H "content-type: application/json" \\
+  -d '{
+    "user_id": "u_123",
+    "doses": [
+      {
+        "dose_id": "d1",
+        "scheduled_at": "2025-01-01T08:00:00Z",
+        "dose_class": "statin",
+        "dose_strength_mg": 20
+      }
+    ]
+  }'`;
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        eyebrow="developer"
+        title="API keys"
+        description="Programmatic access to the /v1 prediction endpoint. Each key is shown once at creation."
+      />
+
+      {issued ? (
+        <Card className="border-[var(--color-accent)]/40">
+          <CardHeader
+            title={`Key created: ${issued.name}`}
+            hint="Copy it now. We store only a hash, so you cannot view it again."
+            right={<ShieldCheck weight="duotone" size={16} className="text-[var(--color-accent)]" />}
+          />
+          <div className="p-4 pt-2 space-y-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              <code className="text-xs font-mono px-3 py-2 rounded bg-[var(--color-surface)] border border-[var(--color-border)] break-all flex-1 min-w-0">
+                {issued.key}
+              </code>
+              <CopyBtn text={issued.key} label="copy key" />
+            </div>
+            <div className="flex items-start gap-2 text-[12px] text-[var(--color-muted)]">
+              <Warning weight="duotone" size={14} className="mt-0.5 shrink-0" />
+              <span>
+                Treat this like a password. If you lose it, revoke this key and create a new one.
+              </span>
+            </div>
+            <div className="pt-1">
+              <Button onClick={() => setIssued(null)}>Got it</Button>
+            </div>
+          </div>
+        </Card>
+      ) : null}
+
+      <Card>
+        <CardHeader title="Create a key" hint="Give it a name you will recognise later." right={<Plus weight="duotone" size={16} />} />
+        <div className="p-4 pt-2 space-y-3">
+          <div className="flex flex-col sm:flex-row gap-2">
+            <Input
+              placeholder="e.g. production backend"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") onCreate();
+              }}
+              aria-label="key name"
+            />
+            <Button onClick={onCreate} disabled={creating}>
+              {creating ? "Creating..." : "Create key"}
+            </Button>
+          </div>
+          {createErr ? <ErrorBox message={createErr} /> : null}
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Your keys"
+          hint={`${active} active / ${keys.length} total`}
+          right={<Key weight="duotone" size={16} />}
+        />
+        <div className="p-4 pt-2">
+          {isLoading ? (
+            <div className="space-y-2">
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-full" />
+            </div>
+          ) : error ? (
+            <ErrorBox message="failed to load keys" />
+          ) : keys.length === 0 ? (
+            <Empty
+              icon={<Key weight="duotone" size={24} />}
+              title="No keys yet"
+              hint="Create your first key above to start calling /v1/predict."
+            />
+          ) : (
+            <div className="overflow-x-auto -mx-4">
+              <table className="w-full text-[12px]">
+                <thead className="text-left text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                  <tr>
+                    <th className="px-4 py-2 font-medium">Name</th>
+                    <th className="px-4 py-2 font-medium">Prefix</th>
+                    <th className="px-4 py-2 font-medium">Created</th>
+                    <th className="px-4 py-2 font-medium">Last used</th>
+                    <th className="px-4 py-2 font-medium text-right">Calls</th>
+                    <th className="px-4 py-2 font-medium">Status</th>
+                    <th className="px-4 py-2 font-medium text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {keys.map((k) => (
+                    <tr key={k.id} className="border-t border-[var(--color-border)]">
+                      <td className="px-4 py-2 font-medium">{k.name}</td>
+                      <td className="px-4 py-2"><MonoChip>{k.prefix}...</MonoChip></td>
+                      <td className="px-4 py-2 font-mono text-[11px] text-[var(--color-muted)]">
+                        {fmt(k.created_at)}
+                      </td>
+                      <td className="px-4 py-2 font-mono text-[11px] text-[var(--color-muted)]">
+                        {fmt(k.last_used_at)}
+                      </td>
+                      <td className="px-4 py-2 text-right font-mono">{k.use_count}</td>
+                      <td className="px-4 py-2">
+                        {k.revoked ? (
+                          <Badge tone="danger">revoked</Badge>
+                        ) : (
+                          <Badge tone="success">active</Badge>
+                        )}
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        {!k.revoked ? (
+                          <button
+                            type="button"
+                            onClick={() => onRevoke(k.id)}
+                            disabled={revokingId === k.id}
+                            className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-surface)] hover:border-[var(--color-high)]/40 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)] disabled:opacity-50"
+                            aria-label={`revoke ${k.name}`}
+                          >
+                            <Trash weight="duotone" size={12} />
+                            {revokingId === k.id ? "..." : "revoke"}
+                          </button>
+                        ) : (
+                          <span className="text-[11px] text-[var(--color-muted)]">--</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Try it"
+          hint="POST /v1/predict with your key."
+          right={<Terminal weight="duotone" size={16} />}
+        />
+        <div className="p-4 pt-2 space-y-2">
+          <div className="flex items-center justify-end">
+            <CopyBtn text={curl} label="copy curl" />
+          </div>
+          <pre className="text-[11px] font-mono p-3 rounded bg-[var(--color-surface)] border border-[var(--color-border)] overflow-x-auto whitespace-pre">
+{curl}
+          </pre>
+          <p className="text-[11px] text-[var(--color-muted)]">
+            Successful calls also appear in your <a href="/history" className="underline">history</a>.
+          </p>
+        </div>
+      </Card>
+    </div>
+  );
+}

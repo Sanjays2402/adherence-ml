@@ -1,0 +1,146 @@
+/**
+ * API keys store. File-backed, dependency-free, mirrors the
+ * runs-store/shares pattern so it deploys without extra infra.
+ *
+ * Keys are issued in plaintext exactly once at creation. Only a
+ * SHA-256 hash and a short prefix are persisted, so a leaked store
+ * file does not leak usable credentials.
+ */
+import { promises as fs } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
+import path from "node:path";
+import { randomBytes, createHash } from "node:crypto";
+
+export interface ApiKeyRecord {
+  id: string;
+  name: string;
+  prefix: string; // first 8 chars of plaintext, for UI display
+  hash: string; // sha256(plaintext)
+  created_at: number;
+  last_used_at: number | null;
+  use_count: number;
+  revoked: boolean;
+}
+
+export interface NewApiKey {
+  record: ApiKeyRecord;
+  plaintext: string; // returned exactly once
+}
+
+const DATA_DIR =
+  process.env.ADHERENCE_DATA_DIR ?? path.join(process.cwd(), ".data");
+const STORE_PATH = path.join(DATA_DIR, "api-keys.json");
+
+interface Store {
+  version: 1;
+  keys: ApiKeyRecord[];
+}
+
+function ensureDir() {
+  if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+}
+
+let writeQueue: Promise<void> = Promise.resolve();
+
+async function readStore(): Promise<Store> {
+  ensureDir();
+  if (!existsSync(STORE_PATH)) return { version: 1, keys: [] };
+  try {
+    const raw = await fs.readFile(STORE_PATH, "utf8");
+    const parsed = JSON.parse(raw) as Store;
+    if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.keys)) {
+      return { version: 1, keys: [] };
+    }
+    return parsed;
+  } catch {
+    return { version: 1, keys: [] };
+  }
+}
+
+async function writeStore(store: Store): Promise<void> {
+  ensureDir();
+  const tmp = STORE_PATH + ".tmp";
+  await fs.writeFile(tmp, JSON.stringify(store, null, 2), "utf8");
+  await fs.rename(tmp, STORE_PATH);
+}
+
+function hashKey(plaintext: string): string {
+  return createHash("sha256").update(plaintext).digest("hex");
+}
+
+function newId(): string {
+  return randomBytes(8).toString("base64url").slice(0, 12);
+}
+
+export async function listKeys(): Promise<ApiKeyRecord[]> {
+  const s = await readStore();
+  return [...s.keys].sort((a, b) => b.created_at - a.created_at);
+}
+
+export async function createKey(name: string): Promise<NewApiKey> {
+  const trimmed = name.trim().slice(0, 80) || "untitled";
+  const plaintext = "adh_" + randomBytes(24).toString("base64url");
+  const record: ApiKeyRecord = {
+    id: newId(),
+    name: trimmed,
+    prefix: plaintext.slice(0, 12),
+    hash: hashKey(plaintext),
+    created_at: Date.now(),
+    last_used_at: null,
+    use_count: 0,
+    revoked: false,
+  };
+  writeQueue = writeQueue.then(async () => {
+    const s = await readStore();
+    s.keys.push(record);
+    await writeStore(s);
+  });
+  await writeQueue;
+  return { record, plaintext };
+}
+
+export async function revokeKey(id: string): Promise<boolean> {
+  let ok = false;
+  writeQueue = writeQueue.then(async () => {
+    const s = await readStore();
+    const k = s.keys.find((k) => k.id === id);
+    if (!k) return;
+    k.revoked = true;
+    ok = true;
+    await writeStore(s);
+  });
+  await writeQueue;
+  return ok;
+}
+
+/**
+ * Validate a presented key. Returns the matching record on success.
+ * Records usage (last_used_at, use_count) as a side effect.
+ */
+export async function verifyKey(plaintext: string): Promise<ApiKeyRecord | null> {
+  if (!plaintext || typeof plaintext !== "string") return null;
+  const h = hashKey(plaintext);
+  let match: ApiKeyRecord | null = null;
+  writeQueue = writeQueue.then(async () => {
+    const s = await readStore();
+    const k = s.keys.find((k) => k.hash === h && !k.revoked);
+    if (!k) return;
+    k.last_used_at = Date.now();
+    k.use_count += 1;
+    match = { ...k };
+    await writeStore(s);
+  });
+  await writeQueue;
+  return match;
+}
+
+export function extractKey(headers: Headers): string | null {
+  const auth = headers.get("authorization");
+  if (auth) {
+    const m = /^Bearer\s+(.+)$/i.exec(auth);
+    if (m) return m[1].trim();
+  }
+  const x = headers.get("x-api-key");
+  if (x) return x.trim();
+  return null;
+}

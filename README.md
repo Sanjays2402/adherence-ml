@@ -19,6 +19,28 @@ a notification queue with risk-tier policies, quiet hours, per-user mutes, and
 notification budgets. Every prediction, override, and delivery is recorded in
 an append-only audit log with CSV export.
 
+### API keys
+
+Issue your own keys for the public `/v1/predict` endpoint and call it from
+anywhere. Create, copy, and revoke keys at
+[http://localhost:3000/api-keys](http://localhost:3000/api-keys). Keys are
+shown exactly once at creation; only a SHA-256 hash and a short prefix are
+persisted to `apps/web/.data/api-keys.json`. Each successful call records
+last-used and increments a counter, and lands in the same run history under
+the `v1` tag.
+
+```bash
+curl -X POST http://localhost:3000/v1/predict \
+  -H "authorization: Bearer adh_YOUR_KEY" \
+  -H "content-type: application/json" \
+  -d '{
+    "user_id": "u_123",
+    "doses": [
+      {"dose_id":"d1","scheduled_at":"2025-01-01T08:00:00Z","dose_class":"statin","dose_strength_mg":20}
+    ]
+  }'
+```
+
 ### Run history
 
 Every scored prediction, cohort sweep, and forecast call made through the web
