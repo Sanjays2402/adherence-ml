@@ -6,6 +6,44 @@ interventions.
 
 ![landing](docs/screenshots/landing.png)
 
+## Dashboard audit log
+
+Every mutating dashboard action (settings change, workspace export, full
+wipe) now lands in a hash-chained, append-only audit log so security teams
+can reconstruct who changed what, when, and from which IP. Each entry links
+to the previous one by SHA-256, so any tampered row flips the chain status
+to broken in the UI. Destructive endpoints (`/api/settings/wipe`) also
+support `dry_run: true` for safe previews and require an explicit confirm
+string.
+
+The entries are surfaced at the bottom of the existing Audit page, with
+filters by action and outcome, and a one-click `.jsonl` export for SIEM
+ingestion. All three settings endpoints (`GET /api/settings` is read-only
+and stays open) require a signed session unless
+`ADHERENCE_DASHBOARD_OPEN=1` is set for solo local development.
+
+Try it:
+
+```bash
+# UI: see the panel under the prediction audit
+open http://localhost:3000/audit
+
+# API: list recent entries (session cookie required)
+curl -s --cookie 'adh_session=...' \
+  'http://localhost:3000/api/audit/dashboard?limit=50&outcome=denied' | jq
+
+# Dry-run a wipe without deleting anything
+curl -s -X POST --cookie 'adh_session=...' \
+  -H 'content-type: application/json' \
+  -d '{"confirm":"DELETE EVERYTHING","dry_run":true}' \
+  http://localhost:3000/api/settings/wipe | jq
+
+# Export the chain for offline review
+curl -s --cookie 'adh_session=...' \
+  'http://localhost:3000/api/audit/dashboard?format=jsonl' \
+  -o dashboard-audit.jsonl
+```
+
 ## IP allowlist
 
 Workspace admins can pin API and dashboard access to a list of trusted IPs
