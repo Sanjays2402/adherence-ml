@@ -320,6 +320,75 @@ export async function acceptInvite(
   return { workspace: ws, role: mem.role };
 }
 
+export async function updateMemberRole(
+  workspaceId: string,
+  actingUserId: string,
+  targetUserId: string,
+  newRole: Role,
+): Promise<
+  | { ok: true; member: Member }
+  | { ok: false; reason: "forbidden" | "not_found" | "invalid_role" | "last_owner" }
+> {
+  if (!isRole(newRole)) return { ok: false, reason: "invalid_role" };
+  const store = await readStore();
+  const acting = store.members.find(
+    (m) => m.workspace_id === workspaceId && m.user_id === actingUserId,
+  );
+  if (!acting || acting.role !== "owner") return { ok: false, reason: "forbidden" };
+  const target = store.members.find(
+    (m) => m.workspace_id === workspaceId && m.user_id === targetUserId,
+  );
+  if (!target) return { ok: false, reason: "not_found" };
+  if (target.role === newRole) return { ok: true, member: target };
+  // refuse to demote the last owner
+  if (target.role === "owner" && newRole !== "owner") {
+    const owners = store.members.filter(
+      (m) => m.workspace_id === workspaceId && m.role === "owner",
+    );
+    if (owners.length <= 1) return { ok: false, reason: "last_owner" };
+  }
+  target.role = newRole;
+  await writeStore(store);
+  return { ok: true, member: target };
+}
+
+export async function renameWorkspace(
+  workspaceId: string,
+  actingUserId: string,
+  newName: string,
+): Promise<Workspace | null> {
+  const trimmed = newName.trim();
+  if (!trimmed) return null;
+  const store = await readStore();
+  const acting = store.members.find(
+    (m) => m.workspace_id === workspaceId && m.user_id === actingUserId,
+  );
+  if (!acting || acting.role !== "owner") return null;
+  const ws = store.workspaces.find((w) => w.id === workspaceId);
+  if (!ws) return null;
+  ws.name = trimmed.slice(0, 80);
+  await writeStore(store);
+  return ws;
+}
+
+export async function deleteWorkspace(
+  workspaceId: string,
+  actingUserId: string,
+): Promise<boolean> {
+  const store = await readStore();
+  const acting = store.members.find(
+    (m) => m.workspace_id === workspaceId && m.user_id === actingUserId,
+  );
+  if (!acting || acting.role !== "owner") return false;
+  const before = store.workspaces.length;
+  store.workspaces = store.workspaces.filter((w) => w.id !== workspaceId);
+  if (store.workspaces.length === before) return false;
+  store.members = store.members.filter((m) => m.workspace_id !== workspaceId);
+  store.invites = store.invites.filter((i) => i.workspace_id !== workspaceId);
+  await writeStore(store);
+  return true;
+}
+
 export async function removeMember(
   workspaceId: string,
   actingUserId: string,

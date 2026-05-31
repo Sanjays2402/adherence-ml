@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
-import { getWorkspaceForUser, listInvites, removeMember } from "@/lib/workspaces-store";
+import {
+  getWorkspaceForUser,
+  listInvites,
+  removeMember,
+  renameWorkspace,
+  deleteWorkspace,
+} from "@/lib/workspaces-store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,8 +46,35 @@ export async function DELETE(
   const { id } = await params;
   const url = new URL(req.url);
   const target = url.searchParams.get("user_id");
-  if (!target) return NextResponse.json({ detail: "user_id required" }, { status: 400 });
+  if (!target) {
+    // No user_id means: delete the whole workspace (owner only).
+    const ok = await deleteWorkspace(id, ctx.user.id);
+    if (!ok) return NextResponse.json({ detail: "forbidden" }, { status: 403 });
+    return NextResponse.json({ ok: true, deleted: "workspace" });
+  }
   const ok = await removeMember(id, ctx.user.id, target);
   if (!ok) return NextResponse.json({ detail: "forbidden" }, { status: 403 });
   return NextResponse.json({ ok: true });
+}
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const ctx = await getSession();
+  if (!ctx) return NextResponse.json({ detail: "auth required" }, { status: 401 });
+  const { id } = await params;
+  let body: { name?: unknown };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ detail: "invalid json" }, { status: 400 });
+  }
+  const name = typeof body?.name === "string" ? body.name : "";
+  if (!name.trim()) {
+    return NextResponse.json({ detail: "name required" }, { status: 400 });
+  }
+  const ws = await renameWorkspace(id, ctx.user.id, name);
+  if (!ws) return NextResponse.json({ detail: "forbidden or not found" }, { status: 403 });
+  return NextResponse.json({ workspace: ws });
 }
