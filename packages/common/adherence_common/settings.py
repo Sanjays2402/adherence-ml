@@ -92,6 +92,14 @@ class Settings(BaseSettings):
     inbound_webhook_secrets: str = ""
     inbound_webhook_max_skew_seconds: int = 300
     inbound_webhook_require_signed: bool = False
+    # Per-source inbound IP / CIDR allowlist. Format:
+    #   source:cidr,source:cidr,...
+    # When a source has at least one entry, only requests whose client
+    # IP matches one of its CIDRs are accepted on that source's webhook
+    # endpoint. Sources with no entry are unrestricted (back-compat).
+    # The check runs before HMAC verification so a leaked secret alone
+    # cannot post forged events from an arbitrary egress IP.
+    inbound_webhook_ip_allowlist: str = ""
 
     # Outbound webhook destination policy (SSRF defense). Subscriptions
     # are validated at create time AND at dispatch time (DNS rebinding

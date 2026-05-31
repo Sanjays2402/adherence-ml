@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from adherence_api.deps import SettingsDep, require_service
 from adherence_common.db import DoseOutcome, init_db, session
 from adherence_common.inbound_webhook import verify as verify_inbound
+from adherence_common.inbound_webhook_ip import check as check_inbound_ip
 from adherence_common.logging import get_logger
 
 router = APIRouter(prefix="/v1/webhooks", tags=["webhooks"])
@@ -67,6 +68,34 @@ async def medtracker_event(
     secret is configured for them, and a warning is logged.
     """
     raw = await request.body()
+    # Network-layer pre-check: per-source IP / CIDR allowlist. Runs
+    # before HMAC verification so a leaked secret cannot mint forged
+    # outcome rows from an arbitrary egress IP. Sources with no rules
+    # configured pass through (back-compat).
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        client_ip = xff.split(",")[0].strip()
+    else:
+        client_ip = (
+            request.headers.get("x-real-ip", "").strip()
+            or (request.client.host if request.client else "")
+        )
+    ip_chk = check_inbound_ip(
+        source="medtracker",
+        client_ip=client_ip,
+        allowlist_csv=settings.inbound_webhook_ip_allowlist,
+    )
+    if not ip_chk.ok:
+        log.warning(
+            "inbound_webhook_ip_block",
+            source="medtracker",
+            client_ip=client_ip,
+            reason=ip_chk.reason,
+        )
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail=f"inbound webhook ip: {ip_chk.reason}",
+        )
     result = verify_inbound(
         source="medtracker",
         body=raw,
@@ -151,5 +180,34 @@ def medtracker_recent(
                 "received_at": r.received_at.isoformat(),
             }
             for r in rows
+        ],
+    }
+
+
+@router.get("/inbound/config")
+def inbound_config(settings: SettingsDep, _p=Depends(require_service)) -> dict:
+    """Return inbound webhook security posture per source.
+
+    Used by the admin dashboard so an operator can see at a glance which
+    partner sources require HMAC and which are IP-restricted, without
+    grepping environment variables. Secrets themselves are never echoed
+    back, only their presence.
+    """
+    from adherence_common.inbound_webhook import parse_secrets
+    from adherence_common.inbound_webhook_ip import summary as ip_summary
+    secrets_map = parse_secrets(settings.inbound_webhook_secrets)
+    ip_map = ip_summary(settings.inbound_webhook_ip_allowlist)
+    sources = sorted(set(secrets_map) | set(ip_map) | {"medtracker"})
+    return {
+        "require_signed": bool(settings.inbound_webhook_require_signed),
+        "max_skew_seconds": int(settings.inbound_webhook_max_skew_seconds),
+        "sources": [
+            {
+                "source": s,
+                "signed": s in secrets_map,
+                "ip_restricted": s in ip_map,
+                "allowed_cidrs": ip_map.get(s, []),
+            }
+            for s in sources
         ],
     }

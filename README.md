@@ -2,6 +2,53 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Per-source IP allowlist for inbound webhooks
+
+Partner systems (Med-Tracker and friends) post ground-truth dose
+outcomes to `/v1/webhooks/<source>/...`. HMAC alone is not enough for
+enterprise security reviews: a leaked secret could be replayed from any
+egress IP to forge outcome rows that flow into model promotion gates.
+
+The inbound receiver now enforces a per-source IP / CIDR allowlist
+*before* HMAC verification. Sources without a rule remain unrestricted
+(back-compat); sources with at least one rule accept only matching
+client IPs and return `403 Forbidden` for everything else, including
+requests that carry an otherwise valid signature.
+
+Configure with `ADHERENCE_INBOUND_WEBHOOK_IP_ALLOWLIST`:
+
+```
+ADHERENCE_INBOUND_WEBHOOK_IP_ALLOWLIST="medtracker:10.0.0.0/8,medtracker:54.230.0.0/16,rxops:198.51.100.7"
+```
+
+Client IP is taken from `X-Forwarded-For` (first hop), then
+`X-Real-IP`, then the socket peer, matching the existing tenant
+allowlist middleware.
+
+### Try it
+
+Local API runs on `http://localhost:8000`.
+
+```
+# 1. See the current inbound posture (signed + IP-restricted per source)
+curl -sS http://localhost:8000/v1/webhooks/inbound/config \
+  -H 'X-API-Key: <service-key>' | jq
+
+# 2. Outside-the-allowlist call is rejected at the network layer,
+#    even with a valid HMAC envelope.
+curl -sS -i -X POST http://localhost:8000/v1/webhooks/medtracker/event \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: <service-key>' \
+  -H 'X-Forwarded-For: 203.0.113.9' \
+  -d '{"source":"medtracker","events":[]}'
+# HTTP/1.1 403 Forbidden
+# {"detail":"inbound webhook ip: client ip 203.0.113.9 not in allowlist"}
+```
+
+See `packages/common/adherence_common/inbound_webhook_ip.py` and the
+integration suite at
+`tests/integration/test_webhook_inbound_ip_allowlist.py`.
+
 ## W3C Trace Context propagation (end-to-end correlation)
 
 Every request to the FastAPI service honors the W3C `traceparent`
