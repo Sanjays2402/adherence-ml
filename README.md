@@ -109,6 +109,14 @@ install chip. On Chrome, Edge, and Android the chip surfaces the native
 to Home Screen. Dismissals are remembered for 14 days. Launching from the
 home screen runs the app standalone with the existing dark theme.
 
+The installed app also registers a service worker (`apps/web/public/sw.js`)
+that precaches the app shell plus `/offline`, serves static `_next/static`
+assets stale-while-revalidate, and falls back to a branded offline page for
+navigations when the network is down. Mutating APIs under `/api/*` and
+`/v1/*` are never cached, so predictions and run history stay live. When a
+new worker version takes control the UI surfaces a small "new version
+ready, reload" chip.
+
 ### Settings and your data
 
 Visit [/settings](http://localhost:3000/settings) for the workspace profile
