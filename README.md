@@ -152,6 +152,62 @@ curl -sS -X POST "http://127.0.0.1:8000/v1/admin/api-keys/svc-ingest/rotate?dry_
   -H "x-api-key: $ADM_KEY" -H "content-type: application/json" -d '{}'
 ```
 
+## Per-API-key rate-limit overrides
+
+Enterprise customers often need one tenant to run hotter (a paid plan)
+or cooler (a noisy partner that must be throttled while a deal is in
+flight) than the default role tier. The Python admin API now stores an
+optional token-bucket override per API key. When both `capacity` and
+`refill_per_sec` are set on a key, the rate-limit middleware uses those
+values instead of the role-tier defaults and books the spend in a
+separate per-key bucket so changes apply on the very next request.
+Clearing the override (both fields null) returns the key to the
+default bucket without revocation or rotation.
+
+- New `rate_limit_capacity` and `rate_limit_refill_per_sec` columns on
+  `api_key_records` (idempotent ALTER TABLE in `db.init_db()`).
+- `GET /v1/admin/api-keys/{name}/rate-limit` reports the current
+  override and an `inherited` flag.
+- `PUT /v1/admin/api-keys/{name}/rate-limit` installs or clears the
+  override. Requires admin role plus a fresh MFA challenge, supports
+  `?dry_run=true`, validates that both fields are set or both cleared,
+  and writes an `api_key.rate_limit.set` admin audit entry with the
+  before/after values.
+- `RateLimitMiddleware` resolves the presented `x-api-key` against the
+  DB and prefers the per-key override; the bucket key is suffixed with
+  `:perkey` so it never bleeds into the role-tier bucket. Throttled
+  responses keep the standard `Retry-After` and `X-RateLimit-*`
+  headers.
+- `GET /v1/admin/api-keys` surfaces the override on each row so the
+  admin console can render it without an extra round trip.
+- Integration coverage in
+  `tests/integration/test_api_key_rate_limit_override.py` proves a key
+  with a tiny custom bucket is throttled while admin and default keys
+  are not, clearing restores default behavior, partial overrides are
+  rejected 400, unknown keys 404, and `dry_run=true` does not persist.
+
+### Try it
+
+```bash
+make api-dev  # serves http://127.0.0.1:8000
+ADMIN="x-api-key: $ADHERENCE_ADMIN_KEY"
+
+# Pin partner-prod to a tight bucket (5 burst, 1 token/sec sustained).
+curl -sS -X PUT http://127.0.0.1:8000/v1/admin/api-keys/partner-prod/rate-limit \
+  -H "$ADMIN" -H 'content-type: application/json' \
+  -d '{"capacity": 5, "refill_per_sec": 1.0}'
+
+# Preview a change without persisting.
+curl -sS -X PUT "http://127.0.0.1:8000/v1/admin/api-keys/partner-prod/rate-limit?dry_run=true" \
+  -H "$ADMIN" -H 'content-type: application/json' \
+  -d '{"capacity": 25, "refill_per_sec": 5.0}'
+
+# Clear the override and fall back to the role-tier default.
+curl -sS -X PUT http://127.0.0.1:8000/v1/admin/api-keys/partner-prod/rate-limit \
+  -H "$ADMIN" -H 'content-type: application/json' \
+  -d '{"capacity": null, "refill_per_sec": null}'
+```
+
 ## Authentication event audit (SOC2 / SIEM)
 
 Every authentication lifecycle event is now recorded into the same tamper

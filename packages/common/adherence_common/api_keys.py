@@ -56,6 +56,11 @@ class APIKeyRecord(Base):
     ip_allowlist_csv = Column(String(1024), nullable=True)
     rotated_at = Column(DateTime, nullable=True)
     rotation_count = Column(Integer, nullable=False, default=0)
+    # Optional per-key rate-limit overrides. NULL on either column means
+    # the key inherits the role-tier defaults from settings. When both are
+    # set the middleware bypasses tier limits and uses these values.
+    rate_limit_capacity = Column(Integer, nullable=True)
+    rate_limit_refill_per_sec = Column(String(32), nullable=True)
 
 
 VALID_ROLES = {"admin", "service", "viewer"}
@@ -69,6 +74,8 @@ class ResolvedKey:
     record_id: int
     tenant_id: str = "default"
     ip_allowlist: tuple[str, ...] = ()
+    rate_limit_capacity: int | None = None
+    rate_limit_refill_per_sec: float | None = None
 
 
 def _hash(plain: str) -> str:
@@ -243,6 +250,14 @@ def resolve_db_key(plain: str) -> ResolvedKey | None:
             scopes=_parse_scopes(row.scopes_csv), record_id=rid,
             tenant_id=(row.tenant_id or "default"),
             ip_allowlist=ip_list,
+            rate_limit_capacity=(
+                int(row.rate_limit_capacity)
+                if row.rate_limit_capacity is not None else None
+            ),
+            rate_limit_refill_per_sec=(
+                float(row.rate_limit_refill_per_sec)
+                if row.rate_limit_refill_per_sec is not None else None
+            ),
         )
     # best-effort last_used_at; ignore failures
     try:
@@ -335,6 +350,68 @@ def set_key_ip_allowlist(name: str, cidrs: Iterable[str]) -> APIKeyRecord:
         s.commit()
         s.refresh(row)
         return row
+
+
+# ---- Per-key rate-limit overrides ---------------------------------------
+
+
+def set_key_rate_limit(
+    name: str,
+    *,
+    capacity: int | None,
+    refill_per_sec: float | None,
+) -> APIKeyRecord:
+    """Set or clear the per-key rate-limit override.
+
+    Pass both ``capacity`` and ``refill_per_sec`` to install an override.
+    Pass both as ``None`` to clear the override (key falls back to the
+    role-tier defaults). Mixed (one None, one set) is rejected because
+    the middleware needs both to compute a bucket.
+
+    Raises ValueError on invalid input, LookupError if the key is unknown.
+    """
+    if (capacity is None) != (refill_per_sec is None):
+        raise ValueError(
+            "capacity and refill_per_sec must both be set or both be cleared"
+        )
+    if capacity is not None:
+        if int(capacity) <= 0 or int(capacity) > 1_000_000:
+            raise ValueError("capacity must be in [1, 1_000_000]")
+        if not (float(refill_per_sec) > 0.0 and float(refill_per_sec) <= 100_000.0):
+            raise ValueError("refill_per_sec must be in (0, 100_000]")
+    init_db()
+    with session() as s:
+        row = s.execute(
+            select(APIKeyRecord).where(APIKeyRecord.name == name)
+        ).scalar_one_or_none()
+        if row is None:
+            raise LookupError(f"api key {name!r} not found")
+        if capacity is None:
+            row.rate_limit_capacity = None
+            row.rate_limit_refill_per_sec = None
+        else:
+            row.rate_limit_capacity = int(capacity)
+            row.rate_limit_refill_per_sec = f"{float(refill_per_sec):.6f}"
+        s.commit()
+        s.refresh(row)
+        return row
+
+
+def get_key_rate_limit(name: str) -> tuple[int | None, float | None]:
+    init_db()
+    with session() as s:
+        row = s.execute(
+            select(APIKeyRecord).where(APIKeyRecord.name == name)
+        ).scalar_one_or_none()
+        if row is None:
+            raise LookupError(f"api key {name!r} not found")
+        cap = row.rate_limit_capacity
+        refill_raw = row.rate_limit_refill_per_sec
+        try:
+            refill = float(refill_raw) if refill_raw is not None else None
+        except (TypeError, ValueError):
+            refill = None
+        return (int(cap) if cap is not None else None, refill)
 
 
 def get_key_ip_allowlist(name: str) -> list[str]:

@@ -120,11 +120,19 @@ class APIKeyOut(BaseModel):
     rotated_at: str | None = None
     rotation_count: int = 0
     ip_allowlist: list[str] = Field(default_factory=list)
+    rate_limit_capacity: int | None = None
+    rate_limit_refill_per_sec: float | None = None
 
 
 def _key_row_to_out(row) -> APIKeyOut:
     scopes = sorted(s for s in (row.scopes_csv or "") .split(",") if s)
     ip_allowlist = [c for c in (getattr(row, "ip_allowlist_csv", "") or "").split(",") if c]
+    cap = getattr(row, "rate_limit_capacity", None)
+    refill_raw = getattr(row, "rate_limit_refill_per_sec", None)
+    try:
+        refill = float(refill_raw) if refill_raw is not None else None
+    except (TypeError, ValueError):
+        refill = None
     return APIKeyOut(
         id=row.id, name=row.name, role=row.role, scopes=scopes,
         tenant_id=(row.tenant_id or "default"),
@@ -137,6 +145,8 @@ def _key_row_to_out(row) -> APIKeyOut:
         rotated_at=row.rotated_at.isoformat() if getattr(row, "rotated_at", None) else None,
         rotation_count=int(getattr(row, "rotation_count", 0) or 0),
         ip_allowlist=ip_allowlist,
+        rate_limit_capacity=int(cap) if cap is not None else None,
+        rate_limit_refill_per_sec=refill,
     )
 
 
@@ -611,3 +621,151 @@ def put_api_key_ip_allowlist(
         request_id=_rid(request),
     )
     return APIKeyIpAllowlistOut(name=name, cidrs=cidrs)
+
+
+# ---- Per-key rate-limit overrides ---------------------------------------
+
+class APIKeyRateLimitIn(BaseModel):
+    capacity: int | None = Field(
+        None, ge=1, le=1_000_000,
+        description=(
+            "Token-bucket capacity for this key. Set both ``capacity`` and "
+            "``refill_per_sec`` to install an override. Set both to null to "
+            "clear the override and inherit the role-tier default."
+        ),
+    )
+    refill_per_sec: float | None = Field(
+        None, gt=0.0, le=100_000.0,
+        description="Refill rate in tokens per second.",
+    )
+
+
+class APIKeyRateLimitOut(BaseModel):
+    name: str
+    capacity: int | None
+    refill_per_sec: float | None
+    inherited: bool = Field(
+        ..., description="True when no per-key override is installed."
+    )
+
+
+@router.get(
+    "/api-keys/{name}/rate-limit", response_model=APIKeyRateLimitOut,
+)
+def get_api_key_rate_limit(
+    name: str,
+    p=Depends(require_admin),
+) -> APIKeyRateLimitOut:
+    try:
+        cap, refill = ak.get_key_rate_limit(name)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return APIKeyRateLimitOut(
+        name=name,
+        capacity=cap,
+        refill_per_sec=refill,
+        inherited=(cap is None or refill is None),
+    )
+
+
+@router.put(
+    "/api-keys/{name}/rate-limit", response_model=APIKeyRateLimitOut,
+)
+def put_api_key_rate_limit(
+    name: str,
+    body: APIKeyRateLimitIn,
+    request: Request,
+    dry_run: bool = Query(
+        False,
+        description="Preview without persisting. Validates the override.",
+    ),
+    p=Depends(require_admin_mfa),
+) -> APIKeyRateLimitOut:
+    """Set or clear the per-key token-bucket override.
+
+    Both fields must be set together to install an override, or both
+    cleared (null) to inherit the role-tier defaults. Validated and
+    audit-logged. On dry_run=true the request returns what would be
+    applied and no row is modified.
+    """
+    if (body.capacity is None) != (body.refill_per_sec is None):
+        record_admin_action(
+            action="api_key.rate_limit.set", principal=p, target=name,
+            details={
+                "capacity": body.capacity,
+                "refill_per_sec": body.refill_per_sec,
+                "dry_run": dry_run,
+            },
+            ok=False, error="must set both or clear both",
+            request_id=_rid(request),
+        )
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="capacity and refill_per_sec must both be set or both null",
+        )
+    if dry_run:
+        try:
+            cur_cap, cur_refill = ak.get_key_rate_limit(name)
+        except LookupError as exc:
+            record_admin_action(
+                action="api_key.rate_limit.set", principal=p, target=name,
+                details={"dry_run": True}, ok=False, error="not found",
+                request_id=_rid(request),
+            )
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        record_admin_action(
+            action="api_key.rate_limit.set", principal=p, target=name,
+            details={
+                "dry_run": True,
+                "from": {"capacity": cur_cap, "refill_per_sec": cur_refill},
+                "to": {
+                    "capacity": body.capacity,
+                    "refill_per_sec": body.refill_per_sec,
+                },
+            },
+            request_id=_rid(request),
+        )
+        return APIKeyRateLimitOut(
+            name=name,
+            capacity=body.capacity,
+            refill_per_sec=body.refill_per_sec,
+            inherited=(body.capacity is None),
+        )
+    try:
+        row = ak.set_key_rate_limit(
+            name,
+            capacity=body.capacity,
+            refill_per_sec=body.refill_per_sec,
+        )
+    except LookupError as exc:
+        record_admin_action(
+            action="api_key.rate_limit.set", principal=p, target=name,
+            details={"capacity": body.capacity, "refill_per_sec": body.refill_per_sec},
+            ok=False, error="not found", request_id=_rid(request),
+        )
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        record_admin_action(
+            action="api_key.rate_limit.set", principal=p, target=name,
+            details={"capacity": body.capacity, "refill_per_sec": body.refill_per_sec},
+            ok=False, error=str(exc), request_id=_rid(request),
+        )
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    cap = row.rate_limit_capacity
+    refill_raw = row.rate_limit_refill_per_sec
+    refill = float(refill_raw) if refill_raw is not None else None
+    record_admin_action(
+        action="api_key.rate_limit.set", principal=p, target=name,
+        details={
+            "capacity": int(cap) if cap is not None else None,
+            "refill_per_sec": refill,
+            "cleared": cap is None,
+        },
+        request_id=_rid(request),
+    )
+    return APIKeyRateLimitOut(
+        name=name,
+        capacity=int(cap) if cap is not None else None,
+        refill_per_sec=refill,
+        inherited=(cap is None),
+    )

@@ -9,6 +9,12 @@ On allow: adds X-RateLimit-{Limit,Remaining,Reset} headers.
 On block: returns 429 with Retry-After and the same headers.
 
 Paths in `exempt_prefixes` skip the check (health probes, openapi).
+
+Per-key overrides: a DB-backed API key may set its own ``capacity`` and
+``refill_per_sec`` via ``PUT /v1/admin/api-keys/{name}/rate-limit``. When
+both are set the middleware uses those instead of the role-tier defaults
+and the bucket is namespaced separately so changes take effect on the
+next request without bleeding into the tier bucket.
 """
 from __future__ import annotations
 
@@ -21,6 +27,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from adherence_common.api_keys import resolve_db_key
+from adherence_common.errors import AuthError
 from adherence_common.logging import get_logger
 from adherence_common.ratelimit import RateLimiterBackend, build_backend
 from adherence_common.settings import Settings
@@ -69,6 +77,32 @@ def _is_admin_path(path: str) -> bool:
     return path.startswith("/v1/admin") or path.startswith("/v1/train")
 
 
+def _per_key_override(request: Request) -> tuple[int, float] | None:
+    """Resolve the presented x-api-key and return its override if installed.
+
+    Returns ``(capacity, refill_per_sec)`` when both fields are set on the
+    matching DB-backed API key. Returns ``None`` when no key header is
+    present, the key is not in the DB (e.g. env bootstrap key), the key is
+    bad (auth middleware will reject it), or the key has no override.
+    """
+    api_key = request.headers.get("x-api-key")
+    if not api_key:
+        return None
+    try:
+        resolved = resolve_db_key(api_key)
+    except AuthError:
+        return None
+    except Exception:
+        return None
+    if resolved is None:
+        return None
+    cap = resolved.rate_limit_capacity
+    refill = resolved.rate_limit_refill_per_sec
+    if cap is None or refill is None:
+        return None
+    return int(cap), float(refill)
+
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
     def __init__(
         self,
@@ -97,8 +131,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         ident, source = _caller_id(request)
-        capacity, refill = self._limits_for(path)
-        key = f"{ident}:{'admin' if _is_admin_path(path) else 'default'}"
+        override = _per_key_override(request)
+        if override is not None:
+            capacity, refill = override
+            tier = "perkey"
+        else:
+            capacity, refill = self._limits_for(path)
+            tier = "admin" if _is_admin_path(path) else "default"
+        key = f"{ident}:{tier}"
         decision = self._backend.check(key, capacity, refill)
 
         if not decision.allowed:
@@ -106,7 +146,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             log.warning(
                 "rate_limited",
                 path=path, source=source, key=ident[:12],
-                retry_after=retry, capacity=capacity,
+                retry_after=retry, capacity=capacity, tier=tier,
             )
             resp = JSONResponse(
                 {"detail": "rate limit exceeded", "retry_after": retry},
