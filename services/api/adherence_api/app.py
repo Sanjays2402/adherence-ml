@@ -15,6 +15,7 @@ from adherence_api.ip_allowlist_middleware import IpAllowlistMiddleware
 from adherence_api.ratelimit_middleware import RateLimitMiddleware
 from adherence_api.routes import ip_allowlist as ip_allowlist_route
 from adherence_api.routes import sso as sso_route
+from adherence_api.routes import admin_mfa as admin_mfa_route
 from adherence_api.routes import (
     admin,
     cohort,
@@ -153,5 +154,6 @@ def create_app() -> FastAPI:
     app.include_router(gdpr_route.router)
     app.include_router(ip_allowlist_route.router)
     app.include_router(sso_route.router)
+    app.include_router(admin_mfa_route.router)
     log.info("api ready", version=__version__)
     return app

@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from adherence_api.deps import SettingsDep, require_admin
+from adherence_api.routes.admin_mfa import require_admin_mfa
 
 router = APIRouter(prefix="/v1/admin", tags=["admin"])
 
@@ -135,7 +136,7 @@ def _key_row_to_out(row) -> APIKeyOut:
 def create_api_key(
     body: APIKeyCreateIn,
     request: Request,
-    p=Depends(require_admin),
+    p=Depends(require_admin_mfa),
 ) -> APIKeyCreateOut:
     try:
         plain, row = ak.create_key(
@@ -179,7 +180,7 @@ def list_api_keys(_p=Depends(require_admin)) -> list[APIKeyOut]:
 def revoke_api_key(
     name: str,
     request: Request,
-    p=Depends(require_admin),
+    p=Depends(require_admin_mfa),
 ) -> dict:
     ok = ak.revoke_key(name, by=p.get("sub"))
     if not ok:
@@ -219,7 +220,7 @@ def rollback_model(
     name: str,
     body: RollbackIn,
     request: Request,
-    p=Depends(require_admin),
+    p=Depends(require_admin_mfa),
 ) -> RollbackOut:
     """Revert a model alias to a previously registered version.
 
@@ -306,7 +307,7 @@ class RetentionSweepOut(BaseModel):
 def sweep_retention(
     body: RetentionSweepIn,
     request: Request,
-    p=Depends(require_admin),
+    p=Depends(require_admin_mfa),
 ) -> RetentionSweepOut:
     """Delete rows past TTL across audit / outcome / delivery tables.
 

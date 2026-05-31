@@ -4,6 +4,45 @@ ML risk scoring for medication adherence. Predicts which upcoming doses a user
 is likely to miss in the next 24 hours and turns those scores into ranked
 interventions.
 
+## Admin TOTP MFA (RFC 6238) for privileged actions
+
+Admin-plane mutations (issue or revoke API keys, roll back a model, sweep
+audit retention) now require a second factor once an admin principal has
+enrolled. Enrolment is self-service: any admin can scan the `otpauth://`
+QR URI with Google Authenticator, Authy, 1Password, or Okta Verify, then
+confirm with a six digit code. Confirmation issues ten single-use backup
+codes for lost-device recovery.
+
+A successful verification opens a five minute challenge window so on-call
+operators do not retype the code on every request. Within that window the
+FastAPI dependency `require_admin_mfa` accepts the prior verification;
+outside it the endpoint returns `401` with `X-MFA-Required: totp` and the
+caller resupplies via the `X-MFA-Code` header. Read-only admin endpoints
+(list keys, view audit, status) stay open so incident responders are not
+locked out. Failed gates, enrolments, confirmations, and verifications
+are written to the hash-chained admin audit log.
+
+Before any admin enrols, the gate is a no-op so the bootstrap key can set
+MFA up without being blocked. After enrolment, the policy is
+non-bypassable for that principal.
+
+### Try it
+
+```bash
+# 1. start enrolment
+curl -s -X POST http://localhost:8000/v1/admin/mfa/enroll \
+     -H "x-api-key: $ADMIN_KEY" | jq .otpauth_uri
+# 2. scan the otpauth URI in your authenticator, then confirm
+curl -s -X POST http://localhost:8000/v1/admin/mfa/confirm \
+     -H "x-api-key: $ADMIN_KEY" \
+     -d '{"code":"123456"}' -H 'content-type: application/json'
+# 3. subsequent mutations require X-MFA-Code (or a recent challenge)
+curl -s -X POST http://localhost:8000/v1/admin/api-keys \
+     -H "x-api-key: $ADMIN_KEY" \
+     -H "X-MFA-Code: 654321" \
+     -d '{"name":"svc-bot","role":"service"}' -H 'content-type: application/json'
+```
+
 ## Workspace data residency (declared region, advertised on every response)
 
 Workspace owners pick the declared region for their data from
