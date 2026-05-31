@@ -9,6 +9,7 @@ import {
   Lightning,
   Pulse,
   UsersThree,
+  Scales,
   CalendarBlank,
   ClipboardText,
   House,
@@ -19,6 +20,7 @@ import { cn } from "@/lib/utils";
 const NAV = [
   { href: "/", label: "Overview", icon: House, hint: "What this does" },
   { href: "/demo", label: "Try a sample", icon: Sparkle, hint: "3 patient personas" },
+  { href: "/compare", label: "Compare", icon: Scales, hint: "Side by side triage" },
   { href: "/dashboard", label: "Performance", icon: ChartLine, hint: "AUC // Brier // ECE" },
   { href: "/cohort", label: "Cohort", icon: UsersThree, hint: "Population risk" },
   { href: "/forecast", label: "Forecast", icon: CalendarBlank, hint: "7-day projection" },

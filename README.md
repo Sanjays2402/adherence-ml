@@ -35,6 +35,10 @@ three-card preview, and
 build a dose schedule, see a recharts miss-probability bar chart with risk
 thresholds, the round-trip latency in milliseconds, and keeps your last eight
 runs on-device for one-click restore.
+[http://localhost:3000/compare](http://localhost:3000/compare) scores all
+three personas in parallel and ranks who needs an intervention first with a
+composite triage score and a cohort-wide top-reasons chart aggregated from
+the real SHAP attributions.
 
 ```bash
 curl -s http://localhost:8000/v1/predict \
