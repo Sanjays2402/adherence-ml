@@ -582,7 +582,18 @@ curl http://localhost:3000/api/webhooks/deliveries/del_XXXX | jq
 # 5. redeliver a failed one against its original endpoint (new delivery row,
 #    original is preserved for comparison; test pings are excluded)
 curl -X POST http://localhost:3000/api/webhooks/deliveries/del_XXXX/redeliver | jq
+
+# 6. programmatic replay over the public v1 surface (requires the 'webhooks'
+#    scope). Add ?dry_run=true to preview without dispatching.
+curl -X POST http://localhost:3000/v1/webhooks/deliveries/del_XXXX/redeliver \
+  -H "authorization: Bearer adh_..." | jq
 ```
+
+The `/api` dashboard route is session-protected and writes every replay to
+the tamper-evident dashboard audit log (actor, source delivery, endpoint,
+outcome). The `/v1` route is API-key authenticated, scope-gated, supports
+`?dry_run=true` for change-control review, and emits the standard
+`X-RateLimit-*` headers like every other billable endpoint.
 
 The `/webhooks` dashboard now ships status filter chips, expandable rows
 showing the full payload plus per-attempt log, and a one-click `redeliver`

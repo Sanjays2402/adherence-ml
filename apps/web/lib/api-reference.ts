@@ -187,6 +187,18 @@ export const ENDPOINTS: ApiEndpoint[] = [
   -H "authorization: Bearer ${KEY}"`,
     liveTestable: true,
   },
+  {
+    id: "webhooks-redeliver",
+    method: "POST",
+    path: "/v1/webhooks/deliveries/{id}/redeliver",
+    routeFile: "app/v1/webhooks/deliveries/[id]/redeliver/route.ts",
+    scope: "webhooks",
+    group: "webhooks",
+    summary: "Replay a recorded delivery against the same endpoint. Supports ?dry_run=true for change-control previews.",
+    curl: `curl -X POST ${HOST}/v1/webhooks/deliveries/DELIVERY_ID/redeliver \\
+  -H "authorization: Bearer ${KEY}"`,
+    liveTestable: true,
+  },
 ];
 
 export const GROUPS: { id: ApiEndpoint["group"]; label: string; blurb: string }[] = [
