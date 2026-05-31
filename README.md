@@ -2,6 +2,48 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Workspace verified domains and SSO auto-join
+
+Workspace owners self-serve add email domains they own (for example
+`acme.com`). When an SSO sign-in arrives whose email matches an enabled
+verified-domain claim, the user is auto-added to the claiming workspace
+with the configured default role. No per-user invite, no ticket to the
+operator. Each claim is tenant scoped (admins of one workspace cannot
+see or mutate another's), and ambiguous claims (two workspaces with the
+same enabled domain) refuse to resolve so cross-tenant capture is
+impossible.
+
+### Try it
+
+Local API on `http://127.0.0.1:8000`:
+
+```bash
+# 1. List your workspace's verified domains (viewer scope).
+curl -sS -H "Authorization: Bearer $JWT" \
+  http://127.0.0.1:8000/v1/workspace/verified-domains
+
+# 2. Claim a domain (admin scope). Server normalises and validates it.
+curl -sS -XPOST -H "Authorization: Bearer $JWT_ADMIN" \
+  -H "content-type: application/json" \
+  -d '{"domain":"acme.test","default_role":"viewer","auto_join_enabled":true}' \
+  http://127.0.0.1:8000/v1/workspace/verified-domains
+
+# 3. Pause auto-join during a security audit without dropping the claim.
+curl -sS -XPATCH -H "Authorization: Bearer $JWT_ADMIN" \
+  -H "content-type: application/json" \
+  -d '{"auto_join_enabled":false}' \
+  http://127.0.0.1:8000/v1/workspace/verified-domains/acme.test
+
+# 4. Remove the claim entirely.
+curl -sS -XDELETE -H "Authorization: Bearer $JWT_ADMIN" \
+  http://127.0.0.1:8000/v1/workspace/verified-domains/acme.test
+```
+
+Next SSO exchange for `*@acme.test` against `/v1/admin/sso/oidc/exchange`
+will mint a JWT bound to the claiming tenant, create a `workspace_members`
+row on first sign-in, and append a `sso.oidc.exchange` audit row that
+carries the `auto_joined` detail block.
+
 ## Brute-force protection on sign-in
 
 Magic-link issuance and TOTP verification are both throttled per-email
@@ -37,6 +79,10 @@ curl -sS -X POST http://localhost:3000/api/auth/lockouts \
   -H "content-type: application/json" -b cookies.txt \
   -d '{"scope":"magic_request","key":"abuser@example.com"}'
 ```
+
+will mint a JWT bound to the claiming tenant, create a `workspace_members`
+row on first sign-in, and append a `sso.oidc.exchange` audit row that
+carries the `auto_joined` detail block.
 
 ## Per-tenant SIEM audit drain
 

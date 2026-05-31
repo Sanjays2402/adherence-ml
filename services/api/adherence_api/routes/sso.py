@@ -117,17 +117,62 @@ def exchange_oidc(
     try:
         role, tenant = map_identity_to_principal(identity, settings)
     except AuthError as exc:
-        record_admin_action(
-            action="sso.oidc.exchange",
-            principal={"sub": f"sso:{identity.email or identity.sub}",
-                       "role": "viewer", "tenant": settings.default_tenant},
-            target=req.provider,
-            details={"reason": str(exc), "email": identity.email},
-            ok=False,
-            error=str(exc),
-            request_id=_rid(request),
-        )
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=str(exc))
+        # Before rejecting, give workspace-owned verified domains a
+        # chance. A buyer who has self-served their domain claim should
+        # not need the operator to also update env-var allow-lists.
+        try:
+            from adherence_common import verified_domains as _vd_pre
+            _pre_resolution = _vd_pre.resolve_auto_join(identity.email or "")
+        except Exception:
+            _pre_resolution = None
+        if _pre_resolution is None:
+            record_admin_action(
+                action="sso.oidc.exchange",
+                principal={"sub": f"sso:{identity.email or identity.sub}",
+                           "role": "viewer", "tenant": settings.default_tenant},
+                target=req.provider,
+                details={"reason": str(exc), "email": identity.email},
+                ok=False,
+                error=str(exc),
+                request_id=_rid(request),
+            )
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail=str(exc))
+        role = _pre_resolution.role
+        tenant = _pre_resolution.tenant_id
+
+    # Workspace-owned verified-domain claims win over the deployment
+    # default tenant. If env-vars already routed this identity to a
+    # non-default tenant we leave that mapping alone; the verified
+    # domain layer is for self-serve customer onboarding, not for
+    # overriding operator-pinned routes.
+    auto_joined: dict | None = None
+    try:
+        from adherence_common import verified_domains as _vd
+        resolution = _vd.resolve_auto_join(identity.email or "")
+    except Exception:
+        resolution = None
+    if resolution is not None and tenant == settings.default_tenant:
+        tenant = resolution.tenant_id
+        role = resolution.role
+        subject_for_join = f"sso:{identity.provider}:{identity.email or identity.sub}"
+        try:
+            granted = _vd.auto_join_member(
+                resolution,
+                subject=subject_for_join,
+                added_by=f"sso:{identity.provider}",
+            )
+            auto_joined = {
+                "domain": resolution.domain,
+                "tenant_id": resolution.tenant_id,
+                "role": resolution.role,
+                "granted": granted,
+            }
+        except Exception as exc:
+            auto_joined = {
+                "domain": resolution.domain,
+                "tenant_id": resolution.tenant_id,
+                "error": str(exc),
+            }
 
     subject = f"sso:{identity.provider}:{identity.email or identity.sub}"
     token = mint_jwt(subject, role, settings, tenant=tenant)  # type: ignore[arg-type]
@@ -142,6 +187,7 @@ def exchange_oidc(
             "role": role,
             "tenant": tenant,
             "ttl_seconds": settings.jwt_ttl_seconds,
+            "auto_joined": auto_joined,
         },
         request_id=_rid(request),
         tenant_id=tenant,
