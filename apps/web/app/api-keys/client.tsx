@@ -26,6 +26,8 @@ import {
   MonoChip,
 } from "@/components/ui/primitives";
 
+type Scope = "predict" | "read";
+
 type KeyRow = {
   id: string;
   name: string;
@@ -35,9 +37,10 @@ type KeyRow = {
   use_count: number;
   revoked: boolean;
   rotated_at: number | null;
+  scopes: Scope[];
 };
 
-type ListResp = { keys: KeyRow[] };
+type ListResp = { keys: KeyRow[]; available_scopes: Scope[] };
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -75,9 +78,10 @@ export default function KeysClient() {
     refreshInterval: 0,
   });
   const [name, setName] = useState("");
+  const [scopes, setScopes] = useState<Scope[]>(["predict", "read"]);
   const [creating, setCreating] = useState(false);
   const [createErr, setCreateErr] = useState<string | null>(null);
-  const [issued, setIssued] = useState<{ name: string; key: string; rotated?: boolean } | null>(null);
+  const [issued, setIssued] = useState<{ name: string; key: string; scopes?: Scope[]; rotated?: boolean } | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [rotatingId, setRotatingId] = useState<string | null>(null);
 
@@ -87,19 +91,23 @@ export default function KeysClient() {
       setCreateErr("name is required");
       return;
     }
+    if (scopes.length === 0) {
+      setCreateErr("pick at least one scope");
+      return;
+    }
     setCreating(true);
     try {
       const res = await fetch("/api/keys", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: name.trim() }),
+        body: JSON.stringify({ name: name.trim(), scopes }),
       });
       const json = await res.json();
       if (!res.ok) {
         setCreateErr(json?.detail ?? "failed to create key");
         return;
       }
-      setIssued({ name: json.name, key: json.key });
+      setIssued({ name: json.name, key: json.key, scopes: json.scopes });
       setName("");
       mutate();
     } catch (e) {
@@ -107,7 +115,7 @@ export default function KeysClient() {
     } finally {
       setCreating(false);
     }
-  }, [name, mutate]);
+  }, [name, scopes, mutate]);
 
   const onRevoke = useCallback(
     async (id: string) => {
@@ -139,7 +147,7 @@ export default function KeysClient() {
           alert(json?.detail ?? "rotate failed");
           return;
         }
-        setIssued({ name: json.name, key: json.key, rotated: true });
+        setIssued({ name: json.name, key: json.key, scopes: json.scopes, rotated: true });
         mutate();
       } finally {
         setRotatingId(null);
@@ -152,6 +160,9 @@ export default function KeysClient() {
   const active = keys.filter((k) => !k.revoked).length;
 
   const sampleKey = issued?.key ?? "adh_YOUR_KEY_HERE";
+  const curlRuns = `curl http://localhost:3000/v1/runs?limit=10 \\
+  -H "authorization: Bearer ${sampleKey}"`;
+
   const curl = `curl -X POST http://localhost:3000/v1/predict \\
   -H "authorization: Bearer ${sampleKey}" \\
   -H "content-type: application/json" \\
@@ -193,6 +204,14 @@ export default function KeysClient() {
               </code>
               <CopyBtn text={issued.key} label="copy key" />
             </div>
+            {issued.scopes && issued.scopes.length > 0 ? (
+              <div className="flex items-center gap-2 text-[11px] text-[var(--color-muted)]">
+                <span>scopes</span>
+                {issued.scopes.map((s) => (
+                  <Badge key={s} tone="neutral">{s}</Badge>
+                ))}
+              </div>
+            ) : null}
             <div className="flex items-start gap-2 text-[12px] text-[var(--color-muted)]">
               <Warning weight="duotone" size={14} className="mt-0.5 shrink-0" />
               <span>
@@ -223,6 +242,42 @@ export default function KeysClient() {
               {creating ? "Creating..." : "Create key"}
             </Button>
           </div>
+          <fieldset className="flex flex-wrap items-center gap-3 text-[12px]">
+            <legend className="sr-only">scopes</legend>
+            <span className="text-[11px] uppercase tracking-wider text-[var(--color-muted)]">scopes</span>
+            {([
+              { value: "predict" as const, label: "predict", hint: "POST /v1/predict" },
+              { value: "read" as const, label: "read", hint: "GET /v1/runs" },
+            ]).map((s) => {
+              const checked = scopes.includes(s.value);
+              return (
+                <label
+                  key={s.value}
+                  className={`inline-flex items-center gap-2 px-2 py-1 rounded border cursor-pointer select-none ${
+                    checked
+                      ? "border-[var(--color-accent)]/60 bg-[var(--color-surface)]"
+                      : "border-[var(--color-border)]"
+                  }`}
+                  title={s.hint}
+                >
+                  <input
+                    type="checkbox"
+                    className="accent-[var(--color-accent)]"
+                    checked={checked}
+                    onChange={(e) =>
+                      setScopes((prev) =>
+                        e.target.checked
+                          ? Array.from(new Set([...prev, s.value]))
+                          : prev.filter((x) => x !== s.value),
+                      )
+                    }
+                  />
+                  <span className="font-mono">{s.label}</span>
+                  <span className="text-[10px] text-[var(--color-muted)]">{s.hint}</span>
+                </label>
+              );
+            })}
+          </fieldset>
           {createErr ? <ErrorBox message={createErr} /> : null}
         </div>
       </Card>
@@ -255,6 +310,7 @@ export default function KeysClient() {
                   <tr>
                     <th className="px-4 py-2 font-medium">Name</th>
                     <th className="px-4 py-2 font-medium">Prefix</th>
+                    <th className="px-4 py-2 font-medium">Scopes</th>
                     <th className="px-4 py-2 font-medium">Created</th>
                     <th className="px-4 py-2 font-medium">Last used</th>
                     <th className="px-4 py-2 font-medium">Rotated</th>
@@ -268,6 +324,13 @@ export default function KeysClient() {
                     <tr key={k.id} className="border-t border-[var(--color-border)]">
                       <td className="px-4 py-2 font-medium">{k.name}</td>
                       <td className="px-4 py-2"><MonoChip>{k.prefix}...</MonoChip></td>
+                      <td className="px-4 py-2">
+                        <div className="inline-flex flex-wrap gap-1">
+                          {(k.scopes ?? []).map((s) => (
+                            <Badge key={s} tone="neutral">{s}</Badge>
+                          ))}
+                        </div>
+                      </td>
                       <td className="px-4 py-2 font-mono text-[11px] text-[var(--color-muted)]">
                         {fmt(k.created_at)}
                       </td>
@@ -335,6 +398,13 @@ export default function KeysClient() {
           </div>
           <pre className="text-[11px] font-mono p-3 rounded bg-[var(--color-surface)] border border-[var(--color-border)] overflow-x-auto whitespace-pre">
 {curl}
+          </pre>
+          <div className="flex items-center justify-between pt-2">
+            <span className="text-[11px] text-[var(--color-muted)]">GET /v1/runs (requires read scope)</span>
+            <CopyBtn text={curlRuns} label="copy curl" />
+          </div>
+          <pre className="text-[11px] font-mono p-3 rounded bg-[var(--color-surface)] border border-[var(--color-border)] overflow-x-auto whitespace-pre">
+{curlRuns}
           </pre>
           <p className="text-[11px] text-[var(--color-muted)]">
             Successful calls also appear in your <a href="/history" className="underline">history</a>.

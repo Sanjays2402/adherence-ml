@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { createKey, listKeys } from "@/lib/api-keys-store";
+import { ALL_SCOPES, createKey, listKeys, normalizeScopes, scopesOf } from "@/lib/api-keys-store";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -18,12 +18,15 @@ export async function GET() {
       use_count: k.use_count,
       revoked: k.revoked,
       rotated_at: k.rotated_at ?? null,
+      scopes: scopesOf(k),
     })),
+    available_scopes: ALL_SCOPES,
   });
 }
 
 const CreateSchema = z.object({
   name: z.string().min(1).max(80),
+  scopes: z.array(z.enum(ALL_SCOPES)).optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -40,12 +43,14 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
-  const { record, plaintext } = await createKey(parsed.data.name);
+  const scopes = normalizeScopes(parsed.data.scopes);
+  const { record, plaintext } = await createKey(parsed.data.name, scopes);
   return NextResponse.json({
     id: record.id,
     name: record.name,
     prefix: record.prefix,
     created_at: record.created_at,
+    scopes: scopesOf(record),
     key: plaintext, // shown exactly once
   });
 }

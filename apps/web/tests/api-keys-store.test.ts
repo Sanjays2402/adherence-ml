@@ -92,4 +92,55 @@ describe("api-keys-store", () => {
     await store.revokeKey(record.id);
     expect(await store.rotateKey(record.id)).toBeNull();
   });
+
+  it("createKey persists requested scopes and hasScope enforces them", async () => {
+    const onlyPredict = await store.createKey("backend", ["predict"]);
+    expect(store.scopesOf(onlyPredict.record)).toEqual(["predict"]);
+    expect(store.hasScope(onlyPredict.record, "predict")).toBe(true);
+    expect(store.hasScope(onlyPredict.record, "read")).toBe(false);
+
+    const both = await store.createKey("dashboard", ["read", "predict"]);
+    // canonical order is preserved regardless of input order
+    expect(store.scopesOf(both.record)).toEqual(["predict", "read"]);
+  });
+
+  it("normalizeScopes drops unknown values and falls back to defaults when empty", () => {
+    expect(store.normalizeScopes(["predict", "bogus"])).toEqual(["predict"]);
+    expect(store.normalizeScopes([])).toEqual([...store.DEFAULT_SCOPES]);
+    expect(store.normalizeScopes("not-an-array" as unknown)).toEqual([...store.DEFAULT_SCOPES]);
+  });
+
+  it("legacy records without a scopes field still authenticate with default scopes", async () => {
+    // simulate a key issued before scopes existed by writing the store by hand
+    const plaintext = "adh_legacyTESTkey_____________________";
+    const hash = (await import("node:crypto"))
+      .createHash("sha256")
+      .update(plaintext)
+      .digest("hex");
+    const file = path.join(tmp, "api-keys.json");
+    await fs.writeFile(
+      file,
+      JSON.stringify({
+        version: 1,
+        keys: [
+          {
+            id: "legacy1",
+            name: "legacy",
+            prefix: plaintext.slice(0, 12),
+            hash,
+            created_at: Date.now(),
+            last_used_at: null,
+            use_count: 0,
+            revoked: false,
+          },
+        ],
+      }),
+      "utf8",
+    );
+    const v = await store.verifyKey(plaintext);
+    expect(v).not.toBeNull();
+    expect(store.scopesOf(v!)).toEqual([...store.DEFAULT_SCOPES]);
+    expect(store.hasScope(v!, "predict")).toBe(true);
+    expect(store.hasScope(v!, "read")).toBe(true);
+  });
 });

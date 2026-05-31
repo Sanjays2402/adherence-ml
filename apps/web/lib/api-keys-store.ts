@@ -11,6 +11,24 @@ import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { randomBytes, createHash } from "node:crypto";
 
+export const ALL_SCOPES = ["predict", "read"] as const;
+export type KeyScope = (typeof ALL_SCOPES)[number];
+export const DEFAULT_SCOPES: KeyScope[] = ["predict", "read"];
+
+export function normalizeScopes(raw: unknown): KeyScope[] {
+  if (!Array.isArray(raw)) return [...DEFAULT_SCOPES];
+  const seen = new Set<KeyScope>();
+  for (const s of raw) {
+    if (typeof s === "string" && (ALL_SCOPES as readonly string[]).includes(s)) {
+      seen.add(s as KeyScope);
+    }
+  }
+  // never issue a key with zero scopes; fall back to defaults
+  if (seen.size === 0) return [...DEFAULT_SCOPES];
+  // preserve canonical order
+  return ALL_SCOPES.filter((s) => seen.has(s));
+}
+
 export interface ApiKeyRecord {
   id: string;
   name: string;
@@ -21,6 +39,16 @@ export interface ApiKeyRecord {
   use_count: number;
   revoked: boolean;
   rotated_at?: number | null;
+  scopes?: KeyScope[];
+}
+
+/** Effective scopes for a record, with safe defaults for legacy rows. */
+export function scopesOf(rec: Pick<ApiKeyRecord, "scopes">): KeyScope[] {
+  return rec.scopes && rec.scopes.length > 0 ? rec.scopes : [...DEFAULT_SCOPES];
+}
+
+export function hasScope(rec: Pick<ApiKeyRecord, "scopes">, scope: KeyScope): boolean {
+  return scopesOf(rec).includes(scope);
 }
 
 export interface NewApiKey {
@@ -78,7 +106,10 @@ export async function listKeys(): Promise<ApiKeyRecord[]> {
   return [...s.keys].sort((a, b) => b.created_at - a.created_at);
 }
 
-export async function createKey(name: string): Promise<NewApiKey> {
+export async function createKey(
+  name: string,
+  scopes: KeyScope[] = DEFAULT_SCOPES,
+): Promise<NewApiKey> {
   const trimmed = name.trim().slice(0, 80) || "untitled";
   const plaintext = "adh_" + randomBytes(24).toString("base64url");
   const record: ApiKeyRecord = {
@@ -90,6 +121,7 @@ export async function createKey(name: string): Promise<NewApiKey> {
     last_used_at: null,
     use_count: 0,
     revoked: false,
+    scopes: normalizeScopes(scopes),
   };
   writeQueue = writeQueue.then(async () => {
     const s = await readStore();

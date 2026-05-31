@@ -13,7 +13,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { ApiError, apiFetch } from "@/lib/api";
-import { extractKey, verifyKey } from "@/lib/api-keys-store";
+import { extractKey, hasScope, verifyKey } from "@/lib/api-keys-store";
 import { appendRun, newRunId } from "@/lib/runs-store";
 import { FREE_DAILY_QUOTA, recordUsage, usedToday } from "@/lib/usage-store";
 import { dailyQuota as planDailyQuota } from "@/lib/plan-store";
@@ -45,6 +45,16 @@ export async function POST(req: NextRequest) {
   const key = await verifyKey(presented);
   if (!key) {
     return NextResponse.json({ detail: "invalid or revoked api key" }, { status: 401 });
+  }
+  if (!hasScope(key, "predict")) {
+    return NextResponse.json(
+      {
+        detail: "this key is missing the 'predict' scope",
+        required_scope: "predict",
+        key_scopes: key.scopes ?? [],
+      },
+      { status: 403 },
+    );
   }
 
   // Plan-aware daily quota check. The active plan in lib/plan-store.ts
