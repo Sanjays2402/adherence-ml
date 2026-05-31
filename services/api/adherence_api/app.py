@@ -18,6 +18,7 @@ from adherence_api.routes import quota as quota_route
 from adherence_api.routes import sso as sso_route
 from adherence_api.routes import admin_mfa as admin_mfa_route
 from adherence_api.routes import admin_sessions as admin_sessions_route
+from adherence_api.routes import memberships as memberships_route
 from adherence_api.routes import (
     admin,
     cohort,
@@ -96,6 +97,7 @@ def create_app() -> FastAPI:
             {"name": "policies", "description": "Admin risk-tier and quiet-hours policies"},
             {"name": "mutes", "description": "Per-user intervention mute (TTL opt-out)"},
             {"name": "gdpr", "description": "Per-user data export and erasure (GDPR)"},
+            {"name": "workspace", "description": "Workspace members and email invitations"},
         ],
     )
 
@@ -158,6 +160,7 @@ def create_app() -> FastAPI:
     app.include_router(sso_route.router)
     app.include_router(admin_mfa_route.router)
     app.include_router(admin_sessions_route.router)
+    app.include_router(memberships_route.router)
     app.include_router(quota_route.router)
     # Ensure quota + workspace tables exist before the first request.
     try:

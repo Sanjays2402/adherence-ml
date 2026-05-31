@@ -2,6 +2,66 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Workspace invitations and member management
+
+Enterprise buyers expect to invite teammates by email instead of minting
+long-lived API keys for each person. The `/v1/workspace` API exposes the
+full membership lifecycle, scoped strictly to the calling principal's
+tenant, with every mutation written to `admin_audit_log`.
+
+* `POST   /v1/workspace/invitations` issues a single-use accept token
+  (admin only). The plaintext token is returned exactly once; only the
+  sha256 hash is persisted. Supports `?dry_run=true` for change review.
+* `GET    /v1/workspace/invitations` lists pending invites; pass
+  `include_resolved=true` to see accepted, revoked, and expired rows.
+* `DELETE /v1/workspace/invitations/{id}` revokes a pending invite.
+* `GET    /v1/workspace/invitations/preview?token=...` is the one
+  unauthenticated endpoint; the invitee uses it to see what workspace
+  and role they were offered before signing up.
+* `POST   /v1/workspace/invitations/accept` consumes the token,
+  creates the membership row, and ties the caller's subject to the new
+  workspace. Rejects expired (`410`), revoked (`410`),
+  already-accepted (`409`), or email-mismatched (`403`) tokens with
+  precise error codes.
+* `GET    /v1/workspace/members` lists members in the caller's tenant.
+* `PATCH  /v1/workspace/members/{subject}` changes a member's role.
+* `DELETE /v1/workspace/members/{subject}` removes a member.
+* The API refuses to demote or remove the last admin (`409`), so a
+  workspace never ends up unmanageable.
+
+Tenants are isolated at the query layer: `tests/integration/test_workspace_memberships.py`
+proves that an admin in tenant `globex` cannot list, revoke, or accept
+invitations issued by tenant `acme`, and that viewers cannot mutate
+invites in their own tenant.
+
+### Try it
+
+```bash
+# As an admin in workspace acme, invite engineer@acme.test as a viewer.
+curl -sS -X POST http://localhost:8000/v1/workspace/invitations \
+  -H "x-api-key: $ADMIN_KEY" -H "content-type: application/json" \
+  -d '{"email":"engineer@acme.test","role":"viewer"}' | tee /tmp/invite.json
+
+TOKEN=$(jq -r .token /tmp/invite.json)
+
+# Anonymous preview (safe to render before sign-up).
+curl -sS "http://localhost:8000/v1/workspace/invitations/preview?token=$TOKEN"
+
+# Mint a JWT for the invitee and accept.
+INVITEE=$(curl -sS -X POST http://localhost:8000/v1/admin/token \
+  -H "x-api-key: $ADMIN_KEY" -H "content-type: application/json" \
+  -d '{"subject":"engineer@acme.test","role":"viewer","tenant":"acme"}' \
+  | jq -r .token)
+
+curl -sS -X POST http://localhost:8000/v1/workspace/invitations/accept \
+  -H "Authorization: Bearer $INVITEE" -H "content-type: application/json" \
+  -d "{\"token\":\"$TOKEN\"}"
+
+# Confirm the member is in.
+curl -sS http://localhost:8000/v1/workspace/members \
+  -H "x-api-key: $ADMIN_KEY" | jq '.members[] | {subject, role}'
+```
+
 ## JWT session revocation (sign out everywhere)
 
 Until now, a stolen JWT was good until its `exp`. Enterprise security
