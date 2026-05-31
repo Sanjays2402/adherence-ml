@@ -93,16 +93,30 @@ export default function DigestClient() {
     void load();
   }, [load]);
 
-  const sendNow = useCallback(async () => {
+  const sendNow = useCallback(async (force = false) => {
     setSending(true);
     setFlash(null);
     try {
-      const r = await fetch("/api/digest", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+      const r = await fetch("/api/digest", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(force ? { force: true } : {}),
+      });
       const body = (await r.json().catch(() => ({}))) as { error?: string; detail?: string; sent?: SentRow };
-      if (!r.ok) {
+      if (r.status === 409 && body.error === "digest_unsubscribed") {
+        const ok = typeof window !== "undefined" && window.confirm(
+          "Weekly digest email is turned off in Settings. Send this one anyway?",
+        );
+        if (ok) {
+          setSending(false);
+          await sendNow(true);
+          return;
+        }
+        setFlash("Cancelled. Re-enable weekly digest in /settings to schedule it.");
+      } else if (!r.ok) {
         setFlash(body.detail || body.error || `send_failed:${r.status}`);
       } else {
-        setFlash("Digest queued. Check the sent log below.");
+        setFlash(force ? "Sent once (preference still off)." : "Digest queued. Check the sent log below.");
         await load();
       }
     } catch (e) {

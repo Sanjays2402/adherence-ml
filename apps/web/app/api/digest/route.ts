@@ -44,6 +44,7 @@ export async function GET(req: NextRequest) {
 
 const PostSchema = z.object({
   to: z.string().email().optional(),
+  force: z.boolean().optional(),
 });
 
 /**
@@ -73,6 +74,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { error: "no_recipient", detail: "Set a contact email in /settings or pass {to} in the body." },
       { status: 400 },
+    );
+  }
+  if (!settings.notifications.email_weekly_digest && !parsed.data.force) {
+    return NextResponse.json(
+      {
+        error: "digest_unsubscribed",
+        detail: "Weekly digest email is turned off in /settings. Re-enable it, or POST with {force:true} to override once.",
+      },
+      { status: 409 },
     );
   }
   const payload = await currentDigest();
