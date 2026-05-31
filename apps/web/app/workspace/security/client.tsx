@@ -11,6 +11,7 @@ import {
   Warning,
   CheckCircle,
   ArrowSquareOut,
+  Globe,
 } from "@phosphor-icons/react";
 import {
   PageHeader,
@@ -30,6 +31,8 @@ type WorkspaceListItem = { id: string; name: string; role: Role };
 interface PublicPolicy {
   session_max_age_minutes: number | null;
   require_mfa: boolean;
+  webhook_allow_private_networks: boolean;
+  webhook_host_allowlist: string[];
   updated_at: number;
 }
 
@@ -90,6 +93,8 @@ export default function SecurityClient() {
   const [maxAgeEnabled, setMaxAgeEnabled] = useState(false);
   const [maxAgeMinutes, setMaxAgeMinutes] = useState("480");
   const [requireMfa, setRequireMfa] = useState(false);
+  const [allowPrivate, setAllowPrivate] = useState(false);
+  const [hostAllowlist, setHostAllowlist] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
@@ -102,6 +107,8 @@ export default function SecurityClient() {
       setMaxAgeEnabled(cap !== null);
       setMaxAgeMinutes(cap !== null ? String(cap) : "480");
       setRequireMfa(Boolean(policy.require_mfa));
+      setAllowPrivate(Boolean(policy.webhook_allow_private_networks));
+      setHostAllowlist((policy.webhook_host_allowlist ?? []).join("\n"));
     }
   }, [policy, selected]);
 
@@ -126,10 +133,20 @@ export default function SecurityClient() {
       n = parsed;
     }
     try {
+      const allowlist = hostAllowlist
+        .split(/[\s,]+/)
+        .map((s) => s.trim().toLowerCase())
+        .filter((s) => s.length > 0)
+        .slice(0, 64);
       const r = await fetch(`/api/workspaces/${selected}/policy`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ session_max_age_minutes: n, require_mfa: requireMfa }),
+        body: JSON.stringify({
+          session_max_age_minutes: n,
+          require_mfa: requireMfa,
+          webhook_allow_private_networks: allowPrivate,
+          webhook_host_allowlist: allowlist,
+        }),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.detail ?? `request failed (${r.status})`);
@@ -290,6 +307,55 @@ export default function SecurityClient() {
         ) : null}
 
         {policy ? (
+          <Card>
+            <CardHeader
+              title="Outbound webhook destinations"
+              right={<Badge><Globe weight="duotone" size={11} /> SSRF guard</Badge>}
+            />
+            <div className="px-4 py-4 space-y-4">
+              <div className="text-[12px] text-[var(--color-muted)]">
+                Webhook deliveries are blocked from reaching loopback, private networks, link-local addresses, and cloud metadata IPs (169.254.169.254 and friends). Turn this off only if you operate a closed network and need to deliver to internal sinks.
+              </div>
+              <div className="flex items-start gap-3">
+                <input
+                  id="allow-private"
+                  type="checkbox"
+                  checked={allowPrivate}
+                  disabled={!isOwner}
+                  onChange={(e) => setAllowPrivate(e.target.checked)}
+                  className="mt-1 h-4 w-4 accent-[var(--color-fg)]"
+                />
+                <div className="flex-1 min-w-0">
+                  <label htmlFor="allow-private" className="text-[13px] font-medium cursor-pointer">
+                    Allow private network destinations
+                  </label>
+                  <p className="text-[12px] text-[var(--color-muted)] mt-0.5">
+                    When off (recommended), 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8, 169.254.0.0/16, ::1 and fc00::/7 are all rejected. Metadata IPs stay blocked either way.
+                  </p>
+                </div>
+              </div>
+              <div>
+                <Label><Globe weight="duotone" size={11} /> Host allowlist (one per line)</Label>
+                <textarea
+                  value={hostAllowlist}
+                  disabled={!isOwner}
+                  onChange={(e) => setHostAllowlist(e.target.value)}
+                  rows={4}
+                  placeholder={"hooks.example.com\n.acme.com"}
+                  className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 text-[12px] font-mono focus:outline-none focus:border-[var(--color-fg)] disabled:opacity-50"
+                />
+                <div className="text-[11px] text-[var(--color-muted)] mt-1">
+                  Optional. When set, only webhook URLs whose hostname matches one of these entries can be delivered. A leading dot matches subdomains: <MonoChip>.acme.com</MonoChip> permits <MonoChip>hooks.acme.com</MonoChip>. Leave blank to allow any public host.
+                </div>
+              </div>
+              <div className="text-[11px] font-mono text-[var(--color-muted)] inline-flex items-center gap-2">
+                <ShieldCheck weight="duotone" size={12} /> Re-checked on every delivery attempt; DNS-rebinding cannot bypass it.
+              </div>
+            </div>
+          </Card>
+        ) : null}
+
+        {policy ? (
           <div className="flex items-center gap-3">
             <Button onClick={save} disabled={!isOwner || busy}>
               <FloppyDisk weight="duotone" size={13} /> {busy ? "Saving" : "Save policy"}
@@ -314,6 +380,8 @@ export default function SecurityClient() {
             <div className="px-4 py-3 text-[12px] font-mono text-[var(--color-muted)] space-y-1">
               <div>session_max_age_minutes = <MonoChip>{policy.session_max_age_minutes ?? "unset"}</MonoChip></div>
               <div>require_mfa = <MonoChip>{String(policy.require_mfa)}</MonoChip></div>
+              <div>webhook_allow_private_networks = <MonoChip>{String(policy.webhook_allow_private_networks)}</MonoChip></div>
+              <div>webhook_host_allowlist = <MonoChip>{policy.webhook_host_allowlist.length ? policy.webhook_host_allowlist.join(", ") : "any public host"}</MonoChip></div>
               <div className="text-[11px] mt-2">
                 When a user belongs to multiple workspaces the tightest rule wins: the lowest session cap and require_mfa from any workspace applies.
               </div>

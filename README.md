@@ -222,6 +222,23 @@ Try it:
     curl -s http://localhost:3000/metrics | head -20
     curl -i -H 'x-request-id: trace-abc-123' http://localhost:3000/login | grep -i x-request-id
 
+## Outbound webhook SSRF guard
+
+Workspace owners control where webhook deliveries are allowed to go from
+`/workspace/security`. By default the dispatcher refuses to POST to loopback,
+RFC1918, link-local, multicast, broadcast, and the AWS/GCP/Azure metadata IPs
+(169.254.169.254 and friends). Owners can:
+
+- toggle `allow_private_networks` for closed-network self-hosted sinks
+- pin destinations to a host allowlist (`hooks.acme.com`, `.acme.com`)
+
+Enforcement happens in three places: at `createEndpoint` time (sync preflight
+on the URL literal), on every `dispatch` attempt (re-resolves DNS to defeat
+rebinding), and the metadata IP block is unconditional even when private
+networks are allowed. Blocked deliveries surface as `422 ssrf_blocked` from
+the API and as a `webhook.failed` notification in the dashboard. Covered by
+`tests/webhook-ssrf.test.ts`.
+
 ## Workspace security policy (session TTL + require MFA)
 
 Owners cap the maximum session lifetime and force every member to enroll

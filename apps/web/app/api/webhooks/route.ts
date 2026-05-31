@@ -73,6 +73,17 @@ export async function POST(req: NextRequest) {
     );
   } catch (e) {
     const msg = e instanceof Error ? e.message : "create_failed";
+    if (msg.startsWith("ssrf_blocked:")) {
+      return NextResponse.json(
+        {
+          error: "ssrf_blocked",
+          reason: msg.slice("ssrf_blocked:".length),
+          detail:
+            "Destination is blocked by workspace webhook security policy. Update the policy at /workspace/security or pick a public URL.",
+        },
+        { status: 422 },
+      );
+    }
     return NextResponse.json({ error: msg }, { status: 400 });
   }
 }

@@ -42,6 +42,20 @@ export interface WorkspaceSecurityPolicy {
   session_max_age_minutes: number | null;
   /** Every member must have TOTP enrolled and have passed the MFA challenge. */
   require_mfa: boolean;
+  /**
+   * Outbound webhook SSRF policy. When false (default) the dispatcher refuses
+   * to POST to loopback, link-local, RFC1918, multicast, broadcast, or the
+   * AWS/GCP/Azure metadata IPs. Set true only for closed networks where you
+   * legitimately need to call private hosts (self-hosted webhook sinks).
+   */
+  webhook_allow_private_networks: boolean;
+  /**
+   * Optional explicit host allowlist for outbound webhooks. When set (non-empty),
+   * destination hostnames must match one of these entries exactly or as a
+   * suffix after a leading dot (e.g. ".acme.com" matches "hooks.acme.com").
+   * Empty array means "no host restriction beyond the SSRF guard".
+   */
+  webhook_host_allowlist: string[];
   updated_at: number;
   updated_by: string;
 }
@@ -853,6 +867,8 @@ export async function deprovisionMember(
 export interface PublicWorkspaceSecurityPolicy {
   session_max_age_minutes: number | null;
   require_mfa: boolean;
+  webhook_allow_private_networks: boolean;
+  webhook_host_allowlist: string[];
   updated_at: number;
 }
 
@@ -860,11 +876,21 @@ export function publicPolicy(
   p: WorkspaceSecurityPolicy | null | undefined,
 ): PublicWorkspaceSecurityPolicy {
   if (!p) {
-    return { session_max_age_minutes: null, require_mfa: false, updated_at: 0 };
+    return {
+      session_max_age_minutes: null,
+      require_mfa: false,
+      webhook_allow_private_networks: false,
+      webhook_host_allowlist: [],
+      updated_at: 0,
+    };
   }
   return {
     session_max_age_minutes: p.session_max_age_minutes,
     require_mfa: p.require_mfa,
+    webhook_allow_private_networks: Boolean(p.webhook_allow_private_networks),
+    webhook_host_allowlist: Array.isArray(p.webhook_host_allowlist)
+      ? [...p.webhook_host_allowlist]
+      : [],
     updated_at: p.updated_at,
   };
 }
@@ -880,7 +906,12 @@ export async function getWorkspacePolicy(
 export async function setWorkspacePolicy(
   workspaceId: string,
   actorUserId: string,
-  next: { session_max_age_minutes: number | null; require_mfa: boolean },
+  next: {
+    session_max_age_minutes: number | null;
+    require_mfa: boolean;
+    webhook_allow_private_networks?: boolean;
+    webhook_host_allowlist?: string[];
+  },
 ): Promise<PublicWorkspaceSecurityPolicy> {
   const store = await readStore();
   const ws = store.workspaces.find((w) => w.id === workspaceId);
@@ -899,9 +930,28 @@ export async function setWorkspacePolicy(
     }
     cap = n;
   }
+  // Normalize host allowlist: trim, lowercase, dedupe, drop empties, cap entries.
+  const rawAllow = Array.isArray(next.webhook_host_allowlist)
+    ? next.webhook_host_allowlist
+    : Array.isArray(ws.security_policy?.webhook_host_allowlist)
+      ? ws.security_policy!.webhook_host_allowlist
+      : [];
+  const hostAllowlist = Array.from(
+    new Set(
+      rawAllow
+        .map((h) => String(h).trim().toLowerCase())
+        .filter((h) => h.length > 0 && h.length <= 253),
+    ),
+  ).slice(0, 64);
+  const allowPrivate =
+    typeof next.webhook_allow_private_networks === "boolean"
+      ? next.webhook_allow_private_networks
+      : Boolean(ws.security_policy?.webhook_allow_private_networks);
   ws.security_policy = {
     session_max_age_minutes: cap,
     require_mfa: Boolean(next.require_mfa),
+    webhook_allow_private_networks: allowPrivate,
+    webhook_host_allowlist: hostAllowlist,
     updated_at: Date.now(),
     updated_by: actorUserId,
   };
@@ -943,3 +993,65 @@ export async function effectivePolicyForUser(
   return { session_max_age_minutes: cap, require_mfa: mfa, sources };
 }
 
+
+// ---------------------------------------------------------------------------
+// Outbound webhook SSRF policy (global across workspaces)
+// ---------------------------------------------------------------------------
+
+/**
+ * Effective SSRF policy for outbound webhooks. Webhook endpoints are not
+ * workspace-scoped today (single shared store), so we collapse every
+ * workspace's policy into the strictest setting:
+ *
+ *   - allow_private_networks: true ONLY if every workspace with a non-default
+ *     policy has opted in. Default workspaces are treated as deny.
+ *   - host_allowlist: union of every workspace's non-empty allowlist. If at
+ *     least one workspace has set an allowlist, deliveries are gated by it.
+ *     If no workspace has set one, no host filter is applied.
+ */
+export async function effectiveWebhookSsrfPolicy(): Promise<{
+  allow_private_networks: boolean;
+  host_allowlist: string[];
+  sources: string[];
+}> {
+  // Env escape for self-hosted single-tenant deployments and the test
+  // harness. When set, private destinations are permitted; the metadata-IP
+  // block in webhook-ssrf.ts still applies and cannot be turned off.
+  const envAllow =
+    process.env.ADHERENCE_WEBHOOK_ALLOW_PRIVATE === "1" ||
+    process.env.ADHERENCE_WEBHOOK_ALLOW_PRIVATE === "true";
+  const store = await readStore();
+  if (!store.workspaces.length) {
+    return {
+      allow_private_networks: envAllow,
+      host_allowlist: [],
+      sources: [],
+    };
+  }
+  let allow = true;
+  const allowlist = new Set<string>();
+  const sources: string[] = [];
+  let opinionated = 0;
+  for (const ws of store.workspaces) {
+    const p = ws.security_policy;
+    if (!p) {
+      // Unconfigured workspaces inherit the safe default (deny private).
+      allow = false;
+      continue;
+    }
+    opinionated++;
+    sources.push(ws.id);
+    if (!p.webhook_allow_private_networks) allow = false;
+    for (const h of p.webhook_host_allowlist ?? []) {
+      const t = String(h).trim().toLowerCase();
+      if (t) allowlist.add(t);
+    }
+  }
+  // If nobody set an opinion, fall back to safe defaults.
+  if (opinionated === 0) allow = false;
+  return {
+    allow_private_networks: envAllow || allow,
+    host_allowlist: [...allowlist],
+    sources,
+  };
+}

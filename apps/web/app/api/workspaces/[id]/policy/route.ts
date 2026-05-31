@@ -27,6 +27,11 @@ const Body = z.object({
     .max(POLICY_MAX_SESSION_MINUTES)
     .nullable(),
   require_mfa: z.boolean(),
+  webhook_allow_private_networks: z.boolean().optional(),
+  webhook_host_allowlist: z
+    .array(z.string().trim().min(1).max(253))
+    .max(64)
+    .optional(),
 });
 
 export async function GET(

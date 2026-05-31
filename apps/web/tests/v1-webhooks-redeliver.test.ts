@@ -13,6 +13,10 @@ import type { AddressInfo } from "node:net";
 
 const tmp = mkdtempSync(path.join(os.tmpdir(), "adh-wh-redeliver-"));
 process.env.ADHERENCE_DATA_DIR = tmp;
+// This test creates endpoints pointed at a local 127.0.0.1 HTTP server to
+// observe real delivery. Opt in to private targets for the harness; the
+// metadata-IP block in webhook-ssrf is still enforced.
+process.env.ADHERENCE_WEBHOOK_ALLOW_PRIVATE = "1";
 
 const keys = await import("../lib/api-keys-store");
 const webhooks = await import("../lib/webhooks-store");

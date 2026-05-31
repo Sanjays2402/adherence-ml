@@ -13,6 +13,8 @@ import { promises as fs } from "node:fs";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { randomBytes, createHash } from "node:crypto";
+import { preflightUrl } from "./webhook-ssrf";
+import { effectiveWebhookSsrfPolicy } from "./workspaces-store";
 
 export type WebhookEvent = "run.created" | "test.ping";
 
@@ -145,6 +147,15 @@ export async function createEndpoint(
   const name = input.name.trim().slice(0, 80) || "untitled";
   if (!isValidUrl(input.url)) {
     throw new Error("invalid_url");
+  }
+  // Apply current workspace SSRF policy at create time so obvious targets
+  // (loopback, RFC1918 literals, metadata IPs, disallowed hosts) are
+  // rejected with a stable, actionable error code instead of failing later
+  // on every delivery attempt.
+  const policy = await effectiveWebhookSsrfPolicy();
+  const pre = preflightUrl(input.url, policy);
+  if (!pre.ok) {
+    throw new Error(`ssrf_blocked:${pre.reason}`);
   }
   const events =
     input.events && input.events.length

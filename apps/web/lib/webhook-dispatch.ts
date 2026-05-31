@@ -22,6 +22,8 @@ import {
   endpointSecretHash,
 } from "./webhooks-store";
 import { createNotification } from "./notifications-store";
+import { checkOutboundUrl, type SsrfPolicy } from "./webhook-ssrf";
+import { effectiveWebhookSsrfPolicy } from "./workspaces-store";
 
 const MAX_ATTEMPTS = 4;
 const BACKOFF_MS = [0, 2_000, 8_000, 30_000];
@@ -66,8 +68,22 @@ async function attemptOnce(
   signature: string,
   event: WebhookEvent,
   deliveryId: string,
+  ssrfPolicy: SsrfPolicy,
 ): Promise<DeliveryAttempt> {
   const start = Date.now();
+  // Re-resolve and re-check on every attempt: DNS results can change between
+  // retries (rebinding) and policy can be tightened mid-flight.
+  const guard = await checkOutboundUrl(url, { policy: ssrfPolicy });
+  if (!guard.ok) {
+    return {
+      attempt: 0,
+      at: start,
+      status: null,
+      ok: false,
+      duration_ms: Date.now() - start,
+      error: `ssrf_blocked:${guard.reason}`,
+    };
+  }
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -108,6 +124,8 @@ async function attemptOnce(
 interface DispatchOptions {
   /** If true, await retries inline (used by /test). Otherwise schedule async. */
   awaitRetries?: boolean;
+  /** Override SSRF policy (tests). Falls back to effectiveWebhookSsrfPolicy(). */
+  ssrfPolicy?: SsrfPolicy;
 }
 
 async function dispatchToEndpoint(
@@ -140,16 +158,32 @@ async function dispatchToEndpoint(
   };
   await recordDelivery(delivery);
 
+  const ssrfPolicy: SsrfPolicy =
+    opts.ssrfPolicy ?? (await effectiveWebhookSsrfPolicy());
+
   const runLoop = async () => {
     for (let i = 0; i < MAX_ATTEMPTS; i++) {
       if (i > 0) await new Promise((r) => setTimeout(r, BACKOFF_MS[i]));
-      const att = await attemptOnce(endpoint.url, body, sig, event, delivery.id);
+      const att = await attemptOnce(endpoint.url, body, sig, event, delivery.id, ssrfPolicy);
       att.attempt = i + 1;
       delivery.attempts.push(att);
       if (att.ok) {
         delivery.delivered = true;
         delivery.finished_at = Date.now();
         await recordDelivery(delivery);
+        return;
+      }
+      // SSRF policy blocks are deterministic; don't waste retries on them.
+      if (att.error && att.error.startsWith("ssrf_blocked:")) {
+        delivery.finished_at = Date.now();
+        await recordDelivery(delivery);
+        void createNotification({
+          user_id: null,
+          kind: "webhook.failed",
+          title: `Webhook blocked by SSRF policy: ${endpoint.name || endpoint.url}`,
+          body: `Delivery refused (${att.error}). Update workspace security policy if this destination is intentional.`,
+          href: `/webhooks`,
+        }).catch(() => {});
         return;
       }
       // persist progress between attempts so the UI can show partial logs

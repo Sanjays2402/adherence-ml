@@ -175,8 +175,19 @@ export async function POST(req: NextRequest) {
       { status: 201 },
     );
   } catch (e) {
-    logUsage(auth.key, "POST", 400, started);
     const detail = e instanceof Error ? e.message : "create_failed";
+    if (detail.startsWith("ssrf_blocked:")) {
+      logUsage(auth.key, "POST", 422, started);
+      return NextResponse.json(
+        {
+          detail: "Destination blocked by workspace webhook security policy.",
+          error: "ssrf_blocked",
+          reason: detail.slice("ssrf_blocked:".length),
+        },
+        { status: 422 },
+      );
+    }
+    logUsage(auth.key, "POST", 400, started);
     return NextResponse.json({ detail }, { status: 400 });
   }
 }
