@@ -2561,7 +2561,15 @@ curl -X POST http://localhost:3000/api/notifications/read-all
 ### Inbound webhooks (HMAC verified)
 
 Partner systems (Med-Tracker, EHR adapters) post ground-truth dose outcomes
-to `POST /v1/webhooks/medtracker/event` on the FastAPI service. Because
+to `POST /v1/webhooks/medtracker/event` on the FastAPI service. Each
+outcome row is stamped with a `tenant_id` at write time using the
+operator-supplied `ADHERENCE_INBOUND_SOURCE_TENANTS` mapping so that
+`/v1/metrics/online`, `/v1/metrics/online/report`, and the calibration
+drift endpoint can never join one workspace's predictions against
+another workspace's ground-truth events. Rows for a source with no
+mapping fall back to the deployment default tenant. Existing rows are
+backfilled from `prediction_audit` on first boot of the upgraded code.
+Because
 those rows feed online metrics and challenger-model promotion, the endpoint
 verifies an HMAC envelope when a per-source secret is configured. Configure
 secrets with:

@@ -32,6 +32,14 @@ from sqlalchemy import Boolean, Column, Integer, String, select
 # enterprise plan seat count.
 MIN_MAX_ACTIVE_KEYS = 1
 MAX_MAX_ACTIVE_KEYS = 10_000
+
+# Inactivity window after which a previously-used API key auto-disables
+# (recorded as ``revoked_at`` with a ``[auto-disabled: dormant N days]``
+# note and an admin-audit row). Floor of 1 day catches misconfiguration
+# (effectively disables every key on first use); ceiling of 5 years
+# matches the maximum TTL cap above.
+MIN_MAX_DORMANT_DAYS = 1
+MAX_MAX_DORMANT_DAYS = 365 * 5
 from sqlalchemy.exc import SQLAlchemyError
 
 from adherence_common.db import Base, session
@@ -60,6 +68,12 @@ class WorkspaceAPIKeyPolicy(Base):
     # apply). When set, ``enforce_active_key_count`` rejects ``api_key.create``
     # for the tenant with HTTP 400 once the count reaches the cap.
     max_active_keys = Column(Integer, nullable=True)
+    # Optional inactivity window. When set, an API key whose
+    # ``last_used_at`` is older than ``max_dormant_days`` (or that was
+    # created more than this many days ago and has never been used) is
+    # auto-revoked on its next resolve attempt. ``None`` disables the
+    # dormancy sweep for this tenant.
+    max_dormant_days = Column(Integer, nullable=True)
     updated_at = Column(Integer, nullable=False)
     updated_by = Column(String(128), nullable=True)
 
@@ -70,6 +84,7 @@ class PolicyView:
     max_ttl_seconds: int
     require_expiry: bool
     max_active_keys: Optional[int]
+    max_dormant_days: Optional[int]
     updated_at: int
     updated_by: Optional[str]
 
@@ -80,11 +95,13 @@ def _now_ts() -> int:
 
 def _to_view(row: WorkspaceAPIKeyPolicy) -> PolicyView:
     mak = getattr(row, "max_active_keys", None)
+    mdd = getattr(row, "max_dormant_days", None)
     return PolicyView(
         tenant_id=str(row.tenant_id),
         max_ttl_seconds=int(row.max_ttl_seconds),
         require_expiry=bool(row.require_expiry),
         max_active_keys=(int(mak) if mak is not None else None),
+        max_dormant_days=(int(mdd) if mdd is not None else None),
         updated_at=int(row.updated_at),
         updated_by=(str(row.updated_by) if row.updated_by else None),
     )
@@ -113,6 +130,7 @@ def set_policy(
     max_ttl_seconds: int,
     require_expiry: bool = True,
     max_active_keys: int | None = None,
+    max_dormant_days: int | None = None,
     updated_by: str | None = None,
 ) -> PolicyView:
     """Insert or update the tenant policy. Returns the resulting view.
@@ -143,6 +161,17 @@ def set_policy(
                 f"max_active_keys must be between {MIN_MAX_ACTIVE_KEYS} "
                 f"and {MAX_MAX_ACTIVE_KEYS}"
             )
+    if max_dormant_days is not None:
+        if not isinstance(max_dormant_days, int):
+            raise ValueError("max_dormant_days must be an integer or None")
+        if (
+            max_dormant_days < MIN_MAX_DORMANT_DAYS
+            or max_dormant_days > MAX_MAX_DORMANT_DAYS
+        ):
+            raise ValueError(
+                f"max_dormant_days must be between {MIN_MAX_DORMANT_DAYS} "
+                f"and {MAX_MAX_DORMANT_DAYS}"
+            )
     tid = str(tenant_id)[:64]
     now = _now_ts()
     with session() as s:
@@ -157,6 +186,7 @@ def set_policy(
                 max_ttl_seconds=int(max_ttl_seconds),
                 require_expiry=bool(require_expiry),
                 max_active_keys=(int(max_active_keys) if max_active_keys is not None else None),
+                max_dormant_days=(int(max_dormant_days) if max_dormant_days is not None else None),
                 updated_at=now,
                 updated_by=(str(updated_by)[:128] if updated_by else None),
             )
@@ -165,6 +195,7 @@ def set_policy(
             row.max_ttl_seconds = int(max_ttl_seconds)
             row.require_expiry = bool(require_expiry)
             row.max_active_keys = (int(max_active_keys) if max_active_keys is not None else None)
+            row.max_dormant_days = (int(max_dormant_days) if max_dormant_days is not None else None)
             row.updated_at = now
             row.updated_by = (str(updated_by)[:128] if updated_by else None)
         s.commit()
@@ -325,11 +356,33 @@ def enforce_active_key_count(tenant_id: str) -> None:
         )
 
 
+def dormant_threshold_seconds(tenant_id: str) -> int | None:
+    """Return the dormancy window for ``tenant_id`` in seconds, or ``None``
+    if no per-tenant ``max_dormant_days`` is configured.
+
+    Fail-open: any backend lookup error returns ``None`` so an unhealthy
+    policy store cannot silently lock every key in the workspace out.
+    """
+    try:
+        policy = get_policy(tenant_id)
+    except Exception as exc:  # pragma: no cover - defensive
+        log.warning(
+            "api_key_policy_dormant_lookup_failed",
+            tenant=tenant_id, error=str(exc),
+        )
+        return None
+    if policy is None or policy.max_dormant_days is None:
+        return None
+    return int(policy.max_dormant_days) * 86400
+
+
 __all__ = [
     "MIN_MAX_TTL_SECONDS",
     "MAX_MAX_TTL_SECONDS",
     "MIN_MAX_ACTIVE_KEYS",
     "MAX_MAX_ACTIVE_KEYS",
+    "MIN_MAX_DORMANT_DAYS",
+    "MAX_MAX_DORMANT_DAYS",
     "WorkspaceAPIKeyPolicy",
     "PolicyView",
     "PolicyViolation",
@@ -339,4 +392,5 @@ __all__ = [
     "clear_policy",
     "enforce_key_ttl",
     "enforce_active_key_count",
+    "dormant_threshold_seconds",
 ]

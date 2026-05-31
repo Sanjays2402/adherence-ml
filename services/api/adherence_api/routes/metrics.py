@@ -97,12 +97,17 @@ def _calibration(y: list[int], p: list[float], n_bins: int = 10
     return bins, ece
 
 
-def _collect(window_hours: int, model_name: str | None
+def _collect(window_hours: int, model_name: str | None,
+             tenant_id: str,
              ) -> tuple[list[tuple[str, float, int, str]], int]:
     """Return [(dose_id, p, y, model_name), ...] and raw n_predictions.
 
     `y` is 1 for missed, 0 for taken; `late` is treated as taken (delivered,
     just late). Predictions are taken from the audit's response_summary blob.
+
+    Both the outcome and the prediction-audit reads are tenant-scoped so
+    one workspace admin can never compute live AUC/Brier from another
+    workspace's ground-truth events.
     """
     init_db()
     cutoff = datetime.utcnow() - timedelta(hours=window_hours)
@@ -110,7 +115,10 @@ def _collect(window_hours: int, model_name: str | None
     n_preds = 0
     with session() as s:
         outcomes = list(s.scalars(
-            select(DoseOutcome).where(DoseOutcome.received_at >= cutoff)
+            select(DoseOutcome).where(
+                DoseOutcome.received_at >= cutoff,
+                DoseOutcome.tenant_id == tenant_id,
+            )
         ))
         if not outcomes:
             return out, 0
@@ -118,6 +126,7 @@ def _collect(window_hours: int, model_name: str | None
         q = select(PredictionAudit).where(
             PredictionAudit.created_at >= cutoff,
             PredictionAudit.ok == 1,
+            PredictionAudit.tenant_id == tenant_id,
             PredictionAudit.user_id.in_({o.user_id for o in outcomes}),
         )
         if model_name:
@@ -240,15 +249,19 @@ def _cohort_rows(rows: list[tuple], key: str) -> list[CohortReportRow]:
     return out
 
 
-def _collect_rich(window_hours: int, model_name: str | None) -> list[tuple]:
+def _collect_rich(window_hours: int, model_name: str | None,
+                  tenant_id: str) -> list[tuple]:
     """Like _collect but also returns per-prediction metadata
-    (dose_class, hour_bucket) when available."""
+    (dose_class, hour_bucket) when available. Tenant-scoped on both reads."""
     init_db()
     cutoff = datetime.utcnow() - timedelta(hours=window_hours)
     out: list[tuple] = []
     with session() as s:
         outcomes = list(s.scalars(
-            select(DoseOutcome).where(DoseOutcome.received_at >= cutoff)
+            select(DoseOutcome).where(
+                DoseOutcome.received_at >= cutoff,
+                DoseOutcome.tenant_id == tenant_id,
+            )
         ))
         if not outcomes:
             return out
@@ -256,6 +269,7 @@ def _collect_rich(window_hours: int, model_name: str | None) -> list[tuple]:
         q = select(PredictionAudit).where(
             PredictionAudit.created_at >= cutoff,
             PredictionAudit.ok == 1,
+            PredictionAudit.tenant_id == tenant_id,
             PredictionAudit.user_id.in_({o.user_id for o in outcomes}),
         )
         if model_name:
@@ -299,12 +313,12 @@ def online_report(
     threshold: float = Query(0.5, ge=0.0, le=1.0,
         description="Decision threshold for the confusion matrix."),
     n_bins: int = Query(10, ge=2, le=50),
-    _a=Depends(require_admin),
+    _a: dict = Depends(require_admin),
 ) -> OnlineReportResponse:
     """Cohort-sliced report: lift curve, confusion matrix at threshold,
     AUC/Brier by dose_class and hour-of-day bucket. Useful for spotting
     cohort regressions the headline AUC hides."""
-    rich = _collect_rich(window_hours, model_name)
+    rich = _collect_rich(window_hours, model_name, _a["tenant"])
     if not rich:
         return OnlineReportResponse(
             window_hours=window_hours, n_matched=0, n_positives=0,
@@ -338,10 +352,10 @@ def online_metrics(
     window_hours: int = Query(168, ge=1, le=24 * 90),
     model_name: str | None = Query(None),
     n_bins: int = Query(10, ge=2, le=50),
-    _a=Depends(require_admin),
+    _a: dict = Depends(require_admin),
 ) -> OnlineMetricsResponse:
     """AUC / Brier / log-loss / calibration on the join of predictions and outcomes."""
-    rows, n_preds = _collect(window_hours, model_name)
+    rows, n_preds = _collect(window_hours, model_name, _a["tenant"])
     if not rows:
         return OnlineMetricsResponse(
             window_hours=window_hours, n_predictions=n_preds, n_matched=0,
@@ -442,7 +456,7 @@ def calibration_drift(
         0.05, ge=0.0, le=1.0,
         description="Alert if |live ECE - reference ECE| exceeds this.",
     ),
-    _a=Depends(require_admin),
+    _a: dict = Depends(require_admin),
 ) -> CalibrationDriftResponse:
     """Compare live calibration bins against the reference reliability curve
     captured at training time. Fires an alert when ECE drift or any
@@ -460,7 +474,7 @@ def calibration_drift(
         )
     ref_version, ref_bins = ref
 
-    rows, _n_preds = _collect(window_hours, model_name)
+    rows, _n_preds = _collect(window_hours, model_name, _a["tenant"])
     if not rows:
         return CalibrationDriftResponse(
             model_name=model_name, model_version=ref_version,

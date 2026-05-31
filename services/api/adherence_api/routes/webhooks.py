@@ -138,11 +138,18 @@ async def medtracker_event(
     pii_tenant = _source_tenant(
         settings.inbound_source_tenants, payload.source,
     )
+    # Tenant ownership of ground-truth outcome rows. Without this,
+    # /v1/metrics/online would join one workspace's predictions against
+    # another workspace's outcomes. When the operator has not mapped the
+    # inbound source to a tenant we fall back to the deployment default
+    # tenant rather than leaving the column blank.
+    row_tenant = pii_tenant or settings.default_tenant
     accepted = 0
     dupes = 0
     with session() as s:
         for ev in payload.events:
             row = DoseOutcome(
+                tenant_id=row_tenant,
                 source=payload.source,
                 external_event_id=ev.event_id,
                 user_id=ev.user_id,
@@ -179,16 +186,22 @@ async def medtracker_event(
 
 @router.get("/medtracker/recent")
 def medtracker_recent(
-    limit: int = 20, _p=Depends(require_service)
+    limit: int = 20, _p: dict = Depends(require_service)
 ) -> dict:
-    """Return the most recent persisted outcomes (debug helper)."""
+    """Return the most recent persisted outcomes (debug helper).
+
+    Tenant-scoped: a service-role caller only sees outcomes that belong
+    to its own workspace, never another tenant's ground-truth events.
+    """
     if limit < 1 or limit > 200:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "limit out of range")
     init_db()
     from sqlalchemy import select
     with session() as s:
         rows = list(s.scalars(
-            select(DoseOutcome).order_by(DoseOutcome.received_at.desc()).limit(limit)
+            select(DoseOutcome)
+            .where(DoseOutcome.tenant_id == _p["tenant"])
+            .order_by(DoseOutcome.received_at.desc()).limit(limit)
         ))
     return {
         "n": len(rows),
