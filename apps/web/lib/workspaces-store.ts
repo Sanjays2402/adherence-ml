@@ -750,6 +750,46 @@ export async function listMembers(
 }
 
 /**
+ * Owner-driven role update via the dashboard UI / public API. Verifies:
+ *   - acting user is an owner of `workspaceId`
+ *   - target member exists in this workspace (no cross-tenant writes)
+ *   - last owner is never demoted (workspace cannot be stranded)
+ *
+ * Returns the updated Member, or a string error code:
+ *   - 'forbidden'        acting user is not an owner of this workspace
+ *   - 'not_found'        target user is not a member of this workspace
+ *   - 'invalid_role'     role is not one of ROLES
+ *   - 'last_owner'       refuses to demote the only remaining owner
+ */
+export async function changeMemberRoleByOwner(
+  workspaceId: string,
+  actingUserId: string,
+  targetUserId: string,
+  role: Role,
+): Promise<Member | "forbidden" | "not_found" | "invalid_role" | "last_owner"> {
+  if (!isRole(role)) return "invalid_role";
+  const store = await readStore();
+  const acting = store.members.find(
+    (m) => m.workspace_id === workspaceId && m.user_id === actingUserId,
+  );
+  if (!acting || acting.role !== "owner") return "forbidden";
+  const target = store.members.find(
+    (m) => m.workspace_id === workspaceId && m.user_id === targetUserId,
+  );
+  if (!target) return "not_found";
+  if (target.role === role) return target;
+  if (target.role === "owner" && role !== "owner") {
+    const owners = store.members.filter(
+      (m) => m.workspace_id === workspaceId && m.role === "owner",
+    );
+    if (owners.length <= 1) return "last_owner";
+  }
+  target.role = role;
+  await writeStore(store);
+  return target;
+}
+
+/**
  * SCIM-driven role update. Same safety: refuses to demote the last owner.
  */
 export async function setMemberRole(

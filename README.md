@@ -4,6 +4,39 @@ ML risk scoring for medication adherence. Predicts which upcoming doses a user
 is likely to miss in the next 24 hours and turns those scores into ranked
 interventions.
 
+## Workspace role management (owner-only, audited)
+
+Workspace owners can promote, demote, or remove any member from the dashboard
+or directly via the public API. Permission checks are enforced server-side
+for every request; editors and viewers receive `403 forbidden` even if the
+UI is bypassed. The last owner of a workspace cannot be demoted, mirroring
+the SCIM safety rule, so a workspace cannot be stranded.
+
+Every successful or denied role change writes to the immutable dashboard
+audit log (`workspace.member.role_change`) with actor, target, before role,
+after role, IP, and user agent. Member removal is audited the same way
+(`workspace.member.remove`).
+
+Try it locally:
+
+```bash
+pnpm --filter @adherence/web dev
+# Open http://localhost:3000/workspace, pick a workspace, change a member's
+# role from the dropdown next to their email.
+
+# Or via the API (preview first with dry_run):
+curl -X PATCH 'http://localhost:3000/api/workspaces/WS_ID?dry_run=true' \
+  -H 'content-type: application/json' \
+  --cookie 'adherence_session=...' \
+  -d '{"user_id":"USER_ID","role":"editor"}'
+```
+
+Run the RBAC isolation test:
+
+```bash
+pnpm --filter @adherence/web exec tsx lib/__tests__/workspace-role-rbac.test.ts
+```
+
 ## SCIM 2.0 user provisioning (Okta, Azure AD, Google Workspace)
 
 Workspace owners can mint SCIM 2.0 bearer tokens that let their identity

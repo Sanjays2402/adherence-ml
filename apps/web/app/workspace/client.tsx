@@ -195,6 +195,28 @@ export default function WorkspaceClient() {
     [selected, detail],
   );
 
+  const changeMemberRole = useCallback(
+    async (userId: string, role: Role) => {
+      if (!selected) return;
+      const r = await fetch(`/api/workspaces/${selected}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ user_id: userId, role }),
+      });
+      if (r.ok) {
+        await detail.mutate();
+        setToast(`Role updated to ${role}.`);
+        return;
+      }
+      const j = await r.json().catch(() => ({}));
+      const reason = j?.detail ?? `request failed (${r.status})`;
+      if (reason === "last_owner") setToast("Cannot demote the last owner.");
+      else if (reason === "forbidden") setToast("Only owners can change roles.");
+      else setToast(String(reason));
+    },
+    [selected, detail],
+  );
+
   const copyLink = useCallback(async (url: string) => {
     try {
       await navigator.clipboard.writeText(url);
@@ -422,10 +444,25 @@ export default function WorkspaceClient() {
                         </span>
                       </div>
                       <div className="flex items-center gap-3">
-                        <span className="inline-flex items-center gap-1 text-[11px] font-mono uppercase tracking-wider text-[var(--color-muted)]">
-                          <RoleIcon role={m.role} />
-                          {m.role}
-                        </span>
+                        {d.role === "owner" ? (
+                          <Select
+                            value={m.role}
+                            onChange={(e) =>
+                              changeMemberRole(m.user_id, e.target.value as Role)
+                            }
+                            aria-label={`Change role for ${m.email}`}
+                            className="text-[11px] uppercase tracking-wider py-1"
+                          >
+                            <option value="owner">owner</option>
+                            <option value="editor">editor</option>
+                            <option value="viewer">viewer</option>
+                          </Select>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-mono uppercase tracking-wider text-[var(--color-muted)]">
+                            <RoleIcon role={m.role} />
+                            {m.role}
+                          </span>
+                        )}
                         {d.role === "owner" ? (
                           <Button
                             variant="danger"
