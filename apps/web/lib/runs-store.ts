@@ -22,6 +22,10 @@ export interface RunRecord {
   latency_ms: number | null;
   payload: unknown; // raw request+response blob
   tags: string[];
+  // Public sharing: when share_token is non-null the run is reachable
+  // unauthenticated at /share/<token>. Toggle via setRunShared().
+  share_token?: string | null;
+  shared_at?: number | null;
 }
 
 const DATA_DIR =
@@ -136,6 +140,41 @@ export async function countRuns(): Promise<number> {
 export interface RunUpdate {
   title?: string;
   tags?: string[];
+  share_token?: string | null;
+  shared_at?: number | null;
+}
+
+function newShareToken(): string {
+  // 22-char url-safe token, ~128 bits entropy
+  return randomBytes(16).toString("base64url").slice(0, 22);
+}
+
+/**
+ * Toggle public sharing for a run. Pass enable=true to mint (or reuse) a
+ * token, false to revoke. Returns the updated record, or null if no such id.
+ */
+export async function setRunShared(
+  id: string,
+  enable: boolean,
+): Promise<RunRecord | null> {
+  const current = await getRun(id);
+  if (!current) return null;
+  if (enable) {
+    if (current.share_token) return current;
+    return updateRun(id, {
+      share_token: newShareToken(),
+      shared_at: Date.now(),
+    });
+  }
+  return updateRun(id, { share_token: null, shared_at: null });
+}
+
+export async function getRunByShareToken(
+  token: string,
+): Promise<RunRecord | null> {
+  if (!token || token.length < 8) return null;
+  const all = await readAll();
+  return all.find((r) => r.share_token === token) ?? null;
 }
 
 export async function updateRun(

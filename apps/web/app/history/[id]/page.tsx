@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { getRun } from "@/lib/runs-store";
 import { ArrowLeft, Clock, Link as LinkIcon } from "@phosphor-icons/react/dist/ssr";
 import { PageHeader, Card, CardHeader } from "@/components/ui/primitives";
+import RunActions from "./run-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -81,6 +82,9 @@ export default async function RunDetailPage({
               <LinkIcon weight="duotone" size={12} /> /history/{rec.id}
             </dd>
           </dl>
+          <div className="p-4 border-t border-[var(--color-border)]">
+            <RunActions runId={rec.id} />
+          </div>
         </Card>
 
         <Card className="md:col-span-2">

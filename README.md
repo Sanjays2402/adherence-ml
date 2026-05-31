@@ -220,6 +220,16 @@ API surface:
 - `PATCH /api/runs/:id` rename or retag (`{ title?, tags? }`)
 - `DELETE /api/runs/:id` remove
 - `GET /api/runs/export?format=csv|json|ndjson&q=&kind=&from=&to=&tag=&user_id=` filtered download
+- `GET /api/runs/:id/download` per-run JSON download (attachment with safe filename)
+- `GET /api/runs/:id/share` current public-share status for a run
+- `POST /api/runs/:id/share` body `{ enabled: boolean }` mint or revoke a public share link
+
+Share a single run publicly from its detail page with the `Create public link`
+button. That mints a 22-character token and exposes the run read-only at
+`/share/<token>`. Anyone with the link can view it without signing in, the
+owner can revoke it at any time, and the public page is `noindex` so it stays
+out of search. Use the `Download JSON` button to grab the full payload as a
+timestamped file.
 
 Try it:
 
