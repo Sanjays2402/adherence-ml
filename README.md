@@ -34,12 +34,16 @@ links, SSO denials, and MFA prompts" and we can answer that in one query.
 
 ### Try it
 
-Dashboard: <http://localhost:3000/audit>
+Dedicated page: <http://localhost:3000/settings/auth-events> (workspace owner cookie required). Embedded scope view also lives at <http://localhost:3000/audit>.
 
 ```bash
 # Tail the auth event chain as JSONL (owner cookie required).
 curl -s -b cookie.txt \
   'http://localhost:3000/api/audit/dashboard?action_prefix=auth.&limit=100&format=jsonl'
+
+# SIEM-friendly CSV export with the same filters.
+curl -s -b cookie.txt \
+  'http://localhost:3000/api/audit/dashboard?action_prefix=auth.&limit=1000&format=csv' -o auth-events.csv
 
 # Only failed sign ins in the last hour.
 curl -s -b cookie.txt \
