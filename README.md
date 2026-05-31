@@ -39,6 +39,41 @@ curl -sS -X PUT http://localhost:8000/v1/workspace/residency \
 
 Local API: <http://localhost:8000>. Dashboard: <http://localhost:3000>.
 
+## Per-workspace PII redaction policy
+
+Enterprise verticals (HIPAA, GDPR, PCI) require that free-text fields
+the platform persists have personal identifiers stripped before they
+hit durable storage. A workspace admin can now configure which
+built-in patterns (email, phone, ssn, mrn, credit_card, ipv4) and
+optional custom regexes are scrubbed for their tenant via
+`/v1/workspace/pii-policy`. The policy is enforced at two wiring
+sites: `record_admin_action` scrubs the `details` blob of every admin
+mutation, and the medtracker inbound webhook scrubs `DoseOutcome.notes`
+when the operator has mapped its source to the receiving tenant via
+the `ADHERENCE_INBOUND_SOURCE_TENANTS` setting. The policy is strictly
+tenant-scoped: enabling email scrubbing for `acme` does not affect
+`globex`. Invalid regex is rejected with HTTP 422 before any audit row
+is written. Behavior is verified end-to-end in
+`tests/integration/test_pii_policy.py`.
+
+### Try it
+
+```bash
+# View the active policy (empty until set).
+curl -sS http://localhost:8000/v1/workspace/pii-policy \
+  -H "Authorization: Bearer $WORKSPACE_JWT"
+
+# Enable email + ssn scrubbing with a custom MRN-like pattern.
+curl -sS -X PUT http://localhost:8000/v1/workspace/pii-policy \
+  -H "Authorization: Bearer $WORKSPACE_JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled_builtins":["email","ssn"],"custom_patterns":["PT\\d{6}"],"mask":"[REDACTED]"}'
+
+# Preview clearing the policy without mutating anything.
+curl -sS -X DELETE "http://localhost:8000/v1/workspace/pii-policy?dry_run=true" \
+  -H "Authorization: Bearer $WORKSPACE_JWT"
+```
+
 ## Outbound webhook circuit breaker
 
 A dead receiver should not burn retries forever. Every outbound
