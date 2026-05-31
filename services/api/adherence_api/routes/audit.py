@@ -80,25 +80,33 @@ class ShadowStatsResponse(BaseModel):
 def shadow_stats(
     window_hours: int = Query(24, ge=1, le=24 * 30),
     large_threshold: float = Query(0.10, ge=0.0, le=1.0),
-    _a=Depends(require_admin),
+    tenant: str | None = Query(
+        None,
+        description="Tenant filter. Defaults to caller tenant; admin may pass '*'.",
+    ),
+    p=Depends(require_admin),
 ) -> ShadowStatsResponse:
     """Aggregate shadow-vs-primary divergence per challenger model.
 
     Used to decide when a challenger model is safe to promote: low
     mean+p95 divergence and small `n_large_divergence` means the
     challenger tracks the primary closely on live traffic.
+
+    Scoped to the caller's tenant by default. Pass ``tenant=*`` as admin
+    to roll up across every tenant for fleet-wide model rollout review.
     """
     init_db()
+    target = tenant or str(p.get("tenant") or "default")
+    require_tenant_access(target, p)
     cutoff = datetime.utcnow() - timedelta(hours=window_hours)
     with session() as s:
-        rows: list[PredictionAudit] = list(
-            s.scalars(
-                select(PredictionAudit).where(
-                    PredictionAudit.created_at >= cutoff,
-                    PredictionAudit.shadow_model_name.is_not(None),
-                )
-            )
+        q = select(PredictionAudit).where(
+            PredictionAudit.created_at >= cutoff,
+            PredictionAudit.shadow_model_name.is_not(None),
         )
+        if target != "*":
+            q = q.where(PredictionAudit.tenant_id == target)
+        rows: list[PredictionAudit] = list(s.scalars(q))
     by_shadow: dict[str, list[float]] = {}
     for r in rows:
         if r.shadow_max_divergence is None:
@@ -189,28 +197,62 @@ class AuditVerifyResponse(BaseModel):
 @router.get("/verify", response_model=AuditVerifyResponse)
 def verify(
     limit: int | None = Query(None, ge=1, le=1_000_000),
-    _a=Depends(require_admin),
+    tenant: str | None = Query(
+        None,
+        description=(
+            "Tenant filter. Defaults to caller tenant; admin may pass '*' to"
+            " walk the full chain. Non-admin callers only see breaks for"
+            " rows in their own tenant."
+        ),
+    ),
+    p=Depends(require_admin),
 ) -> AuditVerifyResponse:
     """Verify the tamper-evident hash chain over the prediction audit log.
 
-    Re-derives every ``row_hash`` in id order, compares against stored values
-    and ``prev_hash`` links, and returns the first ``breaks`` (empty list when
-    the chain is intact). Use this from a compliance job to detect rows that
-    were edited or deleted out-of-band.
+    The chain walk is always global because ``prev_hash`` links span
+    tenants. Per-tenant callers only see breaks (and counts) restricted to
+    their own tenant so one tenant can't enumerate another tenant's audit
+    activity through this endpoint. Admins may pass ``tenant=*`` to get
+    the unfiltered system view.
     """
     init_db()
+    target = tenant or str(p.get("tenant") or "default")
+    require_tenant_access(target, p)
     res = verify_chain(limit=limit)
+    if target == "*":
+        breaks = res.breaks
+        n_rows = res.n_rows
+        n_hashed = res.n_hashed
+        head_hash = res.head_hash
+    else:
+        break_ids = {b.row_id for b in res.breaks}
+        with session() as s:
+            tenant_rows = list(
+                s.scalars(
+                    select(PredictionAudit).where(
+                        PredictionAudit.tenant_id == target
+                    )
+                )
+            )
+        tenant_ids = {r.id for r in tenant_rows}
+        breaks = [b for b in res.breaks if b.row_id in tenant_ids]
+        n_rows = len(tenant_rows)
+        n_hashed = sum(1 for r in tenant_rows if r.row_hash is not None)
+        head_hash = None
+        if tenant_rows:
+            head = max(tenant_rows, key=lambda r: r.id)
+            head_hash = head.row_hash
     return AuditVerifyResponse(
-        n_rows=res.n_rows,
-        n_hashed=res.n_hashed,
-        ok=res.ok,
-        head_hash=res.head_hash,
+        n_rows=n_rows,
+        n_hashed=n_hashed,
+        ok=(len(breaks) == 0),
+        head_hash=head_hash,
         breaks=[
             ChainBreakRow(
                 row_id=b.row_id, reason=b.reason,
                 expected=b.expected, actual=b.actual,
             )
-            for b in res.breaks
+            for b in breaks
         ],
     )
 
@@ -226,16 +268,21 @@ def _percentile(values: list[float], pct: float) -> float | None:
 @router.get("/stats", response_model=AuditStatsResponse)
 def stats(
     window_hours: int = Query(24, ge=1, le=24 * 30),
-    _a=Depends(require_admin),
+    tenant: str | None = Query(
+        None,
+        description="Tenant filter. Defaults to caller tenant; admin may pass '*'.",
+    ),
+    p=Depends(require_admin),
 ) -> AuditStatsResponse:
     init_db()
+    target = tenant or str(p.get("tenant") or "default")
+    require_tenant_access(target, p)
     cutoff = datetime.utcnow() - timedelta(hours=window_hours)
     with session() as s:
-        rows: list[PredictionAudit] = list(
-            s.scalars(
-                select(PredictionAudit).where(PredictionAudit.created_at >= cutoff)
-            )
-        )
+        q = select(PredictionAudit).where(PredictionAudit.created_at >= cutoff)
+        if target != "*":
+            q = q.where(PredictionAudit.tenant_id == target)
+        rows: list[PredictionAudit] = list(s.scalars(q))
         # aggregate group counts in Python (portable across sqlite/postgres)
         by_model: dict[str, int] = {}
         by_route: dict[str, int] = {}

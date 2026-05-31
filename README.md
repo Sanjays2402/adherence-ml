@@ -1093,9 +1093,19 @@ Metrics (online quality)
 Audit (admin)
 
 - `GET /v1/audit/list`
-- `GET /v1/audit/stats`
-- `GET /v1/audit/shadow`
+- `GET /v1/audit/stats` (tenant-scoped; admin may pass `?tenant=*`)
+- `GET /v1/audit/shadow` (tenant-scoped; admin may pass `?tenant=*`)
+- `GET /v1/audit/verify` (tenant-scoped break list; admin may pass `?tenant=*`)
 - `GET /v1/audit/export.csv`
+
+Every `/v1/audit/*` reader now defaults the result set to the calling
+key's tenant id. Admins may pass `?tenant=<id>` for another tenant or
+`?tenant=*` for a fleet-wide compliance read. Try it:
+
+```bash
+curl -sH "x-api-key: $ACME_ADMIN_KEY" \
+  http://localhost:8000/v1/audit/stats?window_hours=24
+```
 
 Interventions
 
