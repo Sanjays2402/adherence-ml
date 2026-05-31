@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getWorkspaceSso } from "@/lib/workspaces-store";
 import { SSO_STATE_COOKIE, buildSsoState, discover, pkceChallenge } from "@/lib/oidc";
+import { recordAuthEvent } from "@/lib/auth-audit";
 
 export const runtime = "nodejs";
 
@@ -15,16 +16,19 @@ export async function GET(req: NextRequest) {
   const workspaceId = req.nextUrl.searchParams.get("workspace");
   const next = req.nextUrl.searchParams.get("next");
   if (!workspaceId) {
+    await recordAuthEvent({ verb: "sso_start", method: "sso", outcome: "failure", reason: "missing_workspace", request: req });
     return NextResponse.redirect(new URL("/login?error=sso_missing_workspace", req.url));
   }
   const sso = await getWorkspaceSso(workspaceId);
   if (!sso) {
+    await recordAuthEvent({ verb: "sso_start", method: "sso", outcome: "failure", reason: "not_configured", workspaceId, target: workspaceId, request: req });
     return NextResponse.redirect(new URL("/login?error=sso_not_configured", req.url));
   }
   let doc;
   try {
     doc = await discover(sso.issuer);
   } catch {
+    await recordAuthEvent({ verb: "sso_start", method: "sso", outcome: "failure", reason: "discovery", workspaceId, target: workspaceId, request: req });
     return NextResponse.redirect(new URL("/login?error=sso_discovery", req.url));
   }
   const { value: state, payload } = buildSsoState(workspaceId, next);
@@ -46,5 +50,6 @@ export async function GET(req: NextRequest) {
     secure: process.env.NODE_ENV === "production",
     maxAge: SSO_STATE_TTL_SECS,
   });
+  await recordAuthEvent({ verb: "sso_start", method: "sso", outcome: "success", workspaceId, target: workspaceId, request: req });
   return res;
 }

@@ -9,6 +9,7 @@ import {
   mfaRequiredButMissing,
   requestContextFromHeaders,
 } from "@/lib/session";
+import { recordAuthEvent } from "@/lib/auth-audit";
 
 export const runtime = "nodejs";
 
@@ -19,15 +20,18 @@ export async function GET(req: NextRequest) {
   }
   const user = await consumeMagicToken(token);
   if (!user) {
+    await recordAuthEvent({ verb: "login", method: "magic_link", outcome: "failure", reason: "invalid_or_expired", request: req });
     return NextResponse.redirect(new URL("/login?error=invalid_or_expired", req.url));
   }
   // SSO enforcement late-check: if the workspace started enforcing SSO
   // after the link was issued, refuse to mint a session for it.
   const ssoMatch = await findSsoForEmail(user.email);
   if (ssoMatch && ssoMatch.sso.enforce) {
+    await recordAuthEvent({ verb: "login", method: "magic_link", outcome: "denied", reason: "sso_required", email: user.email, userId: user.id, workspaceId: ssoMatch.workspace.id, request: req });
     return NextResponse.redirect(new URL("/login?error=sso_required", req.url));
   }
   if (await mfaRequiredButMissing(user)) {
+    await recordAuthEvent({ verb: "login", method: "magic_link", outcome: "denied", reason: "mfa_enrollment_required", email: user.email, userId: user.id, request: req });
     return NextResponse.redirect(new URL("/login?error=mfa_enrollment_required", req.url));
   }
   const { cookie, expires } = await buildSession(
@@ -38,6 +42,7 @@ export async function GET(req: NextRequest) {
   // Only allow same-origin relative redirects; ignore anything fancy.
   const safeDest = dest.startsWith("/") && !dest.startsWith("//") ? dest : "/";
   if (hasTotpEnabled(user)) {
+    await recordAuthEvent({ verb: "login", method: "magic_link", outcome: "success", email: user.email, userId: user.id, metadata: { mfa_required: true }, request: req });
     const { cookie: pendCookie, expires: pendExp } = buildMfaPending(user, safeDest);
     const res = NextResponse.redirect(
       new URL(`/verify-2fa?next=${encodeURIComponent(safeDest)}`, req.url),
@@ -59,6 +64,7 @@ export async function GET(req: NextRequest) {
     secure: process.env.NODE_ENV === "production",
     expires,
   });
+  await recordAuthEvent({ verb: "login", method: "magic_link", outcome: "success", email: user.email, userId: user.id, request: req });
   return res;
 }
 
@@ -83,6 +89,7 @@ export async function POST(req: NextRequest) {
   }
   const user = await consumeMagicToken(token);
   if (!user) {
+    await recordAuthEvent({ verb: "login", method: "magic_link", outcome: "failure", reason: "invalid_or_expired", request: req });
     return NextResponse.json(
       {
         error: {
@@ -95,6 +102,7 @@ export async function POST(req: NextRequest) {
   }
   const ssoMatch2 = await findSsoForEmail(user.email);
   if (ssoMatch2 && ssoMatch2.sso.enforce) {
+    await recordAuthEvent({ verb: "login", method: "magic_link", outcome: "denied", reason: "sso_required", email: user.email, userId: user.id, workspaceId: ssoMatch2.workspace.id, request: req });
     return NextResponse.json(
       {
         error: {
@@ -112,6 +120,7 @@ export async function POST(req: NextRequest) {
     );
   }
   if (await mfaRequiredButMissing(user)) {
+    await recordAuthEvent({ verb: "login", method: "magic_link", outcome: "denied", reason: "mfa_enrollment_required", email: user.email, userId: user.id, request: req });
     return NextResponse.json(
       {
         error: {
@@ -130,6 +139,7 @@ export async function POST(req: NextRequest) {
   const dest = body.next || "/";
   const safeDest = dest.startsWith("/") && !dest.startsWith("//") ? dest : "/";
   if (hasTotpEnabled(user)) {
+    await recordAuthEvent({ verb: "login", method: "magic_link", outcome: "success", email: user.email, userId: user.id, metadata: { mfa_required: true }, request: req });
     const { cookie: pendCookie, expires: pendExp } = buildMfaPending(user, safeDest);
     const res = NextResponse.json({
       ok: true,
@@ -146,6 +156,7 @@ export async function POST(req: NextRequest) {
     return res;
   }
   const res = NextResponse.json({ ok: true, user: { id: user.id, email: user.email }, next: safeDest });
+  await recordAuthEvent({ verb: "login", method: "magic_link", outcome: "success", email: user.email, userId: user.id, request: req });
   res.cookies.set(SESSION_COOKIE, cookie, {
     path: "/",
     httpOnly: true,

@@ -2,6 +2,50 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Authentication event audit (SOC2 / SIEM)
+
+Every authentication lifecycle event is now recorded into the same tamper
+evident hash chained audit log as the rest of the dashboard mutations.
+Procurement scenario: a buyer's security reviewer asks "show me every sign
+in attempt for alice@acme.com in the last 90 days, including failed magic
+links, SSO denials, and MFA prompts" and we can answer that in one query.
+
+- New `apps/web/lib/auth-audit.ts` wraps the existing chain with canonical
+  `auth.<verb>.<outcome>` action names (`auth.login.success`,
+  `auth.mfa.failure`, `auth.sso_callback.denied`, etc).
+- Wired into every auth route: `/api/auth/request`, `/api/auth/verify` (GET
+  and POST), `/api/auth/sso/start`, `/api/auth/sso/callback`,
+  `/api/auth/github/callback`, `/api/auth/logout`, `/api/auth/2fa/setup`,
+  `/api/auth/2fa/enable`, `/api/auth/2fa/disable`, `/api/auth/2fa/verify`.
+  Captures IP, user agent, actor email + user id, workspace id where known,
+  and a `reason` code on every failure.
+- Defence in depth: the wrapper strips forbidden keys (`token`, `code`,
+  `recovery_code`, `id_token`, `access_token`, `client_secret`, etc) from
+  metadata before writing, so a future contributor can't accidentally leak a
+  magic token into the chain.
+- Surfaced in `/audit` via a new scope dropdown (auth only, sign in, MFA,
+  SSO, sign out). The hash chain validates across mixed auth and non-auth
+  events; the scope filter is a pure prefix view, not a separate log.
+- Audit IO never blocks the auth path: writes are best effort and swallowed
+  on failure.
+- Test coverage: `apps/web/tests/auth-audit.test.ts` pins the action shape,
+  chain validity across interleaved namespaces, recording of failed sign
+  ins, and the no-secrets contract.
+
+### Try it
+
+Dashboard: <http://localhost:3000/audit>
+
+```bash
+# Tail the auth event chain as JSONL (owner cookie required).
+curl -s -b cookie.txt \
+  'http://localhost:3000/api/audit/dashboard?action_prefix=auth.&limit=100&format=jsonl'
+
+# Only failed sign ins in the last hour.
+curl -s -b cookie.txt \
+  "http://localhost:3000/api/audit/dashboard?action_prefix=auth.login.&outcome=failure&since_ms=$(($(date +%s%3N)-3600000))"
+```
+
 ## Workspace data retention (GDPR / CCPA storage minimization)
 
 Workspace owners can now declare how long stored runs (predictions, cohorts,

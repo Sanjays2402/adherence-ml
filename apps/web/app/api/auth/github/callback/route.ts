@@ -19,6 +19,7 @@ import {
   requestContextFromHeaders,
   mfaRequiredButMissing,
 } from "@/lib/session";
+import { recordAuthEvent } from "@/lib/auth-audit";
 
 export const runtime = "nodejs";
 
@@ -123,6 +124,7 @@ export async function GET(req: NextRequest) {
 
   const email = await fetchPrimaryEmail(token);
   if (!email) {
+    await recordAuthEvent({ verb: "sso_callback", method: "github", outcome: "failure", reason: "no_verified_email", request: req });
     return NextResponse.redirect(new URL("/login?error=oauth_no_email", req.url));
   }
 
@@ -130,12 +132,14 @@ export async function GET(req: NextRequest) {
   // requires SSO. They must go through their IdP, not a personal GitHub.
   const ssoMatch = await findSsoForEmail(email);
   if (ssoMatch && ssoMatch.sso.enforce) {
+    await recordAuthEvent({ verb: "login", method: "github", outcome: "denied", email, reason: "sso_required", metadata: { workspace_id: ssoMatch.workspace.id }, request: req });
     return NextResponse.redirect(new URL("/login?error=sso_required", req.url));
   }
 
   const user = await getOrCreateUserByEmail(email);
   const dest = payload.nx || "/";
   if (hasTotpEnabled(user)) {
+    await recordAuthEvent({ verb: "login", method: "github", outcome: "success", email: user.email, userId: user.id, metadata: { mfa_required: true }, request: req });
     const { cookie, expires } = buildMfaPending(user, dest);
     const res = NextResponse.redirect(
       new URL(`/verify-2fa?next=${encodeURIComponent(dest.startsWith("/") ? dest : "/")}`, req.url),
@@ -151,6 +155,7 @@ export async function GET(req: NextRequest) {
     return res;
   }
   if (await mfaRequiredButMissing(user)) {
+    await recordAuthEvent({ verb: "login", method: "github", outcome: "denied", email: user.email, userId: user.id, reason: "mfa_enrollment_required", request: req });
     const res = NextResponse.redirect(
       new URL("/login?error=mfa_enrollment_required", req.url),
     );
@@ -161,6 +166,7 @@ export async function GET(req: NextRequest) {
     user,
     requestContextFromHeaders(req.headers, "github"),
   );
+  await recordAuthEvent({ verb: "login", method: "github", outcome: "success", email: user.email, userId: user.id, request: req });
   const res = NextResponse.redirect(new URL(dest, req.url));
   res.cookies.set(SESSION_COOKIE, cookie, {
     path: "/",

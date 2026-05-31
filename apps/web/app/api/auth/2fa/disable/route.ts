@@ -10,6 +10,7 @@ import { z } from "zod";
 import { getSession } from "@/lib/session";
 import { consumeRecoveryCode, disableTotp } from "@/lib/users-store";
 import { verifyTotp } from "@/lib/totp";
+import { recordAuthEvent } from "@/lib/auth-audit";
 
 export const runtime = "nodejs";
 
@@ -45,11 +46,28 @@ export async function POST(req: NextRequest) {
   if (parsed.code && verifyTotp(ctx.user.totp_secret, parsed.code)) ok = true;
   else if (parsed.recovery && (await consumeRecoveryCode(ctx.user.id, parsed.recovery))) ok = true;
   if (!ok) {
+    await recordAuthEvent({
+      verb: "mfa_disable",
+      method: parsed.recovery ? "recovery_code" : "totp",
+      outcome: "failure",
+      reason: "invalid_code",
+      email: ctx.user.email,
+      userId: ctx.user.id,
+      request: req,
+    });
     return NextResponse.json(
       { error: { code: "invalid_code", message: "Code or recovery key did not match." } },
       { status: 400 },
     );
   }
   await disableTotp(ctx.user.id);
+  await recordAuthEvent({
+    verb: "mfa_disable",
+    method: "totp",
+    outcome: "success",
+    email: ctx.user.email,
+    userId: ctx.user.id,
+    request: req,
+  });
   return NextResponse.json({ ok: true });
 }

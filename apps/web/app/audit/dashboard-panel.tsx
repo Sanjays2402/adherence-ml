@@ -52,6 +52,14 @@ const fetcher = (url: string) =>
   });
 
 const OUTCOMES = ["all", "success", "denied", "failure"] as const;
+const SCOPES = [
+  { value: "all", label: "all events" },
+  { value: "auth.", label: "auth only" },
+  { value: "auth.login.", label: "sign in" },
+  { value: "auth.mfa", label: "mfa" },
+  { value: "auth.sso", label: "sso" },
+  { value: "auth.logout.", label: "sign out" },
+] as const;
 const LIMITS = [50, 100, 250, 500];
 
 function fmtTs(ms: number): string {
@@ -70,12 +78,14 @@ function OutcomeBadge({ outcome }: { outcome: AuditEntry["outcome"] }) {
 
 export default function DashboardAuditPanel() {
   const [outcome, setOutcome] = useState<(typeof OUTCOMES)[number]>("all");
+  const [scope, setScope] = useState<(typeof SCOPES)[number]["value"]>("all");
   const [limit, setLimit] = useState(100);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const params = new URLSearchParams();
   params.set("limit", String(limit));
   if (outcome !== "all") params.set("outcome", outcome);
+  if (scope !== "all") params.set("action_prefix", scope);
 
   const key = `/api/audit/dashboard?${params.toString()}`;
   const { data, error, isValidating, mutate } = useSWR<ListResponse>(key, fetcher, {
@@ -108,6 +118,19 @@ export default function DashboardAuditPanel() {
                 <Warning size={12} weight="duotone" /> chain broken
               </Badge>
             )}
+            <Select
+              value={scope}
+              onChange={(e) =>
+                setScope(e.target.value as (typeof SCOPES)[number]["value"])
+              }
+              aria-label="filter scope"
+            >
+              {SCOPES.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </Select>
             <Select
               value={outcome}
               onChange={(e) =>

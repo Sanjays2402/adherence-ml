@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { issueMagicToken, isValidEmail, normalizeEmail } from "@/lib/users-store";
 import { findSsoForEmail } from "@/lib/workspaces-store";
+import { recordAuthEvent } from "@/lib/auth-audit";
 
 export const runtime = "nodejs";
 
@@ -20,6 +21,13 @@ export async function POST(req: NextRequest) {
     );
   }
   if (!parsed.success) {
+    await recordAuthEvent({
+      verb: "login_request",
+      method: "magic_link",
+      outcome: "failure",
+      reason: "invalid_input",
+      request: req,
+    });
     return NextResponse.json(
       { error: { code: "invalid_input", message: "Email is required." } },
       { status: 400 },
@@ -27,6 +35,14 @@ export async function POST(req: NextRequest) {
   }
   const email = normalizeEmail(parsed.data.email);
   if (!isValidEmail(email)) {
+    await recordAuthEvent({
+      verb: "login_request",
+      method: "magic_link",
+      outcome: "failure",
+      reason: "invalid_email",
+      email,
+      request: req,
+    });
     return NextResponse.json(
       { error: { code: "invalid_email", message: "Enter a valid email address." } },
       { status: 400 },
@@ -37,6 +53,15 @@ export async function POST(req: NextRequest) {
   // mint a magic link. Tell the caller where to go instead.
   const ssoMatch = await findSsoForEmail(email);
   if (ssoMatch && ssoMatch.sso.enforce) {
+    await recordAuthEvent({
+      verb: "login_request",
+      method: "magic_link",
+      outcome: "denied",
+      reason: "sso_required",
+      email,
+      workspaceId: ssoMatch.workspace.id,
+      request: req,
+    });
     return NextResponse.json(
       {
         error: {
@@ -55,6 +80,13 @@ export async function POST(req: NextRequest) {
   }
 
   const { token, expires_at } = await issueMagicToken(email);
+  await recordAuthEvent({
+    verb: "login_request",
+    method: "magic_link",
+    outcome: "success",
+    email,
+    request: req,
+  });
 
   // Build absolute URL using the request's own host so the link works
   // both on localhost and behind reverse proxies.

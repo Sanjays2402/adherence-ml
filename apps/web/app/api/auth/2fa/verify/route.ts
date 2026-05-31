@@ -18,6 +18,7 @@ import {
 } from "@/lib/session";
 import { consumeRecoveryCode, getUserById } from "@/lib/users-store";
 import { verifyTotp } from "@/lib/totp";
+import { recordAuthEvent } from "@/lib/auth-audit";
 
 export const runtime = "nodejs";
 
@@ -64,6 +65,15 @@ export async function POST(req: NextRequest) {
     usedRecovery = ok;
   }
   if (!ok) {
+    await recordAuthEvent({
+      verb: "mfa",
+      method: parsed.recovery ? "recovery_code" : "totp",
+      outcome: "failure",
+      reason: parsed.recovery ? "invalid_recovery_code" : "invalid_totp_code",
+      email: user.email,
+      userId: user.id,
+      request: req,
+    });
     return NextResponse.json(
       {
         error: {
@@ -99,6 +109,15 @@ export async function POST(req: NextRequest) {
   });
   // Burn the pending cookie.
   res.cookies.set(MFA_PENDING_COOKIE, "", { path: "/", maxAge: 0 });
+  await recordAuthEvent({
+    verb: "mfa",
+    method: usedRecovery ? "recovery_code" : "totp",
+    outcome: "success",
+    email: fresh.email,
+    userId: fresh.id,
+    metadata: { used_recovery_code: usedRecovery },
+    request: req,
+  });
   return res;
 }
 

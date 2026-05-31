@@ -11,6 +11,7 @@ import { z } from "zod";
 import { getSession } from "@/lib/session";
 import { enableTotp, generateRecoveryCodes } from "@/lib/users-store";
 import { verifyTotp } from "@/lib/totp";
+import { recordAuthEvent } from "@/lib/auth-audit";
 
 export const runtime = "nodejs";
 
@@ -52,6 +53,15 @@ export async function POST(req: NextRequest) {
     );
   }
   if (!verifyTotp(secret, parsed.code)) {
+    await recordAuthEvent({
+      verb: "mfa_enable",
+      method: "totp",
+      outcome: "failure",
+      reason: "invalid_code",
+      email: ctx.user.email,
+      userId: ctx.user.id,
+      request: req,
+    });
     return NextResponse.json(
       {
         error: {
@@ -70,5 +80,13 @@ export async function POST(req: NextRequest) {
       { status: 404 },
     );
   }
+  await recordAuthEvent({
+    verb: "mfa_enable",
+    method: "totp",
+    outcome: "success",
+    email: ctx.user.email,
+    userId: ctx.user.id,
+    request: req,
+  });
   return NextResponse.json({ ok: true, recovery_codes: recovery });
 }

@@ -16,10 +16,11 @@ import {
   generateTotpSecret,
   otpauthUri,
 } from "@/lib/totp";
+import { recordAuthEvent } from "@/lib/auth-audit";
 
 export const runtime = "nodejs";
 
-export async function POST(_req: NextRequest) {
+export async function POST(req: NextRequest) {
   const ctx = await getSession();
   if (!ctx) {
     return NextResponse.json(
@@ -44,6 +45,14 @@ export async function POST(_req: NextRequest) {
     secretBase32: base32,
     accountName: ctx.user.email,
     issuer: "adherence.ml",
+  });
+  await recordAuthEvent({
+    verb: "mfa_setup",
+    method: "totp",
+    outcome: "success",
+    email: ctx.user.email,
+    userId: ctx.user.id,
+    request: req,
   });
   return NextResponse.json({
     secret: base32,

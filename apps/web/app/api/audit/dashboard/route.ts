@@ -18,6 +18,7 @@ export async function GET(req: NextRequest) {
   const limitRaw = url.searchParams.get("limit");
   const limit = limitRaw ? Number.parseInt(limitRaw, 10) : 100;
   const action = url.searchParams.get("action") ?? undefined;
+  const actionPrefix = url.searchParams.get("action_prefix") ?? undefined;
   const actor = url.searchParams.get("actor_user_id") ?? undefined;
   const outcome = url.searchParams.get("outcome") as
     | "success"
@@ -29,6 +30,7 @@ export async function GET(req: NextRequest) {
   const baseOpts = {
     limit: Number.isFinite(limit) ? Math.min(limit, 1000) : 100,
     action,
+    action_prefix: actionPrefix,
     actor_user_id: actor,
     outcome: outcome ?? undefined,
     since_ms: sinceRaw ? Number.parseInt(sinceRaw, 10) : undefined,
@@ -44,6 +46,44 @@ export async function GET(req: NextRequest) {
         "content-disposition": `attachment; filename="dashboard-audit-${new Date()
           .toISOString()
           .slice(0, 10)}.jsonl"`,
+      },
+    });
+  }
+
+  if (url.searchParams.get("format") === "csv") {
+    const result = await listAudit(baseOpts);
+    const header = "ts,id,action,outcome,actor_email,actor_user_id,target,ip,user_agent,reason,method";
+    const esc = (v: unknown): string => {
+      if (v === null || v === undefined) return "";
+      const s = String(v);
+      return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const rows = result.items.map((e) => {
+      const md = (e.metadata ?? {}) as Record<string, unknown>;
+      return [
+        new Date(e.ts).toISOString(),
+        e.id,
+        e.action,
+        e.outcome,
+        e.actor_email,
+        e.actor_user_id,
+        e.target,
+        e.ip,
+        e.user_agent,
+        md.reason,
+        md.method,
+      ]
+        .map(esc)
+        .join(",");
+    });
+    const body = [header, ...rows].join("\n") + "\n";
+    return new NextResponse(body, {
+      status: 200,
+      headers: {
+        "content-type": "text/csv; charset=utf-8",
+        "content-disposition": `attachment; filename="audit-${new Date()
+          .toISOString()
+          .slice(0, 10)}.csv"`,
       },
     });
   }

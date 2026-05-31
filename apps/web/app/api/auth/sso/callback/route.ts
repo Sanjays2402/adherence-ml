@@ -15,6 +15,7 @@ import {
   requestContextFromHeaders,
   mfaRequiredButMissing,
 } from "@/lib/session";
+import { recordAuthEvent } from "@/lib/auth-audit";
 
 export const runtime = "nodejs";
 
@@ -33,17 +34,21 @@ export async function GET(req: NextRequest) {
   const stateCookie = req.cookies.get(SSO_STATE_COOKIE)?.value;
   const idpError = url.searchParams.get("error");
   if (idpError) {
+    await recordAuthEvent({ verb: "sso_callback", method: "sso", outcome: "failure", reason: `idp_${idpError}`, request: req });
     return NextResponse.redirect(new URL(`/login?error=sso_idp_${encodeURIComponent(idpError)}`, req.url));
   }
   if (!code || !stateQs || !stateCookie || stateQs !== stateCookie) {
+    await recordAuthEvent({ verb: "sso_callback", method: "sso", outcome: "failure", reason: "state_mismatch", request: req });
     return NextResponse.redirect(new URL("/login?error=sso_state", req.url));
   }
   const state = verifySsoState(stateCookie);
   if (!state) {
+    await recordAuthEvent({ verb: "sso_callback", method: "sso", outcome: "failure", reason: "state_invalid", request: req });
     return NextResponse.redirect(new URL("/login?error=sso_state", req.url));
   }
   const sso = await getWorkspaceSso(state.ws);
   if (!sso) {
+    await recordAuthEvent({ verb: "sso_callback", method: "sso", outcome: "failure", reason: "not_configured", workspaceId: state.ws, request: req });
     return NextResponse.redirect(new URL("/login?error=sso_not_configured", req.url));
   }
 
@@ -51,6 +56,7 @@ export async function GET(req: NextRequest) {
   try {
     doc = await discover(sso.issuer);
   } catch {
+    await recordAuthEvent({ verb: "sso_callback", method: "sso", outcome: "failure", reason: "discovery", workspaceId: state.ws, request: req });
     return NextResponse.redirect(new URL("/login?error=sso_discovery", req.url));
   }
 
@@ -76,9 +82,11 @@ export async function GET(req: NextRequest) {
     });
     tok = (await tr.json()) as TokenResp;
     if (!tr.ok || !tok.id_token) {
+      await recordAuthEvent({ verb: "sso_callback", method: "sso", outcome: "failure", reason: "token_exchange", workspaceId: state.ws, request: req });
       return NextResponse.redirect(new URL("/login?error=sso_exchange", req.url));
     }
   } catch {
+    await recordAuthEvent({ verb: "sso_callback", method: "sso", outcome: "failure", reason: "token_exchange", workspaceId: state.ws, request: req });
     return NextResponse.redirect(new URL("/login?error=sso_exchange", req.url));
   }
 
@@ -90,14 +98,17 @@ export async function GET(req: NextRequest) {
       nonce: state.non,
     });
   } catch {
+    await recordAuthEvent({ verb: "sso_callback", method: "sso", outcome: "failure", reason: "id_token_verify", workspaceId: state.ws, request: req });
     return NextResponse.redirect(new URL("/login?error=sso_verify", req.url));
   }
 
   const email = typeof claims.email === "string" ? normalizeEmail(claims.email) : null;
   if (!email || !isValidEmail(email)) {
+    await recordAuthEvent({ verb: "sso_callback", method: "sso", outcome: "failure", reason: "no_email", workspaceId: state.ws, request: req });
     return NextResponse.redirect(new URL("/login?error=sso_no_email", req.url));
   }
   if (claims.email_verified === false) {
+    await recordAuthEvent({ verb: "sso_callback", method: "sso", outcome: "failure", reason: "unverified_email", email, workspaceId: state.ws, request: req });
     return NextResponse.redirect(new URL("/login?error=sso_unverified_email", req.url));
   }
   // Ensure the verified email's domain is one this workspace claims, so an
@@ -105,12 +116,14 @@ export async function GET(req: NextRequest) {
   // someone in a domain that workspace doesn't own.
   const domain = email.split("@")[1] ?? "";
   if (!sso.allowed_email_domains.includes(domain)) {
+    await recordAuthEvent({ verb: "sso_callback", method: "sso", outcome: "denied", reason: "domain_mismatch", email, workspaceId: state.ws, request: req });
     return NextResponse.redirect(new URL("/login?error=sso_domain_mismatch", req.url));
   }
   // Defensive: if another workspace also claims this domain with a different
   // SSO config, refuse rather than silently accept the wrong tenant's IdP.
   const claimingWs = await findSsoForEmail(email);
   if (claimingWs && claimingWs.workspace.id !== state.ws) {
+    await recordAuthEvent({ verb: "sso_callback", method: "sso", outcome: "denied", reason: "domain_cross_workspace", email, workspaceId: state.ws, request: req });
     return NextResponse.redirect(new URL("/login?error=sso_domain_mismatch", req.url));
   }
 
@@ -121,6 +134,7 @@ export async function GET(req: NextRequest) {
     return res;
   };
   if (hasTotpEnabled(user)) {
+    await recordAuthEvent({ verb: "login", method: "sso", outcome: "success", email: user.email, userId: user.id, workspaceId: state.ws, metadata: { mfa_required: true }, request: req });
     const { cookie, expires } = buildMfaPending(user, dest);
     const res = NextResponse.redirect(
       new URL(`/verify-2fa?next=${encodeURIComponent(dest.startsWith("/") ? dest : "/")}`, req.url),
@@ -135,6 +149,7 @@ export async function GET(req: NextRequest) {
     return burn(res);
   }
   if (await mfaRequiredButMissing(user)) {
+    await recordAuthEvent({ verb: "login", method: "sso", outcome: "denied", reason: "mfa_enrollment_required", email: user.email, userId: user.id, workspaceId: state.ws, request: req });
     return burn(
       NextResponse.redirect(
         new URL("/login?error=mfa_enrollment_required", req.url),
@@ -153,5 +168,6 @@ export async function GET(req: NextRequest) {
     secure: process.env.NODE_ENV === "production",
     expires,
   });
+  await recordAuthEvent({ verb: "login", method: "sso", outcome: "success", email: user.email, userId: user.id, workspaceId: state.ws, request: req });
   return burn(res);
 }

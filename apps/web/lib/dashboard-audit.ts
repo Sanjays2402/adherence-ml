@@ -145,6 +145,7 @@ export async function recordAudit(opts: RecordOptions): Promise<AuditEntry> {
 export interface ListOptions {
   limit?: number;
   action?: string;
+  action_prefix?: string;
   actor_user_id?: string;
   outcome?: AuditOutcome;
   since_ms?: number;
@@ -193,6 +194,10 @@ export async function listAudit(opts: ListOptions = {}): Promise<ListResult> {
 
   let filtered = entries.slice();
   if (opts.action) filtered = filtered.filter((e) => e.action === opts.action);
+  if (opts.action_prefix) {
+    const pfx = opts.action_prefix;
+    filtered = filtered.filter((e) => e.action.startsWith(pfx));
+  }
   if (opts.actor_user_id)
     filtered = filtered.filter((e) => e.actor_user_id === opts.actor_user_id);
   if (opts.outcome) filtered = filtered.filter((e) => e.outcome === opts.outcome);
