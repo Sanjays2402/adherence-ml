@@ -17,11 +17,83 @@ import { getUserById } from "@/lib/users-store";
 export const SCIM_CONTENT_TYPE = "application/scim+json";
 
 export const SCIM_USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User";
+export const SCIM_GROUP_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:Group";
 export const SCIM_LIST_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:ListResponse";
 export const SCIM_ERROR_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:Error";
 export const SCIM_PATCH_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:PatchOp";
 export const SCIM_ENTERPRISE_USER_EXT =
   "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User";
+
+/**
+ * The three SCIM Group display names this workspace exposes. They map
+ * 1-to-1 to internal roles. Identity providers create assignments by
+ * adding a SCIM user to one of these groups.
+ */
+export const SCIM_GROUP_NAMES = ["owners", "editors", "viewers"] as const;
+export type ScimGroupName = (typeof SCIM_GROUP_NAMES)[number];
+const GROUP_NAME_TO_ROLE: Record<ScimGroupName, Role> = {
+  owners: "owner",
+  editors: "editor",
+  viewers: "viewer",
+};
+const ROLE_TO_GROUP_NAME: Record<Role, ScimGroupName> = {
+  owner: "owners",
+  editor: "editors",
+  viewer: "viewers",
+};
+
+/**
+ * Encode a workspace-scoped group id. SCIM consumers treat ids as opaque,
+ * so embedding the workspace prevents an IdP cache from accidentally
+ * crossing tenants if a token is later reissued for a different workspace.
+ */
+export function makeGroupId(workspaceId: string, name: ScimGroupName): string {
+  return `${workspaceId}:${name}`;
+}
+export function parseGroupId(
+  id: string,
+): { workspaceId: string; name: ScimGroupName } | null {
+  const idx = id.lastIndexOf(":");
+  if (idx <= 0) return null;
+  const ws = id.slice(0, idx);
+  const name = id.slice(idx + 1).toLowerCase();
+  if (!(SCIM_GROUP_NAMES as readonly string[]).includes(name)) return null;
+  return { workspaceId: ws, name: name as ScimGroupName };
+}
+export function roleForGroupName(name: ScimGroupName): Role {
+  return GROUP_NAME_TO_ROLE[name];
+}
+export function groupNameForRole(role: Role): ScimGroupName {
+  return ROLE_TO_GROUP_NAME[role];
+}
+
+export function renderScimGroup(
+  workspaceId: string,
+  name: ScimGroupName,
+  members: Member[],
+  baseUrl: string,
+): Record<string, unknown> {
+  const role = GROUP_NAME_TO_ROLE[name];
+  const groupMembers = members
+    .filter((m) => m.role === role)
+    .map((m) => ({
+      value: m.user_id,
+      display: m.email,
+      $ref: `${baseUrl}/scim/v2/Users/${m.user_id}`,
+      type: "User",
+    }));
+  return {
+    schemas: [SCIM_GROUP_SCHEMA],
+    id: makeGroupId(workspaceId, name),
+    externalId: name,
+    displayName: name,
+    members: groupMembers,
+    meta: {
+      resourceType: "Group",
+      location: `${baseUrl}/scim/v2/Groups/${makeGroupId(workspaceId, name)}`,
+    },
+  };
+}
 
 /**
  * Map our internal `Role` to a SCIM Group membership name. Identity
@@ -176,6 +248,21 @@ export function baseUrlOf(req: NextRequest): string {
   const proto = req.headers.get("x-forwarded-proto") ?? "http";
   const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? "localhost";
   return `${proto}://${host}`;
+}
+
+/**
+ * Parse a single SCIM filter clause of the form
+ *   displayName eq "editors"
+ * which is what providers use to look up Groups by name. Returns the
+ * lowercase value when matched, else null.
+ */
+export function parseDisplayNameEq(filter: string | null): string | null {
+  if (!filter) return null;
+  const m = filter.match(/^\s*displayName\s+eq\s+"([^"]+)"\s*$/i);
+  if (m) return m[1].toLowerCase();
+  const m2 = filter.match(/^\s*displayName\s+eq\s+'([^']+)'\s*$/i);
+  if (m2) return m2[1].toLowerCase();
+  return null;
 }
 
 // Re-export to keep route imports concise.

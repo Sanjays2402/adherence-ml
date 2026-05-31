@@ -3,6 +3,7 @@
  */
 import { NextRequest } from "next/server";
 import {
+  SCIM_GROUP_SCHEMA,
   SCIM_LIST_SCHEMA,
   SCIM_USER_SCHEMA,
   SCIM_ENTERPRISE_USER_EXT,
@@ -34,11 +35,25 @@ export async function GET(req: NextRequest) {
       location: `${base}/scim/v2/ResourceTypes/User`,
     },
   };
+  const group = {
+    schemas: ["urn:ietf:params:scim:schemas:core:2.0:ResourceType"],
+    id: "Group",
+    name: "Group",
+    endpoint: "/Groups",
+    description:
+      "Fixed role groups (owners, editors, viewers). Membership controls workspace role.",
+    schema: SCIM_GROUP_SCHEMA,
+    schemaExtensions: [],
+    meta: {
+      resourceType: "ResourceType",
+      location: `${base}/scim/v2/ResourceTypes/Group`,
+    },
+  };
   return scimJson(200, {
     schemas: [SCIM_LIST_SCHEMA],
-    totalResults: 1,
-    Resources: [user],
+    totalResults: 2,
+    Resources: [user, group],
     startIndex: 1,
-    itemsPerPage: 1,
+    itemsPerPage: 2,
   });
 }

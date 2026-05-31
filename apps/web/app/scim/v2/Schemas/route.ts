@@ -4,6 +4,7 @@
  */
 import { NextRequest } from "next/server";
 import {
+  SCIM_GROUP_SCHEMA,
   SCIM_LIST_SCHEMA,
   SCIM_USER_SCHEMA,
   SCIM_ENTERPRISE_USER_EXT,
@@ -41,11 +42,21 @@ export async function GET(req: NextRequest) {
     ],
     meta: { resourceType: "Schema", location: `${base}/scim/v2/Schemas/${SCIM_ENTERPRISE_USER_EXT}` },
   };
+  const groupSchema = {
+    id: SCIM_GROUP_SCHEMA,
+    name: "Group",
+    description: "Fixed role group (owners, editors, viewers)",
+    attributes: [
+      { name: "displayName", type: "string", required: true, mutability: "readOnly", returned: "default" },
+      { name: "members", type: "complex", multiValued: true, required: false, mutability: "readWrite", returned: "default" },
+    ],
+    meta: { resourceType: "Schema", location: `${base}/scim/v2/Schemas/${SCIM_GROUP_SCHEMA}` },
+  };
   return scimJson(200, {
     schemas: [SCIM_LIST_SCHEMA],
-    totalResults: 2,
-    Resources: [userSchema, entExt],
+    totalResults: 3,
+    Resources: [userSchema, entExt, groupSchema],
     startIndex: 1,
-    itemsPerPage: 2,
+    itemsPerPage: 3,
   });
 }

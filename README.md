@@ -1225,20 +1225,26 @@ is scoped to exactly one workspace, so a token issued for workspace A can
 never read or mutate workspace B.
 
 - RFC 7643/7644 endpoints under `/scim/v2/*`: `ServiceProviderConfig`,
-  `Schemas`, `ResourceTypes`, `Users`, `Users/{id}` (GET/POST/PUT/PATCH/DELETE).
+  `Schemas`, `ResourceTypes`, `Users`, `Users/{id}` (GET/POST/PUT/PATCH/DELETE),
+  `Groups`, `Groups/{id}` (GET/PATCH; PUT/DELETE return 403 because the
+  three role groups are fixed).
 - Bearer tokens are hashed at rest (sha256), shown plaintext exactly once,
   and verified with `timingSafeEqual`. Each verification updates last-used
   timestamp, IP, and use count.
 - Group membership and the enterprise extension `department` attribute both
   map to internal roles (`owners`, `editors`, `viewers`). Azure AD's
-  pathless PATCH shape is supported.
+  pathless PATCH shape is supported, and Okta's filter-remove
+  (`members[value eq "u_..."]`) is supported on Groups. Removing a user
+  from a role group sets them to `viewer` rather than deleting them, so a
+  misconfigured push cannot wipe accounts.
 - The last owner of a workspace cannot be demoted or deprovisioned by an
   IdP, so a misconfigured directory cannot strand a tenant.
 - Every SCIM mutation writes to the hash-chained dashboard audit log with
   actor `scim:<token-id>`, source IP, and a before/after diff.
 - Manage tokens at `/workspace/scim` (owner-only). Cross-tenant isolation
   is enforced by the store layer and covered by
-  `apps/web/tests/scim-provisioning.test.ts`.
+  `apps/web/tests/scim-provisioning.test.ts` and
+  `apps/web/tests/scim-groups.test.ts`.
 
 ### Try it
 
@@ -1257,6 +1263,22 @@ curl -X POST http://localhost:3000/scim/v2/Users \
     "userName": "alice@acme.com",
     "active": true,
     "groups": [{"display": "editors"}]
+  }'
+
+# 4. List the three role groups your IdP can target:
+curl -H "Authorization: Bearer $SCIM_TOKEN" \
+  http://localhost:3000/scim/v2/Groups
+
+# 5. Promote a user to editor by adding them to the editors group
+#    (this is exactly what Okta and Azure AD send on a role assignment):
+curl -X PATCH "http://localhost:3000/scim/v2/Groups/$WORKSPACE_ID:editors" \
+  -H "Authorization: Bearer $SCIM_TOKEN" \
+  -H "Content-Type: application/scim+json" \
+  -d '{
+    "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+    "Operations": [
+      {"op": "add", "path": "members", "value": [{"value": "u_bob"}]}
+    ]
   }'
 ```
 
