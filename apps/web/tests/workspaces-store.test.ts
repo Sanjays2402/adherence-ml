@@ -103,4 +103,78 @@ describe("workspaces-store", () => {
     const after = await store.getWorkspaceForUser(ws.id, "u_alice");
     expect(after!.members).toHaveLength(1);
   });
+
+  it("updateMemberRole promotes/demotes and refuses to demote the last owner", async () => {
+    const store = await import("../lib/workspaces-store");
+    const [ws] = await store.listForUser("u_alice", "alice@example.com");
+
+    // Add bob as editor via invite flow.
+    const { token } = await store.createInvite(ws.id, "u_alice", "bob@example.com", "editor");
+    await store.acceptInvite(token, "u_bob", "bob@example.com");
+
+    // Non-owner cannot change roles.
+    const denied = await store.updateMemberRole(ws.id, "u_bob", "u_alice", "viewer");
+    expect(denied.ok).toBe(false);
+    if (!denied.ok) expect(denied.reason).toBe("forbidden");
+
+    // Owner promotes bob to owner.
+    const promoted = await store.updateMemberRole(ws.id, "u_alice", "u_bob", "owner");
+    expect(promoted.ok).toBe(true);
+    if (promoted.ok) expect(promoted.member.role).toBe("owner");
+
+    // Owner demotes themselves now that another owner exists.
+    const selfDemoted = await store.updateMemberRole(ws.id, "u_alice", "u_alice", "editor");
+    expect(selfDemoted.ok).toBe(true);
+
+    // Bob (now last owner) cannot demote themselves.
+    const lastOwner = await store.updateMemberRole(ws.id, "u_bob", "u_bob", "viewer");
+    expect(lastOwner.ok).toBe(false);
+    if (!lastOwner.ok) expect(lastOwner.reason).toBe("last_owner");
+
+    // Invalid role rejected.
+    const bad = await store.updateMemberRole(
+      ws.id,
+      "u_bob",
+      "u_alice",
+      "admin" as unknown as "owner",
+    );
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.reason).toBe("invalid_role");
+  });
+
+  it("renameWorkspace requires owner and trims input", async () => {
+    const store = await import("../lib/workspaces-store");
+    const [ws] = await store.listForUser("u_alice", "alice@example.com");
+
+    const { token } = await store.createInvite(ws.id, "u_alice", "bob@example.com", "editor");
+    await store.acceptInvite(token, "u_bob", "bob@example.com");
+
+    const denied = await store.renameWorkspace(ws.id, "u_bob", "hijacked");
+    expect(denied).toBeNull();
+
+    const renamed = await store.renameWorkspace(ws.id, "u_alice", "  Acme Lab  ");
+    expect(renamed?.name).toBe("Acme Lab");
+
+    const empty = await store.renameWorkspace(ws.id, "u_alice", "   ");
+    expect(empty).toBeNull();
+  });
+
+  it("deleteWorkspace cascades members and invites and is owner-only", async () => {
+    const store = await import("../lib/workspaces-store");
+    const [ws] = await store.listForUser("u_alice", "alice@example.com");
+
+    const { token } = await store.createInvite(ws.id, "u_alice", "bob@example.com", "editor");
+    await store.acceptInvite(token, "u_bob", "bob@example.com");
+    // Leave one pending invite around to verify cascade.
+    await store.createInvite(ws.id, "u_alice", "carol@example.com", "viewer");
+
+    const denied = await store.deleteWorkspace(ws.id, "u_bob");
+    expect(denied).toBe(false);
+
+    const ok = await store.deleteWorkspace(ws.id, "u_alice");
+    expect(ok).toBe(true);
+
+    expect(await store.getWorkspaceForUser(ws.id, "u_alice")).toBeNull();
+    expect(await store.listInvites(ws.id)).toHaveLength(0);
+  });
 });

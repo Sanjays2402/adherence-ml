@@ -13,6 +13,8 @@ import {
   PencilLine,
   Eye,
   ArrowSquareOut,
+  Check,
+  Warning,
 } from "@phosphor-icons/react";
 import {
   PageHeader,
@@ -193,6 +195,69 @@ export default function WorkspaceClient() {
     },
     [selected, detail],
   );
+
+  const changeRole = useCallback(
+    async (userId: string, role: Role) => {
+      if (!selected) return;
+      const r = await fetch(
+        `/api/workspaces/${selected}/members/${encodeURIComponent(userId)}`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ role }),
+        },
+      );
+      if (r.ok) {
+        await Promise.all([detail.mutate(), list.mutate()]);
+        setToast(`Role updated to ${role}.`);
+      } else {
+        const j = await r.json().catch(() => ({}));
+        setToast(
+          j.detail === "last_owner"
+            ? "Cannot demote the last owner."
+            : `Role update failed (${r.status}).`,
+        );
+      }
+    },
+    [selected, detail, list],
+  );
+
+  const renameSelected = useCallback(
+    async (newName: string) => {
+      if (!selected) return false;
+      const r = await fetch(`/api/workspaces/${selected}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: newName }),
+      });
+      if (r.ok) {
+        await Promise.all([detail.mutate(), list.mutate()]);
+        setToast("Workspace renamed.");
+        return true;
+      }
+      const j = await r.json().catch(() => ({}));
+      setToast(j.detail ?? `Rename failed (${r.status}).`);
+      return false;
+    },
+    [selected, detail, list],
+  );
+
+  const deleteSelected = useCallback(async () => {
+    if (!selected) return;
+    const confirmText = window.prompt(
+      'This permanently deletes the workspace, its memberships, and pending invites. Type "delete" to confirm.',
+    );
+    if (confirmText !== "delete") return;
+    const r = await fetch(`/api/workspaces/${selected}`, { method: "DELETE" });
+    if (r.ok) {
+      setSelected(null);
+      await list.mutate();
+      setToast("Workspace deleted.");
+    } else {
+      const j = await r.json().catch(() => ({}));
+      setToast(j.detail ?? `Delete failed (${r.status}).`);
+    }
+  }, [selected, list]);
 
   const copyLink = useCallback(async (url: string) => {
     try {
@@ -376,6 +441,15 @@ export default function WorkspaceClient() {
                 ) : null}
               </Card>
 
+              {/* Workspace settings */}
+              <WorkspaceSettingsCard
+                key={d.workspace.id}
+                workspace={d.workspace}
+                role={d.role}
+                onRename={renameSelected}
+                onDelete={deleteSelected}
+              />
+
               {/* Members */}
               <Card>
                 <CardHeader
@@ -401,10 +475,25 @@ export default function WorkspaceClient() {
                         </span>
                       </div>
                       <div className="flex items-center gap-3">
-                        <span className="inline-flex items-center gap-1 text-[11px] font-mono uppercase tracking-wider text-[var(--color-muted)]">
-                          <RoleIcon role={m.role} />
-                          {m.role}
-                        </span>
+                        {d.role === "owner" ? (
+                          <Select
+                            value={m.role}
+                            onChange={(e) =>
+                              changeRole(m.user_id, e.target.value as Role)
+                            }
+                            aria-label={`Change role for ${m.email}`}
+                            className="text-[11px] py-1 px-2"
+                          >
+                            <option value="viewer">viewer</option>
+                            <option value="editor">editor</option>
+                            <option value="owner">owner</option>
+                          </Select>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-mono uppercase tracking-wider text-[var(--color-muted)]">
+                            <RoleIcon role={m.role} />
+                            {m.role}
+                          </span>
+                        )}
                         {d.role === "owner" ? (
                           <Button
                             variant="danger"
@@ -467,5 +556,85 @@ export default function WorkspaceClient() {
         </div>
       ) : null}
     </div>
+  );
+}
+
+function WorkspaceSettingsCard({
+  workspace,
+  role,
+  onRename,
+  onDelete,
+}: {
+  workspace: { id: string; name: string; created_at: number; created_by: string };
+  role: Role;
+  onRename: (name: string) => Promise<boolean>;
+  onDelete: () => Promise<void>;
+}) {
+  const [name, setName] = useState(workspace.name);
+  const [saving, setSaving] = useState(false);
+  const isOwner = role === "owner";
+  const dirty = name.trim() !== workspace.name && name.trim().length > 0;
+
+  return (
+    <Card>
+      <CardHeader
+        title="workspace settings"
+        hint="Rename or permanently delete this workspace."
+      />
+      <div className="p-4 flex flex-col gap-4">
+        <div className="flex flex-col gap-1">
+          <label
+            htmlFor={`ws-name-${workspace.id}`}
+            className="text-[10px] font-mono uppercase tracking-[0.14em] text-[var(--color-muted)]"
+          >
+            Name
+          </label>
+          <div className="flex flex-col gap-2 md:flex-row md:items-center">
+            <Input
+              id={`ws-name-${workspace.id}`}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              maxLength={80}
+              disabled={!isOwner || saving}
+              className="md:flex-1"
+            />
+            <Button
+              variant="primary"
+              disabled={!isOwner || !dirty || saving}
+              onClick={async () => {
+                setSaving(true);
+                const ok = await onRename(name.trim());
+                setSaving(false);
+                if (!ok) setName(workspace.name);
+              }}
+            >
+              <Check weight="duotone" size={13} /> Save
+            </Button>
+          </div>
+          {!isOwner ? (
+            <span className="text-[11px] text-[var(--color-muted)]">
+              Only owners can rename the workspace.
+            </span>
+          ) : null}
+        </div>
+
+        {isOwner ? (
+          <div className="rounded-md border border-red-500/30 bg-red-500/5 p-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-start gap-2">
+              <Warning weight="duotone" size={16} className="text-red-500 mt-0.5" />
+              <div className="flex flex-col">
+                <span className="text-[12px] font-medium">Delete workspace</span>
+                <span className="text-[11px] text-[var(--color-muted)]">
+                  Removes the workspace, all memberships, and pending invites. This cannot be undone.
+                </span>
+              </div>
+            </div>
+            <Button variant="danger" onClick={onDelete}>
+              <Trash weight="duotone" size={13} /> Delete
+            </Button>
+          </div>
+        ) : null}
+      </div>
+    </Card>
   );
 }
