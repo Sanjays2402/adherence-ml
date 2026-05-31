@@ -12,6 +12,7 @@ import {
   Scales,
   CalendarBlank,
   ClipboardText,
+  ClockCounterClockwise,
   House,
   Sparkle,
   UploadSimple,
@@ -30,10 +31,12 @@ const NAV = [
   { href: "/predict", label: "Predict", icon: Lightning, hint: "Inline scoring" },
   { href: "/batch", label: "Batch", icon: UploadSimple, hint: "Score a CSV upload" },
   { href: "/audit", label: "Audit", icon: ClipboardText, hint: "Call log" },
+  { href: "/history", label: "History", icon: ClockCounterClockwise, hint: "Saved runs" },
 ];
 
 export default function Sidebar() {
   const pathname = usePathname();
+  if (pathname?.startsWith("/r/")) return null;
   return (
     <aside className="md:w-60 md:border-r md:border-[var(--color-border)] md:min-h-screen md:sticky md:top-0 bg-[var(--color-surface)]/60 backdrop-blur">
       <div className="px-5 py-4 flex items-center gap-2 border-b border-[var(--color-border)]">

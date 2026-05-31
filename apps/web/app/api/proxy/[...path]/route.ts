@@ -1,5 +1,36 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ApiError, apiFetch } from "@/lib/api";
+import { appendRun, newRunId, type RunKind } from "@/lib/runs-store";
+
+function inferKind(path: string): RunKind | null {
+  if (path === "v1/predict") return "predict";
+  if (path === "v1/cohort/risk") return "cohort";
+  if (path === "v1/forecast/user") return "forecast";
+  return null;
+}
+
+function summarise(kind: RunKind, reqBody: unknown, res: unknown): { title: string; summary: string; user_id: string | null } {
+  const r = (reqBody ?? {}) as Record<string, unknown>;
+  const s = (res ?? {}) as Record<string, unknown>;
+  const user_id = typeof r.user_id === "string" ? r.user_id : null;
+  if (kind === "predict") {
+    const risk = typeof s.risk === "number" ? (s.risk as number) : null;
+    const band = typeof s.band === "string" ? s.band : (typeof s.risk_band === "string" ? s.risk_band : "");
+    return {
+      title: user_id ? `predict ${user_id}` : "predict",
+      summary: risk !== null ? `risk ${(risk * 100).toFixed(1)}% ${band}`.trim() : (band || "score"),
+      user_id,
+    };
+  }
+  if (kind === "cohort") {
+    const n = Array.isArray((s as { items?: unknown[] }).items) ? (s as { items: unknown[] }).items.length : null;
+    return { title: "cohort risk", summary: n !== null ? `${n} users scored` : "cohort scored", user_id: null };
+  }
+  if (kind === "forecast") {
+    return { title: user_id ? `forecast ${user_id}` : "forecast", summary: "7-day projection", user_id };
+  }
+  return { title: kind, summary: "", user_id };
+}
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -31,12 +62,33 @@ async function handle(
   }
   const search = req.nextUrl.search ?? "";
   const body = method === "GET" ? undefined : await req.text();
+  const t0 = Date.now();
   try {
     const data = await apiFetch(`/${joined}${search}`, {
       method,
       body: body && body.length > 0 ? body : undefined,
       headers: body && body.length > 0 ? { "content-type": "application/json" } : undefined,
     });
+    const kind = inferKind(joined);
+    if (kind && method === "POST") {
+      try {
+        const parsedReq = body ? JSON.parse(body) : null;
+        const { title, summary, user_id } = summarise(kind, parsedReq, data);
+        await appendRun({
+          id: newRunId(),
+          created_at: Date.now(),
+          kind,
+          title,
+          summary,
+          user_id,
+          latency_ms: Date.now() - t0,
+          payload: { request: parsedReq, response: data },
+          tags: [],
+        });
+      } catch {
+        // never let history persistence break the user-facing call
+      }
+    }
     return NextResponse.json(data);
   } catch (err) {
     if (err instanceof ApiError) {

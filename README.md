@@ -19,6 +19,27 @@ a notification queue with risk-tier policies, quiet hours, per-user mutes, and
 notification budgets. Every prediction, override, and delivery is recorded in
 an append-only audit log with CSV export.
 
+### Run history
+
+Every scored prediction, cohort sweep, and forecast call made through the web
+app is automatically saved to a per-instance run log under `apps/web/.data/runs.jsonl`
+(override path with `ADHERENCE_DATA_DIR`). Open
+[http://localhost:3000/history](http://localhost:3000/history) to search,
+filter by kind, rename, tag, copy a shareable link (`/history/<id>`), delete,
+or export the full log as CSV or JSON. The detail page is a plain server
+route so links are shareable in incognito.
+
+API surface:
+
+- `GET /api/runs?q=&kind=&limit=&offset=` list with search and pagination
+- `POST /api/runs` append a record (validated with zod)
+- `GET /api/runs/:id` fetch one
+- `PATCH /api/runs/:id` rename or retag (`{ title?, tags? }`)
+- `DELETE /api/runs/:id` remove
+- `GET /api/runs/export?format=csv|json` download the whole log
+
+Unit test: `pnpm --filter @adherence/web test`.
+
 ## Try it
 
 With the API on `:8000` and the web app on `:3000`, open

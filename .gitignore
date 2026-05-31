@@ -38,3 +38,4 @@ out/
 .env
 .env.local
 !.env.example
+apps/web/.data/

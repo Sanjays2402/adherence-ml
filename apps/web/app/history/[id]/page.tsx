@@ -1,0 +1,95 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { getRun } from "@/lib/runs-store";
+import { ArrowLeft, Clock, Link as LinkIcon } from "@phosphor-icons/react/dist/ssr";
+import { PageHeader, Card, CardHeader } from "@/components/ui/primitives";
+
+export const dynamic = "force-dynamic";
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  const rec = await getRun(id);
+  if (!rec) return { title: "run not found // adherence.ml" };
+  return {
+    title: `${rec.title} // adherence.ml`,
+    description: rec.summary || `${rec.kind} run from adherence.ml`,
+    openGraph: {
+      title: rec.title,
+      description: rec.summary || `${rec.kind} run`,
+      type: "article",
+    },
+  };
+}
+
+export default async function RunDetailPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = await params;
+  const rec = await getRun(id);
+  if (!rec) notFound();
+
+  const created = new Date(rec.created_at).toLocaleString();
+  const pretty = JSON.stringify(rec.payload, null, 2);
+
+  return (
+    <div className="flex flex-col min-h-screen">
+      <PageHeader
+        eyebrow={`run / ${rec.kind}`}
+        title={rec.title}
+        description={rec.summary || "Saved model run, shareable by link."}
+        actions={
+          <Link
+            href="/history"
+            className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[12px] hover:bg-[var(--color-border)]/30"
+          >
+            <ArrowLeft weight="duotone" size={14} /> Back to history
+          </Link>
+        }
+      />
+
+      <div className="p-6 grid gap-4 md:grid-cols-3">
+        <Card className="md:col-span-1">
+          <CardHeader title="Run metadata" hint="who / when / how long" />
+          <dl className="p-4 grid grid-cols-3 gap-y-2 text-[12px]">
+            <dt className="text-[var(--color-muted)]">id</dt>
+            <dd className="col-span-2 font-mono break-all">{rec.id}</dd>
+            <dt className="text-[var(--color-muted)]">kind</dt>
+            <dd className="col-span-2 font-mono uppercase">{rec.kind}</dd>
+            <dt className="text-[var(--color-muted)]">user</dt>
+            <dd className="col-span-2 font-mono break-all">{rec.user_id ?? "—"}</dd>
+            <dt className="text-[var(--color-muted)]">created</dt>
+            <dd className="col-span-2 inline-flex items-center gap-1">
+              <Clock weight="duotone" size={12} /> {created}
+            </dd>
+            <dt className="text-[var(--color-muted)]">latency</dt>
+            <dd className="col-span-2 font-mono">
+              {rec.latency_ms != null ? `${rec.latency_ms} ms` : "—"}
+            </dd>
+            <dt className="text-[var(--color-muted)]">tags</dt>
+            <dd className="col-span-2 font-mono">
+              {rec.tags.length === 0 ? "—" : rec.tags.map((t) => `#${t}`).join(" ")}
+            </dd>
+            <dt className="text-[var(--color-muted)]">share</dt>
+            <dd className="col-span-2 inline-flex items-center gap-1 text-[var(--color-accent)]">
+              <LinkIcon weight="duotone" size={12} /> /history/{rec.id}
+            </dd>
+          </dl>
+        </Card>
+
+        <Card className="md:col-span-2">
+          <CardHeader title="Payload" hint="request + response, raw" />
+          <pre className="p-4 text-[11px] font-mono leading-snug overflow-auto max-h-[70vh] whitespace-pre-wrap break-all">
+            {pretty}
+          </pre>
+        </Card>
+      </div>
+    </div>
+  );
+}

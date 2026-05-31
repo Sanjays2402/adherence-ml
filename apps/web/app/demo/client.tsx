@@ -120,8 +120,10 @@ export default function DemoClient() {
               : `Request failed (${res.status})`,
           );
         }
-        setResult(data as PredictResponse);
-        setLatencyMs(performance.now() - t0);
+        const typed = data as PredictResponse;
+        const elapsed = performance.now() - t0;
+        setResult(typed);
+        setLatencyMs(elapsed);
         setScoredAt(new Date().toISOString());
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
