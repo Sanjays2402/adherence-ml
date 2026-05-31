@@ -23,11 +23,8 @@ import {
   Rocket,
   Receipt,
   UsersFour,
-<<<<<<< HEAD
   CalendarCheck,
-=======
   EnvelopeSimple,
->>>>>>> 9ab4695 (feat(web): weekly activity digest page with email preview, send log, and API)
 } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import SidebarUser from "./sidebar-user";
