@@ -594,6 +594,7 @@ def init_db() -> None:
     from adherence_common import siem as _siem  # noqa: F401
     from adherence_common import verified_domains as _vd  # noqa: F401
     from adherence_common import scim as _scim  # noqa: F401
+    from adherence_common import access_reviews as _ar  # noqa: F401
     engine = _engine()
     Base.metadata.create_all(engine)
     try:

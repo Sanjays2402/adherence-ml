@@ -2,6 +2,39 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Periodic access reviews (SOC2 CC6.3 / ISO 27001 A.9.2.5)
+
+Workspace owners can run periodic access reviews to re-certify which members still need access. Opening a review snapshots every current member as a pending item; for each item an admin records keep, change (with a new role), or revoke. Closing the review applies every change and revoke to the live membership table in a single transaction and writes one admin audit row per applied decision. Reviews are strictly tenant-scoped: a review opened in workspace A is invisible (404) from workspace B, and decisions cannot cross tenants. Every mutation requires an active admin MFA challenge.
+
+### Try it
+
+Local API: <http://127.0.0.1:8000>.
+
+```bash
+# Open a review. Snapshots current workspace members as pending items.
+curl -s -X POST http://127.0.0.1:8000/v1/admin/access-reviews \
+  -H "authorization: Bearer $ADMIN_JWT" \
+  -H "x-admin-mfa: $MFA_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"label":"2026-Q2","reason":"quarterly recertification"}'
+
+# Record a decision per member (keep | change | revoke).
+curl -s -X POST http://127.0.0.1:8000/v1/admin/access-reviews/1/items/2/decide \
+  -H "authorization: Bearer $ADMIN_JWT" -H "x-admin-mfa: $MFA_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"decision":"change","new_role":"viewer","note":"role drift"}'
+
+# Dry-run the close to see what would be applied.
+curl -s -X POST 'http://127.0.0.1:8000/v1/admin/access-reviews/1/close?dry_run=true' \
+  -H "authorization: Bearer $ADMIN_JWT" -H "x-admin-mfa: $MFA_TOKEN" \
+  -H 'content-type: application/json' -d '{}'
+
+# Close for real. Applies change/revoke decisions and freezes the review.
+curl -s -X POST http://127.0.0.1:8000/v1/admin/access-reviews/1/close \
+  -H "authorization: Bearer $ADMIN_JWT" -H "x-admin-mfa: $MFA_TOKEN" \
+  -H 'content-type: application/json' -d '{"summary":"all decisions applied"}'
+```
+
 ## SCIM 2.0 user provisioning
 
 Enterprise IdPs (Okta, Azure AD / Entra ID, OneLogin, JumpCloud) can

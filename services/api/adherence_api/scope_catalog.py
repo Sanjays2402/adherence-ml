@@ -97,6 +97,7 @@ _CATALOG: tuple[ScopeRule, ...] = (
     ScopeRule("*", "/v1/admin/retention",       "admin:policy",    "Manage retention policy"),
     ScopeRule("*", "/v1/admin/break-glass",     "admin:break_glass","Use break-glass access"),
     ScopeRule("*", "/v1/admin/legal-hold",      "admin:legal_hold","Manage legal holds"),
+    ScopeRule("*", "/v1/admin/access-reviews", "admin:access_review","Manage periodic access reviews"),
     ScopeRule("*", "/v1/admin/ip-allowlist",    "admin:network",   "Manage tenant IP allowlist"),
     ScopeRule("*", "/v1/admin/outbound-allowlist", "admin:network","Manage outbound host allowlist"),
     ScopeRule("*", "/v1/admin/quota",           "admin:billing",   "Manage seat quota / billing"),
