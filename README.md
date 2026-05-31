@@ -109,6 +109,28 @@ and share the same `adh_session` cookie + sidebar footer as magic-link
 sign-ins. If neither client id nor secret is set the button is hidden
 and the route returns the user to `/login?error=oauth_unconfigured`.
 
+### Sign in with Google
+
+Google OAuth uses the same one-click flow as GitHub. Register an OAuth
+client at `https://console.cloud.google.com/apis/credentials` with the
+authorized redirect URI
+`https://<your-host>/api/auth/google/callback`, then set:
+
+```bash
+export GOOGLE_CLIENT_ID=xxxxxxxxxxxx.apps.googleusercontent.com
+export GOOGLE_CLIENT_SECRET=xxxxxxxxxxxxxxxxxxxxxxxx
+export ADHERENCE_SESSION_SECRET=$(openssl rand -hex 32)
+```
+
+When those are present the *Continue with Google* button appears on
+[/login](http://localhost:3000/login). Only the `openid email profile`
+scopes are requested. The flow uses the same signed HMAC-SHA256 state
+cookie (10 minute TTL) as the GitHub flow, then reads the user's
+verified email via the OpenID Connect userinfo endpoint. Unverified
+emails are rejected. If TOTP is enabled on the account, the callback
+hands off to the `/verify-2fa` challenge before issuing a session
+cookie.
+
 ### Get started in three steps
 
 New workspaces land on [/onboarding](http://localhost:3000/onboarding): a guided
