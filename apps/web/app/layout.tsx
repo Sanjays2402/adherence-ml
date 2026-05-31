@@ -3,6 +3,7 @@ import { IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 import Sidebar from "@/components/layout/sidebar";
 import InstallPrompt from "@/components/layout/install-prompt";
+import OnboardingBanner from "@/components/layout/onboarding-banner";
 
 const plexSans = IBM_Plex_Sans({
   subsets: ["latin"],
@@ -45,7 +46,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="min-h-screen bg-[var(--color-bg)] text-[var(--color-fg)] font-sans antialiased">
         <div className="flex min-h-screen flex-col md:flex-row">
           <Sidebar />
-          <main className="flex-1 min-w-0">{children}</main>
+          <main className="flex-1 min-w-0">
+            <OnboardingBanner />
+            {children}
+          </main>
         </div>
         <InstallPrompt />
       </body>
