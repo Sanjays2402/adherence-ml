@@ -828,6 +828,22 @@ key id, name, created date, last-used time, and total call count so charts
 and audit trails stay continuous, while the old secret stops working
 immediately. Revoked keys cannot be rotated; create a fresh one instead.
 
+**Rotate from a shell, no dashboard required.** Incident responders can
+roll the calling key in place with `POST /v1/keys/me/rotate`. Possession of
+the current secret is the only authority required, and the body must carry
+`{"confirm": true}` so a stray curl cannot accidentally invalidate a
+production credential. The response is the new plaintext, returned exactly
+once, alongside the standard `X-RateLimit-*` headers. The rotation lands in
+the dashboard audit log under `api_key.rotate.self` with the old and new
+prefixes and the caller IP.
+
+```sh
+curl -X POST http://localhost:3000/v1/keys/me/rotate \
+  -H "authorization: Bearer adh_OLD..." \
+  -H "content-type: application/json" \
+  -d '{"confirm": true}'
+```
+
 **Bulk export from the API.** Keys with the `read` scope can stream the
 run log directly with `GET /v1/runs/export`, mirroring the History page
 exports (CSV, JSON, NDJSON) with the same `q`, `kind`, `tag`, `from`, and

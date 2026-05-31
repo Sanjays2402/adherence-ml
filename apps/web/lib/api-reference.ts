@@ -77,6 +77,20 @@ export const ENDPOINTS: ApiEndpoint[] = [
     liveTestable: true,
   },
   {
+    id: "keys-me-rotate",
+    method: "POST",
+    path: "/v1/keys/me/rotate",
+    routeFile: "app/v1/keys/me/rotate/route.ts",
+    scope: "read",
+    group: "keys",
+    summary: "Rotate the calling API key in place. Returns the new plaintext exactly once; the old secret stops working immediately. Body requires {\"confirm\": true}.",
+    curl: `curl -X POST ${HOST}/v1/keys/me/rotate \\
+  -H "authorization: Bearer ${KEY}" \\
+  -H "content-type: application/json" \\
+  -d '{\"confirm\": true}'`,
+    liveTestable: false,
+  },
+  {
     id: "usage",
     method: "GET",
     path: "/v1/usage",
