@@ -20,6 +20,43 @@ export interface Workspace {
   name: string;
   created_at: number;
   created_by: string; // user id
+  /**
+   * Optional OIDC SSO configuration. When `enforce` is true, every member
+   * (and any new sign-in matching one of `allowed_email_domains`) MUST sign
+   * in through this workspace's IdP. Magic links and other OAuth providers
+   * are refused for those email domains.
+   */
+  sso?: WorkspaceSso | null;
+}
+
+export type SsoProvider = "oidc";
+
+export interface WorkspaceSso {
+  provider: SsoProvider;
+  /** Display label shown on the login button, e.g. "Acme Okta". */
+  label: string;
+  /** OIDC issuer URL, e.g. https://login.example.com or https://accounts.google.com. */
+  issuer: string;
+  client_id: string;
+  client_secret: string;
+  /** Lower-cased email domains that route to this IdP, e.g. ["acme.com"]. */
+  allowed_email_domains: string[];
+  /** If true, those email domains MUST use SSO; magic link / GitHub are blocked. */
+  enforce: boolean;
+  updated_at: number;
+  updated_by: string;
+}
+
+export interface PublicWorkspaceSso {
+  provider: SsoProvider;
+  label: string;
+  issuer: string;
+  client_id: string;
+  allowed_email_domains: string[];
+  enforce: boolean;
+  updated_at: number;
+  /** Secret never leaves the server. */
+  has_client_secret: boolean;
 }
 
 export interface Member {
@@ -318,6 +355,104 @@ export async function acceptInvite(
   }
   await writeStore(store);
   return { workspace: ws, role: mem.role };
+}
+
+/**
+ * Owner-only: replace the SSO config for a workspace. Pass null to clear.
+ * Returns the new public (secret-stripped) config or null when removed.
+ */
+export async function setWorkspaceSso(
+  workspaceId: string,
+  actorUserId: string,
+  next: Omit<WorkspaceSso, "updated_at" | "updated_by"> | null,
+): Promise<PublicWorkspaceSso | null> {
+  const store = await readStore();
+  const ws = store.workspaces.find((w) => w.id === workspaceId);
+  if (!ws) throw new Error("workspace not found");
+  const me = store.members.find(
+    (m) => m.workspace_id === workspaceId && m.user_id === actorUserId,
+  );
+  if (!me || me.role !== "owner") throw new Error("owner only");
+  if (next === null) {
+    ws.sso = null;
+    await writeStore(store);
+    return null;
+  }
+  if (next.provider !== "oidc") throw new Error("unsupported provider");
+  const label = (next.label ?? "").trim().slice(0, 80);
+  const issuer = (next.issuer ?? "").trim();
+  if (!/^https:\/\/[^\s]+$/i.test(issuer)) throw new Error("issuer must be an https URL");
+  const client_id = (next.client_id ?? "").trim();
+  const client_secret = (next.client_secret ?? "").trim();
+  if (!label) throw new Error("label required");
+  if (!client_id) throw new Error("client_id required");
+  if (!client_secret) throw new Error("client_secret required");
+  const domains = Array.from(
+    new Set(
+      (next.allowed_email_domains ?? [])
+        .map((d) => String(d ?? "").trim().toLowerCase())
+        .filter((d) => /^[a-z0-9.-]+\.[a-z]{2,}$/.test(d)),
+    ),
+  );
+  if (next.enforce && domains.length === 0) {
+    throw new Error("at least one allowed_email_domain is required to enforce SSO");
+  }
+  ws.sso = {
+    provider: "oidc",
+    label,
+    issuer: issuer.replace(/\/+$/, ""),
+    client_id,
+    client_secret,
+    allowed_email_domains: domains,
+    enforce: Boolean(next.enforce),
+    updated_at: Date.now(),
+    updated_by: actorUserId,
+  };
+  await writeStore(store);
+  return publicSso(ws.sso);
+}
+
+export function publicSso(s: WorkspaceSso | null | undefined): PublicWorkspaceSso | null {
+  if (!s) return null;
+  return {
+    provider: s.provider,
+    label: s.label,
+    issuer: s.issuer,
+    client_id: s.client_id,
+    allowed_email_domains: s.allowed_email_domains,
+    enforce: s.enforce,
+    updated_at: s.updated_at,
+    has_client_secret: Boolean(s.client_secret),
+  };
+}
+
+export async function getWorkspaceSso(
+  workspaceId: string,
+): Promise<WorkspaceSso | null> {
+  const store = await readStore();
+  const ws = store.workspaces.find((w) => w.id === workspaceId);
+  return ws?.sso ?? null;
+}
+
+/**
+ * Look up a workspace whose SSO config claims the given email domain. If
+ * multiple workspaces claim it, the most-recently-updated one wins. Used
+ * by the login routes to decide whether magic link / GitHub should be
+ * blocked, and where to start the SSO redirect from.
+ */
+export async function findSsoForEmail(
+  email: string,
+): Promise<{ workspace: Workspace; sso: WorkspaceSso } | null> {
+  const at = email.indexOf("@");
+  if (at < 0) return null;
+  const domain = email.slice(at + 1).toLowerCase();
+  if (!domain) return null;
+  const store = await readStore();
+  const matches = store.workspaces
+    .filter((w) => w.sso && w.sso.allowed_email_domains.includes(domain))
+    .sort((a, b) => (b.sso!.updated_at ?? 0) - (a.sso!.updated_at ?? 0));
+  if (matches.length === 0) return null;
+  return { workspace: matches[0], sso: matches[0].sso! };
 }
 
 export async function removeMember(

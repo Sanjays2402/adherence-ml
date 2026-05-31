@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { issueMagicToken, isValidEmail, normalizeEmail } from "@/lib/users-store";
+import { findSsoForEmail } from "@/lib/workspaces-store";
 
 export const runtime = "nodejs";
 
@@ -29,6 +30,27 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { error: { code: "invalid_email", message: "Enter a valid email address." } },
       { status: 400 },
+    );
+  }
+
+  // SSO enforcement: if this email's workspace requires SSO, refuse to
+  // mint a magic link. Tell the caller where to go instead.
+  const ssoMatch = await findSsoForEmail(email);
+  if (ssoMatch && ssoMatch.sso.enforce) {
+    return NextResponse.json(
+      {
+        error: {
+          code: "sso_required",
+          message: `${ssoMatch.workspace.name} requires single sign-on. Use the SSO button instead.`,
+        },
+        sso: {
+          workspace_id: ssoMatch.workspace.id,
+          workspace_name: ssoMatch.workspace.name,
+          label: ssoMatch.sso.label,
+          start_url: `/api/auth/sso/start?workspace=${encodeURIComponent(ssoMatch.workspace.id)}`,
+        },
+      },
+      { status: 403 },
     );
   }
 

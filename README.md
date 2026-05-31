@@ -6,6 +6,44 @@ interventions.
 
 ![landing](docs/screenshots/landing.png)
 
+## Single sign-on (OIDC) per workspace
+
+Workspace owners can route their members through Google Workspace, Okta,
+Azure AD, Auth0, or any OIDC-compliant identity provider. SSO is enforced
+at the *email-domain* level: when `enforce` is on, magic-link sign-in and
+GitHub OAuth are both refused for the workspace's claimed domains and the
+login page automatically shows a "Continue with {provider}" button.
+
+The implementation is dependency-free: discovery via
+`{issuer}/.well-known/openid-configuration`, authorization code flow with
+PKCE (S256) and HMAC-signed state cookie, `id_token` signature verified
+directly against the issuer's JWKS (RS256/RS384/RS512/ES256/ES384) with
+`iss`, `aud`, `exp`, and `nonce` checks. The client secret never leaves
+the server (the dashboard reports `has_client_secret: true/false` only).
+
+Manage it from `/workspace/sso`. The same enforcement runs at three
+layers so a half-rolled-out config can't be bypassed:
+
+- `/api/auth/sso/discover` so the login page can show the SSO button
+  before a password is typed.
+- `/api/auth/request` (magic link) returns `403 sso_required` with a
+  `start_url` pointing the user to their IdP.
+- `/api/auth/verify` (magic-link landing) and `/api/auth/github/callback`
+  re-check enforcement at session-mint time so links issued before SSO
+  was enforced can't be used after.
+
+Try it:
+
+    pnpm --filter @adherence/web dev
+    # http://localhost:3000/workspace/sso
+    # configure: issuer https://accounts.google.com, your client_id /
+    # client_secret, allowed_email_domains=[your-domain.com], enforce=true
+    curl -i -X POST http://localhost:3000/api/auth/request \
+      -H 'content-type: application/json' \
+      -d '{"email":"you@your-domain.com"}'
+    # => HTTP/1.1 403
+    # => {"error":{"code":"sso_required",...},"sso":{"start_url":"/api/auth/sso/start?workspace=ws_...",...}}
+
 ## Dashboard audit log
 
 Every mutating dashboard action (settings change, workspace export, full

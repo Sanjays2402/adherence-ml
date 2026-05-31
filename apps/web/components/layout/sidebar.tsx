@@ -56,6 +56,7 @@ const NAV = [
   { href: "/notifications", label: "Notifications", icon: Bell, hint: "Activity feed" },
   { href: "/digest", label: "Weekly digest", icon: EnvelopeSimple, hint: "Email preview // send" },
   { href: "/workspace", label: "Workspace", icon: UsersFour, hint: "Members // invites" },
+  { href: "/workspace/sso", label: "SSO", icon: Key, hint: "OIDC // enforce per workspace" },
   { href: "/settings", label: "Settings", icon: Gear, hint: "Profile // data // wipe" },
 ];
 

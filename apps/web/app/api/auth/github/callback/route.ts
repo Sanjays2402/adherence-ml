@@ -10,6 +10,7 @@ import {
   isValidEmail,
   normalizeEmail,
 } from "@/lib/users-store";
+import { findSsoForEmail } from "@/lib/workspaces-store";
 import {
   MFA_PENDING_COOKIE,
   SESSION_COOKIE,
@@ -121,6 +122,13 @@ export async function GET(req: NextRequest) {
   const email = await fetchPrimaryEmail(token);
   if (!email) {
     return NextResponse.redirect(new URL("/login?error=oauth_no_email", req.url));
+  }
+
+  // SSO enforcement: refuse GitHub OAuth for emails whose workspace
+  // requires SSO. They must go through their IdP, not a personal GitHub.
+  const ssoMatch = await findSsoForEmail(email);
+  if (ssoMatch && ssoMatch.sso.enforce) {
+    return NextResponse.redirect(new URL("/login?error=sso_required", req.url));
   }
 
   const user = await getOrCreateUserByEmail(email);

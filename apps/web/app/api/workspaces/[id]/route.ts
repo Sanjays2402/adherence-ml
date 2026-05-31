@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
-import { getWorkspaceForUser, listInvites, removeMember } from "@/lib/workspaces-store";
+import {
+  getWorkspaceForUser,
+  listInvites,
+  publicSso,
+  removeMember,
+} from "@/lib/workspaces-store";
 import { dryRunBody, isDryRun, withDryRunHeaders } from "@/lib/dry-run";
 
 export const runtime = "nodejs";
@@ -20,6 +25,7 @@ export async function GET(
     workspace: ws.workspace,
     role: ws.role,
     members: ws.members,
+    sso: publicSso(ws.workspace.sso),
     invites: invites.map((i) => ({
       id: i.id,
       email: i.email,

@@ -13,6 +13,7 @@ import {
   PencilLine,
   Eye,
   ArrowSquareOut,
+  ShieldCheck,
 } from "@phosphor-icons/react";
 import {
   PageHeader,
@@ -233,7 +234,14 @@ export default function WorkspaceClient() {
         title="Workspace"
         description="Invite teammates, assign roles, and share access to runs and history."
         actions={
-          <form onSubmit={createWs} className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href="/workspace/sso"
+              className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[12px] hover:bg-[var(--color-surface-2)]"
+            >
+              <ShieldCheck weight="duotone" size={13} /> Single sign-on
+            </Link>
+            <form onSubmit={createWs} className="flex items-center gap-2">
             <Input
               placeholder="New workspace name"
               value={newName}
@@ -243,7 +251,8 @@ export default function WorkspaceClient() {
             <Button type="submit" disabled={!newName.trim() || creating}>
               <Plus weight="duotone" size={14} /> Create
             </Button>
-          </form>
+            </form>
+          </div>
         }
       />
 

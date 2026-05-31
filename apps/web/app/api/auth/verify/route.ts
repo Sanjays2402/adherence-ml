@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { consumeMagicToken, hasTotpEnabled } from "@/lib/users-store";
+import { findSsoForEmail } from "@/lib/workspaces-store";
 import {
   MFA_PENDING_COOKIE,
   SESSION_COOKIE,
@@ -17,6 +18,12 @@ export async function GET(req: NextRequest) {
   const user = await consumeMagicToken(token);
   if (!user) {
     return NextResponse.redirect(new URL("/login?error=invalid_or_expired", req.url));
+  }
+  // SSO enforcement late-check: if the workspace started enforcing SSO
+  // after the link was issued, refuse to mint a session for it.
+  const ssoMatch = await findSsoForEmail(user.email);
+  if (ssoMatch && ssoMatch.sso.enforce) {
+    return NextResponse.redirect(new URL("/login?error=sso_required", req.url));
   }
   const { cookie, expires } = buildSession(user);
   const dest = req.nextUrl.searchParams.get("next") || "/";
@@ -76,6 +83,24 @@ export async function POST(req: NextRequest) {
         },
       },
       { status: 401 },
+    );
+  }
+  const ssoMatch2 = await findSsoForEmail(user.email);
+  if (ssoMatch2 && ssoMatch2.sso.enforce) {
+    return NextResponse.json(
+      {
+        error: {
+          code: "sso_required",
+          message: `${ssoMatch2.workspace.name} requires single sign-on. Use the SSO button on the login page.`,
+        },
+        sso: {
+          workspace_id: ssoMatch2.workspace.id,
+          workspace_name: ssoMatch2.workspace.name,
+          label: ssoMatch2.sso.label,
+          start_url: `/api/auth/sso/start?workspace=${encodeURIComponent(ssoMatch2.workspace.id)}`,
+        },
+      },
+      { status: 403 },
     );
   }
   const { cookie, expires } = buildSession(user);
