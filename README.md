@@ -384,6 +384,19 @@ curl http://localhost:3000/v1/keys/me \
   -H "authorization: Bearer adh_YOUR_KEY"
 ```
 
+Need a programmatic quota meter for your own dashboard, CI guardrail, or
+billing alert? `GET /v1/usage` returns the same shape the in-app `/usage`
+page renders: today's quota, used and remaining counts, a 30 day window of
+daily totals, and a per-key 30 day breakdown. It also sends standard
+`X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset`
+headers so any HTTP client library can surface remaining capacity without
+parsing JSON. It requires the `read` scope and does not consume quota.
+
+```bash
+curl -i http://localhost:3000/v1/usage \
+  -H "authorization: Bearer adh_YOUR_KEY"
+```
+
 Click `usage` on any row in the API keys table to open the per-key dashboard
 at `/api-keys/<id>`. It shows total calls, last-24h and last-7d counts, a
 14-day call-volume chart, breakdowns by endpoint and HTTP status, and the

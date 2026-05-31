@@ -77,6 +77,18 @@ export const ENDPOINTS: ApiEndpoint[] = [
     liveTestable: true,
   },
   {
+    id: "usage",
+    method: "GET",
+    path: "/v1/usage",
+    routeFile: "app/v1/usage/route.ts",
+    scope: "read",
+    group: "keys",
+    summary: "Read the daily quota, requests used today, and a 30 day usage window. Sends X-RateLimit headers. Does not consume quota.",
+    curl: `curl -i ${HOST}/v1/usage \\
+  -H "authorization: Bearer ${KEY}"`,
+    liveTestable: true,
+  },
+  {
     id: "runs-list",
     method: "GET",
     path: "/v1/runs",
