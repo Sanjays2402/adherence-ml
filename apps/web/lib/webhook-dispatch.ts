@@ -20,6 +20,7 @@ import {
   recordDelivery,
   newDeliveryId,
   endpointSecretHash,
+  endpointSigningSecrets,
 } from "./webhooks-store";
 import { createNotification } from "./notifications-store";
 import { checkOutboundUrl, type SsrfPolicy } from "./webhook-ssrf";
@@ -37,10 +38,18 @@ const REQUEST_TIMEOUT_MS = 5_000;
  * we surface in the dashboard's "Signing secret" reveal banner.
  */
 async function signBody(endpointId: string, body: string, ts: number) {
-  const key = await endpointSecretHash(endpointId);
-  if (!key) return null;
-  const mac = createHmac("sha256", key).update(`${ts}.${body}`).digest("hex");
-  return `t=${ts},v1=${mac}`;
+  const keys = await endpointSigningSecrets(endpointId);
+  if (!keys) return null;
+  const primary = createHmac("sha256", keys.primary)
+    .update(`${ts}.${body}`)
+    .digest("hex");
+  const secondary = keys.secondary
+    ? createHmac("sha256", keys.secondary).update(`${ts}.${body}`).digest("hex")
+    : null;
+  return {
+    primary: `t=${ts},v1=${primary}`,
+    secondary: secondary ? `t=${ts},v1=${secondary}` : null,
+  };
 }
 
 /** Constant-time signature check, exported for tests + receivers that mount this lib. */
@@ -66,6 +75,7 @@ async function attemptOnce(
   url: string,
   body: string,
   signature: string,
+  secondarySignature: string | null,
   event: WebhookEvent,
   deliveryId: string,
   ssrfPolicy: SsrfPolicy,
@@ -95,6 +105,9 @@ async function attemptOnce(
         "x-adherence-event": event,
         "x-adherence-delivery": deliveryId,
         "x-adherence-signature": signature,
+        ...(secondarySignature
+          ? { "x-adherence-signature-secondary": secondarySignature }
+          : {}),
       },
       body,
       signal: ctrl.signal,
@@ -164,7 +177,7 @@ async function dispatchToEndpoint(
   const runLoop = async () => {
     for (let i = 0; i < MAX_ATTEMPTS; i++) {
       if (i > 0) await new Promise((r) => setTimeout(r, BACKOFF_MS[i]));
-      const att = await attemptOnce(endpoint.url, body, sig, event, delivery.id, ssrfPolicy);
+      const att = await attemptOnce(endpoint.url, body, sig.primary, sig.secondary, event, delivery.id, ssrfPolicy);
       att.attempt = i + 1;
       delivery.attempts.push(att);
       if (att.ok) {

@@ -21,20 +21,34 @@ const PostSchema = z.object({
 
 export async function GET() {
   const endpoints = await listEndpoints();
+  const now = Date.now();
   // never leak the hash
   return NextResponse.json({
-    endpoints: endpoints.map((e) => ({
-      id: e.id,
-      name: e.name,
-      url: e.url,
-      events: e.events,
-      secret_prefix: e.secret_prefix,
-      active: e.active,
-      created_at: e.created_at,
-      last_delivery_at: e.last_delivery_at,
-      success_count: e.success_count,
-      failure_count: e.failure_count,
-    })),
+    endpoints: endpoints.map((e) => {
+      const secondaryActive =
+        !!e.secondary_secret_hash &&
+        !!e.secondary_expires_at &&
+        e.secondary_expires_at > now;
+      return {
+        id: e.id,
+        name: e.name,
+        url: e.url,
+        events: e.events,
+        secret_prefix: e.secret_prefix,
+        secret_rotated_at: e.secret_rotated_at ?? null,
+        secondary_secret_prefix: secondaryActive
+          ? e.secondary_secret_prefix ?? null
+          : null,
+        secondary_expires_at: secondaryActive
+          ? e.secondary_expires_at ?? null
+          : null,
+        active: e.active,
+        created_at: e.created_at,
+        last_delivery_at: e.last_delivery_at,
+        success_count: e.success_count,
+        failure_count: e.failure_count,
+      };
+    }),
   });
 }
 

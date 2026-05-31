@@ -2,6 +2,35 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Webhook signing-secret rotation with grace window
+
+Enterprise security teams require zero-downtime rotation of outbound HMAC signing secrets so a leaked or aging key can be replaced without dropping deliveries. The dashboard now lets a workspace owner rotate an outbound webhook secret with a configurable grace window (5 minutes to 7 days, default 24 hours). During the window we co-sign every delivery with the new secret as `X-Adherence-Signature` and the prior secret as `X-Adherence-Signature-Secondary`, letting receivers verify against either. The prior secret auto-expires (and is purged from disk on next read) and can also be killed immediately from the dashboard. Rotation honours `?dry_run=true` and the new plaintext is returned exactly once, mirroring the create-endpoint contract.
+
+Proven by `apps/web/lib/__tests__/webhooks-rotate.test.ts` (`pnpm tsx lib/__tests__/webhooks-rotate.test.ts`):
+
+- A new plaintext is generated, the old secret hash lands in the secondary slot with an expiry, and primary and secondary HMACs over the same body differ.
+- Lazy GC purges expired secondary material from disk on the next read so a stale secret cannot be revived by clock skew or process restart.
+- `revokeEndpointSecondary` ends the grace window immediately and is idempotent.
+
+### Try it
+
+Dashboard: <http://127.0.0.1:3000/webhooks>. Click **rotate** on any endpoint, pick a grace window, and copy the new secret from the banner. The prior secret continues to co-sign deliveries until the countdown expires or you click **revoke now**.
+
+```bash
+# Rotate the signing secret for an endpoint with a 1-hour grace window.
+curl -sS -X POST http://127.0.0.1:3000/api/webhooks/ep_abc123/rotate \
+  -H 'content-type: application/json' \
+  -d '{"grace_ms": 3600000}'
+# { "secret": "whsec_...", "secondary_expires_at": 1717182000000, ... }
+
+# Preview without changing anything.
+curl -sS -X POST 'http://127.0.0.1:3000/api/webhooks/ep_abc123/rotate?dry_run=true' \
+  -H 'content-type: application/json' -d '{}'
+
+# End the grace window immediately.
+curl -sS -X DELETE http://127.0.0.1:3000/api/webhooks/ep_abc123/rotate
+```
+
 ## Per-API-key daily usage counters
 
 Enterprise customers need per-key call attribution for chargeback, capacity planning, and abuse review. Every successful API key resolution now increments a `(name, UTC day)` counter on `api_key_usage_daily`, written best-effort from the auth dependency so a misbehaving telemetry path can never break an authenticated request. Two new owner-only endpoints expose the history:

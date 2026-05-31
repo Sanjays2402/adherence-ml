@@ -20,6 +20,7 @@ import {
   CaretRight,
   ArrowCounterClockwise,
   DownloadSimple,
+  Key,
 } from "@phosphor-icons/react";
 import {
   PageHeader,
@@ -41,6 +42,9 @@ type Endpoint = {
   url: string;
   events: ("run.created" | "test.ping")[];
   secret_prefix: string;
+  secret_rotated_at: number | null;
+  secondary_secret_prefix: string | null;
+  secondary_expires_at: number | null;
   active: boolean;
   created_at: number;
   last_delivery_at: number | null;
@@ -71,6 +75,16 @@ type Delivery = {
 type DeliveriesResp = { deliveries: Delivery[] };
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
+
+function fmtCountdown(target: number): string {
+  const diff = target - Date.now();
+  if (diff <= 0) return "expired";
+  const m = Math.floor(diff / 60_000);
+  if (m < 60) return `${m}m left`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h}h ${m % 60}m left`;
+  return `${Math.floor(h / 24)}d ${h % 24}h left`;
+}
 
 function fmtTime(ms: number | null): string {
   if (!ms) return "never";
@@ -134,6 +148,15 @@ export default function WebhooksClient() {
     url: string;
   } | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const [rotatingId, setRotatingId] = useState<string | null>(null);
+  const [rotateGraceHours, setRotateGraceHours] = useState<number>(24);
+  const [rotateErr, setRotateErr] = useState<string | null>(null);
+  const [rotated, setRotated] = useState<{
+    endpointId: string;
+    name: string;
+    secret: string;
+    secondary_expires_at: number;
+  } | null>(null);
 
   const endpoints = data?.endpoints ?? [];
   const deliveries = delivData?.deliveries ?? [];
@@ -196,6 +219,56 @@ export default function WebhooksClient() {
       setCreating(false);
     }
   }, [name, url, mutate]);
+
+  const onRotate = useCallback(
+    async (e: Endpoint, graceHours: number) => {
+      setRotateErr(null);
+      setPendingId(e.id);
+      try {
+        const graceMs = Math.max(5, Math.min(168, graceHours)) * 3600 * 1000;
+        const res = await fetch(`/api/webhooks/${e.id}/rotate`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ grace_ms: graceMs }),
+        });
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setRotateErr(
+            typeof j?.detail === "string"
+              ? j.detail
+              : j?.error ?? `rotate failed (${res.status})`,
+          );
+          return;
+        }
+        setRotated({
+          endpointId: e.id,
+          name: e.name,
+          secret: j.secret,
+          secondary_expires_at: j.secondary_expires_at,
+        });
+        setRotatingId(null);
+        mutate();
+      } catch (err) {
+        setRotateErr(err instanceof Error ? err.message : "network error");
+      } finally {
+        setPendingId(null);
+      }
+    },
+    [mutate],
+  );
+
+  const onRevokeSecondary = useCallback(
+    async (id: string) => {
+      setPendingId(id);
+      try {
+        await fetch(`/api/webhooks/${id}/rotate`, { method: "DELETE" });
+        mutate();
+      } finally {
+        setPendingId(null);
+      }
+    },
+    [mutate],
+  );
 
   const onDelete = useCallback(
     async (id: string) => {
@@ -263,6 +336,88 @@ export default function WebhooksClient() {
       />
 
       <div className="p-6 grid gap-4 lg:grid-cols-3">
+        {rotated ? (
+          <div className="lg:col-span-3 rounded-md border border-[var(--color-accent)]/40 bg-[var(--color-accent)]/10 p-3 text-[12px]">
+            <div className="flex items-center gap-1.5 text-[var(--color-accent)] font-mono uppercase tracking-[0.14em] text-[10px] mb-1.5">
+              <Key weight="duotone" size={12} /> new signing secret for {rotated.name}
+            </div>
+            <div className="text-[var(--color-fg)]/90 mb-2">
+              Copy now. We only store a hash, so this value will never be shown again. The prior secret keeps co-signing deliveries until {new Date(rotated.secondary_expires_at).toLocaleString()} ({fmtCountdown(rotated.secondary_expires_at)}).
+            </div>
+            <div className="flex items-center gap-2 font-mono text-[11px] break-all">
+              <span className="flex-1">{rotated.secret}</span>
+              <CopyBtn text={rotated.secret} label="copy secret" />
+              <button
+                type="button"
+                className="text-[10px] uppercase tracking-[0.14em] text-[var(--color-subtle)] hover:text-[var(--color-fg)]"
+                onClick={() => setRotated(null)}
+                aria-label="dismiss"
+              >
+                dismiss
+              </button>
+            </div>
+          </div>
+        ) : null}
+        {rotatingId ? (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Rotate signing secret"
+            onKeyDown={(ev) => {
+              if (ev.key === "Escape") setRotatingId(null);
+            }}
+          >
+            <div className="w-full max-w-md rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-5 shadow-2xl">
+              <div className="flex items-center gap-2 mb-3">
+                <Key weight="duotone" size={18} className="text-[var(--color-accent)]" />
+                <h2 className="text-[14px] font-medium">Rotate signing secret</h2>
+              </div>
+              <p className="text-[12px] text-[var(--color-muted)] mb-4">
+                A new secret will be generated and shown exactly once. The current secret keeps co-signing deliveries during the grace window so receivers can roll the verifier with zero dropped events.
+              </p>
+              <label className="block text-[11px] uppercase tracking-[0.14em] text-[var(--color-subtle)] mb-1">
+                grace window (hours)
+              </label>
+              <Input
+                type="number"
+                min={1}
+                max={168}
+                value={String(rotateGraceHours)}
+                onChange={(ev) => setRotateGraceHours(Number(ev.target.value) || 24)}
+                aria-label="grace window in hours"
+              />
+              <div className="text-[11px] text-[var(--color-subtle)] mt-1">
+                1 to 168 hours. Default 24h. Prior secret is sent as <span className="font-mono">x-adherence-signature-secondary</span> until it expires.
+              </div>
+              {rotateErr ? (
+                <div className="mt-3">
+                  <ErrorBox message={rotateErr} />
+                </div>
+              ) : null}
+              <div className="mt-5 flex justify-end gap-2">
+                <Button
+                  variant="ghost"
+                  onClick={() => setRotatingId(null)}
+                  aria-label="cancel rotation"
+                >
+                  cancel
+                </Button>
+                <Button
+                  variant="accent"
+                  disabled={pendingId === rotatingId}
+                  onClick={() => {
+                    const ep = endpoints.find((x) => x.id === rotatingId);
+                    if (ep) onRotate(ep, rotateGraceHours);
+                  }}
+                  aria-label="confirm rotation"
+                >
+                  <Key weight="duotone" size={14} /> rotate now
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : null}
         {/* Create form */}
         <Card className="lg:col-span-1">
           <CardHeader
@@ -389,6 +544,19 @@ export default function WebhooksClient() {
                       </Button>
                       <Button
                         variant="ghost"
+                        onClick={() => {
+                          setRotateErr(null);
+                          setRotateGraceHours(24);
+                          setRotatingId(e.id);
+                        }}
+                        disabled={pendingId === e.id}
+                        aria-label="rotate signing secret"
+                        title="Rotate signing secret with grace window"
+                      >
+                        <Key weight="duotone" size={14} /> rotate
+                      </Button>
+                      <Button
+                        variant="ghost"
                         onClick={() => onToggle(e.id, !e.active)}
                         disabled={pendingId === e.id}
                         aria-label={e.active ? "pause" : "resume"}
@@ -417,6 +585,11 @@ export default function WebhooksClient() {
                     <div>
                       <span className="text-[var(--color-subtle)]">secret</span>{" "}
                       {e.secret_prefix}…
+                      {e.secret_rotated_at ? (
+                        <span className="ml-1 text-[var(--color-subtle)]">
+                          (rotated {fmtTime(e.secret_rotated_at)})
+                        </span>
+                      ) : null}
                     </div>
                     <div>
                       <span className="text-[var(--color-subtle)]">last</span>{" "}
@@ -437,6 +610,24 @@ export default function WebhooksClient() {
                       </span>
                     </div>
                   </div>
+                  {e.secondary_secret_prefix && e.secondary_expires_at ? (
+                    <div className="rounded-md border border-[var(--color-warning)]/40 bg-[var(--color-warning)]/10 px-2.5 py-1.5 text-[11px] font-mono text-[var(--color-fg)]/85 flex flex-wrap items-center gap-2">
+                      <ShieldCheck weight="duotone" size={12} className="text-[var(--color-warning)]" />
+                      <span>
+                        prior secret <span className="text-[var(--color-fg)]">{e.secondary_secret_prefix}…</span> still co-signs ({fmtCountdown(e.secondary_expires_at)})
+                      </span>
+                      <span className="text-[var(--color-subtle)]">header: x-adherence-signature-secondary</span>
+                      <button
+                        type="button"
+                        onClick={() => onRevokeSecondary(e.id)}
+                        disabled={pendingId === e.id}
+                        className="ml-auto text-[10px] uppercase tracking-[0.14em] text-[var(--color-danger)] hover:underline disabled:opacity-50"
+                        aria-label="revoke prior signing secret now"
+                      >
+                        revoke now
+                      </button>
+                    </div>
+                  ) : null}
                 </li>
               ))}
             </ul>

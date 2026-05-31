@@ -8,6 +8,15 @@
  * Signing: every outbound POST includes `X-Adherence-Signature: sha256=<hex>`
  * computed as HMAC_SHA256(secret, raw_body). Secret is returned exactly once
  * at endpoint creation; only a hash is persisted.
+ *
+ * Secret rotation: customers can rotate the signing secret with a grace
+ * window (default 24h, max 7d). During the window we sign with BOTH the
+ * new primary secret and the old secret (sent as
+ * `X-Adherence-Signature-Secondary`), letting receivers deploy the new
+ * secret with zero dropped deliveries. The old secret auto-expires; a
+ * `secondary_expires_at` cursor is enforced lazily on read and on
+ * dispatch. Owners can also kill the old secret instantly via
+ * `revokeSecondary`.
  */
 import { promises as fs } from "node:fs";
 import { existsSync, mkdirSync } from "node:fs";
@@ -25,12 +34,24 @@ export interface WebhookEndpoint {
   events: WebhookEvent[];
   secret_prefix: string; // first 10 chars of plaintext secret for UI
   secret_hash: string; // sha256(plaintext)
+  /** Unix ms when the current (primary) secret was last (re)issued. */
+  secret_rotated_at?: number | null;
+  /** First chars of the prior secret (UI only) while the grace window is open. */
+  secondary_secret_prefix?: string | null;
+  /** sha256(prior plaintext); used to co-sign during the grace window. */
+  secondary_secret_hash?: string | null;
+  /** Unix ms when the prior secret stops co-signing. */
+  secondary_expires_at?: number | null;
   active: boolean;
   created_at: number;
   last_delivery_at: number | null;
   success_count: number;
   failure_count: number;
 }
+
+export const MIN_GRACE_MS = 5 * 60 * 1000; // 5 minutes
+export const MAX_GRACE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+export const DEFAULT_GRACE_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 export interface DeliveryAttempt {
   attempt: number;
@@ -219,6 +240,111 @@ export async function endpointSecretHash(id: string): Promise<string | null> {
   const s = await readStore();
   const e = s.endpoints.find((x) => x.id === id);
   return e ? e.secret_hash : null;
+}
+
+/**
+ * Return active signing hashes for an endpoint:
+ *   - primary: always present (or null if endpoint is missing)
+ *   - secondary: the prior secret while its grace window is open;
+ *     omitted entirely once `secondary_expires_at` is in the past.
+ *
+ * Expired secondary material is also purged from disk on read so a stale
+ * secret cannot be revived by clock skew or process restart.
+ */
+export async function endpointSigningSecrets(
+  id: string,
+): Promise<{ primary: string; secondary: string | null } | null> {
+  const s = await readStore();
+  const e = s.endpoints.find((x) => x.id === id);
+  if (!e) return null;
+  const now = Date.now();
+  let secondary: string | null = null;
+  if (
+    e.secondary_secret_hash &&
+    e.secondary_expires_at &&
+    e.secondary_expires_at > now
+  ) {
+    secondary = e.secondary_secret_hash;
+  } else if (e.secondary_secret_hash || e.secondary_expires_at) {
+    // Lazy GC: expired -> clear from disk.
+    writeQueue = writeQueue.then(async () => {
+      const s2 = await readStore();
+      const e2 = s2.endpoints.find((x) => x.id === id);
+      if (!e2) return;
+      if (e2.secondary_expires_at && e2.secondary_expires_at > Date.now()) return;
+      e2.secondary_secret_prefix = null;
+      e2.secondary_secret_hash = null;
+      e2.secondary_expires_at = null;
+      await writeStore(s2);
+    });
+  }
+  return { primary: e.secret_hash, secondary };
+}
+
+export interface RotateResult {
+  record: WebhookEndpoint;
+  /** Plaintext of the new secret. Returned exactly once. */
+  secret: string;
+  /** Unix ms when the prior secret stops co-signing. */
+  secondary_expires_at: number;
+}
+
+/**
+ * Rotate the signing secret for an endpoint.
+ *
+ * Generates a new plaintext, persists only the hash, and moves the current
+ * secret into the secondary slot with `graceMs` lifetime. The new secret is
+ * returned exactly once. If a previous rotation is still in flight the old
+ * secondary is replaced (we only keep one prior secret at a time).
+ */
+export async function rotateEndpointSecret(
+  id: string,
+  graceMs: number = DEFAULT_GRACE_MS,
+): Promise<RotateResult | null> {
+  const grace = Math.max(MIN_GRACE_MS, Math.min(MAX_GRACE_MS, graceMs | 0));
+  let out: RotateResult | null = null;
+  writeQueue = writeQueue.then(async () => {
+    const s = await readStore();
+    const e = s.endpoints.find((x) => x.id === id);
+    if (!e) return;
+    const newSecret = "whsec_" + randomBytes(24).toString("base64url");
+    const now = Date.now();
+    e.secondary_secret_prefix = e.secret_prefix;
+    e.secondary_secret_hash = e.secret_hash;
+    e.secondary_expires_at = now + grace;
+    e.secret_prefix = newSecret.slice(0, 12);
+    e.secret_hash = sha256(newSecret);
+    e.secret_rotated_at = now;
+    await writeStore(s);
+    out = {
+      record: { ...e },
+      secret: newSecret,
+      secondary_expires_at: e.secondary_expires_at,
+    };
+  });
+  await writeQueue;
+  return out;
+}
+
+/**
+ * Immediately revoke the prior (secondary) secret, ending the grace window.
+ * Returns true if a secondary existed and was cleared.
+ */
+export async function revokeEndpointSecondary(id: string): Promise<boolean> {
+  let cleared = false;
+  writeQueue = writeQueue.then(async () => {
+    const s = await readStore();
+    const e = s.endpoints.find((x) => x.id === id);
+    if (!e) return;
+    if (!e.secondary_secret_hash && !e.secondary_expires_at) return;
+    e.secondary_secret_prefix = null;
+    e.secondary_secret_hash = null;
+    e.secondary_expires_at = null;
+    cleared = true;
+    await writeStore(s);
+  });
+  await writeQueue;
+  return cleared;
 }
 
 export async function recordDelivery(
