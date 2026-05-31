@@ -239,6 +239,10 @@ curl -sS -i -X POST http://127.0.0.1:3000/api/webhooks \
 
 Enterprise security teams require zero-downtime rotation of outbound HMAC signing secrets so a leaked or aging key can be replaced without dropping deliveries. The dashboard now lets a workspace owner rotate an outbound webhook secret with a configurable grace window (5 minutes to 7 days, default 24 hours). During the window we co-sign every delivery with the new secret as `X-Adherence-Signature` and the prior secret as `X-Adherence-Signature-Secondary`, letting receivers verify against either. The prior secret auto-expires (and is purged from disk on next read) and can also be killed immediately from the dashboard. Rotation honours `?dry_run=true` and the new plaintext is returned exactly once, mirroring the create-endpoint contract.
 
+### Anti-replay outbound webhook signatures (v2)
+
+Every outbound delivery now ships with an `X-Adherence-Timestamp` (unix seconds) and an `X-Adherence-Signature-V2: sha256=<hex(hmac(secret, "<timestamp>.<body>"))>` header alongside the legacy `X-Adherence-Signature`. Receivers should consume v2 only and reject any request whose timestamp skew vs wall clock exceeds 300 seconds (configurable), which makes a captured webhook delivery unreplayable once the window elapses even if the secret has not rotated. Helpers `adherence_common.outbound.sign_v2` and `verify_v2(secret, ts, body, sig, max_skew_seconds=300)` are exported so receivers (and tests) get a constant-time, fail-closed verifier with explicit reason codes. The legacy v1 header continues to ship during the deprecation window so existing receivers keep working unchanged. Secret rotation co-signs both v1 and v2 with the previous secret via `X-Adherence-Signature-Previous` and `X-Adherence-Signature-V2-Previous`.
+
 Proven by `apps/web/lib/__tests__/webhooks-rotate.test.ts` (`pnpm tsx lib/__tests__/webhooks-rotate.test.ts`):
 
 - A new plaintext is generated, the old secret hash lands in the secondary slot with an expiry, and primary and secondary HMACs over the same body differ.
