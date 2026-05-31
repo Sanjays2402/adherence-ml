@@ -28,6 +28,32 @@ limit is reached the endpoint returns `429` with `x-quota-*` headers and an
 breakdown at [http://localhost:3000/usage](http://localhost:3000/usage).
 Every 200 response carries `x-quota-limit`, `x-quota-used`, and
 `x-quota-remaining` so clients can back off before getting throttled.
+### Sign in (magic link)
+
+The web app now ships with passwordless email sign-in. Visit
+[/login](http://localhost:3000/login), enter your email, and click the link.
+Sessions are signed cookies (HMAC-SHA256, 30 day expiry) and persist across
+restarts. Set `ADHERENCE_SESSION_SECRET` (16+ chars) in production. In
+development the magic link is also surfaced inline on the login page and
+logged to stdout so you do not need SMTP wired up to try the flow.
+
+Try it locally:
+
+```bash
+# 1. request a link (dev mode echoes it back)
+curl -s -X POST http://localhost:3000/api/auth/request \
+  -H 'content-type: application/json' \
+  -d '{"email":"you@example.com"}'
+
+# 2. follow the dev_link from the response, or open /login in a browser
+
+# 3. confirm the session
+curl -s -b cookies.txt http://localhost:3000/api/auth/me
+```
+
+The user's email + sign-out control live in the sidebar footer. Anonymous
+visitors see a Sign in chip instead.
+
 ### Get started in three steps
 
 New workspaces land on [/onboarding](http://localhost:3000/onboarding): a guided

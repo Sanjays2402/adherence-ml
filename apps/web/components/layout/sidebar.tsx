@@ -23,6 +23,7 @@ import {
   Rocket,
 } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
+import SidebarUser from "./sidebar-user";
 
 const NAV = [
   { href: "/", label: "Overview", icon: House, hint: "What this does" },
@@ -47,6 +48,7 @@ const NAV = [
 export default function Sidebar() {
   const pathname = usePathname();
   if (pathname?.startsWith("/r/")) return null;
+  if (pathname === "/login" || pathname === "/verify") return null;
   return (
     <aside className="md:w-60 md:border-r md:border-[var(--color-border)] md:min-h-screen md:sticky md:top-0 bg-[var(--color-surface)]/60 backdrop-blur">
       <div className="px-5 py-4 flex items-center gap-2 border-b border-[var(--color-border)]">
@@ -93,6 +95,9 @@ export default function Sidebar() {
           );
         })}
       </nav>
+      <div className="hidden md:block px-3 py-2">
+        <SidebarUser />
+      </div>
       <div className="hidden md:block absolute bottom-0 left-0 right-0 border-t border-[var(--color-border)] px-3 py-2 text-[10px] font-mono uppercase tracking-widest text-[var(--color-subtle)]">
         <div className="flex items-center justify-between">
           <span>online</span>
