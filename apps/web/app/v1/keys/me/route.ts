@@ -7,7 +7,7 @@
  *     -H "authorization: Bearer adh_..."
  */
 import { NextRequest, NextResponse } from "next/server";
-import { extractKey, hasScope, scopesOf, verifyKey } from "@/lib/api-keys-store";
+import { extractKey, hasActiveGrace, hasScope, scopesOf, verifyKeyDetailed } from "@/lib/api-keys-store";
 import { recordKeyUsage } from "@/lib/api-key-usage-store";
 
 
@@ -22,10 +22,11 @@ export async function GET(req: NextRequest) {
       { status: 401 },
     );
   }
-  const key = await verifyKey(presented);
-  if (!key) {
+  const verified = await verifyKeyDetailed(presented);
+  if (!verified) {
     return NextResponse.json({ detail: "invalid or revoked api key" }, { status: 401 });
   }
+  const key = verified.record;
   const scopes = scopesOf(key);
   if (!hasScope(key, "read")) {
     void recordKeyUsage({
@@ -63,5 +64,9 @@ export async function GET(req: NextRequest) {
     use_count: key.use_count,
     rotated_at: key.rotated_at ?? null,
     expires_at: key.expires_at ?? null,
+    // When a grace window is active, callers still on the old secret get
+    // `via_grace: true` so they can finish rolling out before the cutoff.
+    via_grace: verified.viaGrace,
+    previous_expires_at: hasActiveGrace(key) ? key.previous_expires_at ?? null : null,
   });
 }
