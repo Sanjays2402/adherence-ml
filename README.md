@@ -2,6 +2,38 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Per-API-key daily usage counters
+
+Enterprise customers need per-key call attribution for chargeback, capacity planning, and abuse review. Every successful API key resolution now increments a `(name, UTC day)` counter on `api_key_usage_daily`, written best-effort from the auth dependency so a misbehaving telemetry path can never break an authenticated request. Two new owner-only endpoints expose the history:
+
+- `GET /v1/admin/api-keys/{name}/usage?days=30` returns a zero-filled window so a chart renders without client-side gap math, plus the peak day and peak count.
+- `GET /v1/admin/api-keys/usage?days=14` returns a roll-up across all keys sorted by total desc, so an operator can spot the noisy keys without paging through history.
+- `POST /v1/admin/api-keys/usage/purge` enforces retention policy by dropping rows strictly older than a cutoff date. Supports `?dry_run=true`.
+
+Reads are themselves recorded in `admin_audit_log` so a compliance reviewer can later prove who looked at whose traffic. The counter is keyed by the durable key `name` so revoking and re-issuing a key does not erase its history. Counters and credentials live in separate tables so dropping history (retention) never touches the credential row, and write contention on a hot key cannot stall the auth path. Validated by `tests/integration/test_api_key_usage.py`, which asserts cross-key isolation, zero-fill, sort order, 404 on unknown keys, viewer denial, and audit-log capture.
+
+### Try per-key usage
+
+Local API: <http://127.0.0.1:8000>.
+
+```bash
+# 1. As an operator, create a key for the CI pipeline.
+curl -s -X POST http://127.0.0.1:8000/v1/admin/api-keys \
+  -H "x-api-key: $ADMIN_KEY" -H 'content-type: application/json' \
+  -d '{"name":"ci-pipeline","role":"service"}'
+
+# 2. Drive some traffic with the new key (any authenticated route counts).
+curl -s http://127.0.0.1:8000/v1/health -H "x-api-key: $CI_KEY"
+
+# 3. Inspect the last 30 days for that key.
+curl -s 'http://127.0.0.1:8000/v1/admin/api-keys/ci-pipeline/usage?days=30' \
+  -H "x-api-key: $ADMIN_KEY"
+
+# 4. Workspace rollup, highest-traffic keys first.
+curl -s 'http://127.0.0.1:8000/v1/admin/api-keys/usage?days=14' \
+  -H "x-api-key: $ADMIN_KEY"
+```
+
 ## Workspace legal acceptance (TOS / DPA gate)
 
 Enterprise procurement asks: "Prove which version of your Terms of Service and Data Processing Agreement each of our workspaces accepted, by whom, when, from which IP." The API now publishes immutable legal document versions (`tos`, `dpa`, `privacy`), records per-workspace acceptance events with actor, IP, and user agent, and gates every mutating request behind acceptance via `LegalAcceptanceMiddleware`. A workspace that owes acceptance gets a 451 with a structured remediation payload (kind, version, sha256) instead of a generic 403. Read paths, `/v1/legal`, `/v1/gdpr`, health, metrics, and admin token mint stay open so a blocked tenant can self-serve or walk away with its data.

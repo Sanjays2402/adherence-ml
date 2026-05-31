@@ -29,6 +29,7 @@ from adherence_api.routes import session_policy as session_policy_route
 from adherence_api.routes import pii_policy as pii_policy_route
 from adherence_api.routes import residency as residency_route
 from adherence_api.routes import api_key_policy as api_key_policy_route
+from adherence_api.routes import api_key_usage as api_key_usage_route
 from adherence_api.routes import retention_policy as retention_policy_route
 from adherence_api.routes import break_glass as break_glass_route
 from adherence_api.routes import legal_hold as legal_hold_route
@@ -175,6 +176,7 @@ def create_app() -> FastAPI:
     app.include_router(drift_route.router)
     app.include_router(plots.router)
     app.include_router(admin.router)
+    app.include_router(api_key_usage_route.router)
     app.include_router(webhooks.router)
     app.include_router(explain_route.router)
     app.include_router(cohort.router)

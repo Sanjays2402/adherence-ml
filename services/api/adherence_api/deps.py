@@ -7,6 +7,7 @@ from fastapi import Depends, Header, HTTPException, Request, status
 
 from adherence_common.auth import resolve_api_key, require_role, verify_jwt
 from adherence_common.api_keys import resolve_db_key
+from adherence_common.api_key_usage import record_usage as _record_key_usage
 from adherence_common.errors import AuthError, PermissionError_
 from adherence_common.settings import Settings, get_settings
 
@@ -55,10 +56,19 @@ def _principal_from_headers(
 
 def current_principal(
     settings: SettingsDep,
+    request: Request,
     x_api_key: str | None = Header(default=None),
     authorization: str | None = Header(default=None),
 ) -> dict[str, str]:
-    return _principal_from_headers(settings, x_api_key, authorization)
+    p = _principal_from_headers(settings, x_api_key, authorization)
+    key_name = p.get("key_name")
+    if key_name:
+        try:
+            path = request.url.path if request is not None else None
+        except Exception:
+            path = None
+        _record_key_usage(key_name, path=path)
+    return p
 
 
 def _check_role(actual: str, required: str) -> None:
