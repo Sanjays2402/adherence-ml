@@ -107,6 +107,10 @@ export async function GET(req: NextRequest) {
     offset: Number.isFinite(offset) ? offset : 0,
     from: parseBound(fromRaw, false),
     to: parseBound(toRaw, true),
+    pinned: (() => {
+      const v = sp.get("pinned");
+      return v === "1" || v === "true";
+    })(),
     tags: [
       ...sp.getAll("tag"),
       ...(sp.get("tags")?.split(",") ?? []),

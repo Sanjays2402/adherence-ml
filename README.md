@@ -229,7 +229,7 @@ Every scored prediction, cohort sweep, and forecast call made through the web
 app is automatically saved to a per-instance run log under `apps/web/.data/runs.jsonl`
 (override path with `ADHERENCE_DATA_DIR`). Open
 [http://localhost:3000/history](http://localhost:3000/history) to search,
-filter by kind, rename, tag, copy a shareable link (`/history/<id>`), delete,
+filter by kind, rename, tag, pin important runs to the top, copy a shareable link (`/history/<id>`), delete,
 or export the full log as CSV, JSON, or NDJSON. The History page exports
 honor the active search, kind, and date-range filters, so you can pull just
 "failed predict runs in the last 7 days" without post-processing. The detail
@@ -237,10 +237,10 @@ page is a plain server route so links are shareable in incognito.
 
 API surface:
 
-- `GET /api/runs?q=&kind=&from=&to=&tag=&limit=&offset=` list with search, date range, multi-tag (repeat `tag=` for AND match), pagination
+- `GET /api/runs?q=&kind=&from=&to=&tag=&pinned=1&limit=&offset=` list with search, date range, multi-tag (repeat `tag=` for AND match), pinned-only filter, pagination
 - `POST /api/runs` append a record (validated with zod)
 - `GET /api/runs/:id` fetch one
-- `PATCH /api/runs/:id` rename or retag (`{ title?, tags? }`)
+- `PATCH /api/runs/:id` rename, retag, or pin (`{ title?, tags?, pinned? }`)
 - `DELETE /api/runs/:id` remove
 - `GET /api/runs/tags?kind=` list every tag in use with its run count, optionally narrowed by kind, for the history filter chips
 - `GET /api/runs/export?format=csv|json|ndjson&q=&kind=&from=&to=&tag=&user_id=` filtered download (repeat `tag=` to AND multiple)
@@ -257,6 +257,23 @@ out of search. Use the `Download JSON` button to grab the full payload as a
 timestamped file, or `Download PDF` for a one-page printable report (handy
 for sharing with a clinician or attaching to a chart note). The PDF renderer
 is zero-dependency, so no headless browser is needed in production.
+
+Pinned runs sort first across every view and survive search, kind, and tag
+filters. Click the pin icon on any row in the History page to keep a run at
+the top across sessions, or toggle the `pinned` chip in the filter bar to
+focus on just the pinned set. Pin state is stored on the run record itself
+(`pinned`, `pinned_at`), so it is included in JSON/NDJSON exports and the
+`/api/runs` listing without an extra round trip.
+
+```bash
+# Pin a run
+curl -X PATCH http://localhost:3000/api/runs/<id> \
+  -H 'content-type: application/json' \
+  -d '{"pinned": true}'
+
+# List only pinned runs
+curl 'http://localhost:3000/api/runs?pinned=1&limit=10'
+```
 
 Try it:
 

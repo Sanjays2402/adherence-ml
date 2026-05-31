@@ -26,6 +26,9 @@ export interface RunRecord {
   // unauthenticated at /share/<token>. Toggle via setRunShared().
   share_token?: string | null;
   shared_at?: number | null;
+  // Pinned runs sort first in listings and can be filtered with `pinned`.
+  pinned?: boolean;
+  pinned_at?: number | null;
 }
 
 const DATA_DIR =
@@ -76,6 +79,8 @@ export interface ListQuery {
   to?: number | null;
   /** Match runs that carry ALL of these tags (case-insensitive). */
   tags?: string[];
+  /** When true, only return pinned runs. */
+  pinned?: boolean;
 }
 
 export interface ListResult {
@@ -96,8 +101,10 @@ export async function listRuns(query: ListQuery = {}): Promise<ListResult> {
   const tags = (query.tags ?? [])
     .map((t) => t.trim().toLowerCase())
     .filter(Boolean);
+  const pinnedOnly = query.pinned === true;
 
   const filtered = all.filter((r) => {
+    if (pinnedOnly && !r.pinned) return false;
     if (kind && r.kind !== kind) return false;
     if (from !== null && r.created_at < from) return false;
     if (to !== null && r.created_at > to) return false;
@@ -115,8 +122,13 @@ export async function listRuns(query: ListQuery = {}): Promise<ListResult> {
     return true;
   });
 
-  // newest first
-  filtered.sort((a, b) => b.created_at - a.created_at);
+  // pinned first, then newest first
+  filtered.sort((a, b) => {
+    const ap = a.pinned ? 1 : 0;
+    const bp = b.pinned ? 1 : 0;
+    if (ap !== bp) return bp - ap;
+    return b.created_at - a.created_at;
+  });
 
   return {
     items: filtered.slice(offset, offset + limit),
@@ -153,6 +165,39 @@ export interface RunUpdate {
   tags?: string[];
   share_token?: string | null;
   shared_at?: number | null;
+  pinned?: boolean;
+  pinned_at?: number | null;
+}
+
+/**
+ * Toggle the pinned flag on a run. Pinned runs sort first in listings and
+ * can be filtered with `?pinned=1` on the list endpoint. Returns the updated
+ * record, or null if no such id.
+ */
+export async function setRunPinned(
+  id: string,
+  pinned: boolean,
+): Promise<RunRecord | null> {
+  const current = await getRun(id);
+  if (!current) return null;
+  if (!!current.pinned === pinned) return current;
+  return updateRun(id, {
+    pinned,
+    pinned_at: pinned ? Date.now() : null,
+  });
+}
+
+/** Count pinned runs (optionally filtered by kind). */
+export async function countPinned(kind?: RunKind | "all"): Promise<number> {
+  const all = await readAll();
+  const wanted = kind && kind !== "all" ? kind : null;
+  let n = 0;
+  for (const r of all) {
+    if (!r.pinned) continue;
+    if (wanted && r.kind !== wanted) continue;
+    n += 1;
+  }
+  return n;
 }
 
 function newShareToken(): string {

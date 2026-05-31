@@ -9,6 +9,7 @@ import {
   DownloadSimple,
   MagnifyingGlass,
   PencilSimple,
+  PushPin,
   Share,
   Trash,
   ClockCounterClockwise,
@@ -26,6 +27,7 @@ type Run = {
   user_id: string | null;
   latency_ms: number | null;
   tags: string[];
+  pinned?: boolean;
 };
 
 type ListResp = { items: Run[]; total: number; limit: number; offset: number };
@@ -61,12 +63,13 @@ export default function HistoryClient() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [pinnedOnly, setPinnedOnly] = useState(false);
   const [page, setPage] = useState(0);
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
     setPage(0);
-  }, [q, kind, from, to, selectedTags]);
+  }, [q, kind, from, to, selectedTags, pinnedOnly]);
 
   const url = useMemo(() => {
     const sp = new URLSearchParams();
@@ -75,10 +78,11 @@ export default function HistoryClient() {
     if (from) sp.set("from", from);
     if (to) sp.set("to", to);
     for (const t of selectedTags) sp.append("tag", t);
+    if (pinnedOnly) sp.set("pinned", "1");
     sp.set("limit", String(PAGE));
     sp.set("offset", String(page * PAGE));
     return `/api/runs?${sp.toString()}`;
-  }, [q, kind, from, to, selectedTags, page]);
+  }, [q, kind, from, to, selectedTags, pinnedOnly, page]);
 
   /** Build an /api/runs/export URL that honors the active filters. */
   const exportUrl = useCallback(
@@ -90,9 +94,10 @@ export default function HistoryClient() {
       if (from) sp.set("from", from);
       if (to) sp.set("to", to);
       for (const t of selectedTags) sp.append("tag", t);
+      if (pinnedOnly) sp.set("pinned", "1");
       return `/api/runs/export?${sp.toString()}`;
     },
-    [q, kind, from, to, selectedTags],
+    [q, kind, from, to, selectedTags, pinnedOnly],
   );
 
   const filterCount =
@@ -100,6 +105,7 @@ export default function HistoryClient() {
     (kind !== "all" ? 1 : 0) +
     (from ? 1 : 0) +
     (to ? 1 : 0) +
+    (pinnedOnly ? 1 : 0) +
     selectedTags.length;
 
   const { data, error, isLoading, mutate } = useSWR<ListResp>(url, fetcher, {
@@ -171,6 +177,21 @@ export default function HistoryClient() {
       flash("tags saved");
       mutate();
     } else flash("save failed");
+  }
+
+  async function onTogglePin(r: Run) {
+    const next = !r.pinned;
+    const res = await fetch(`/api/runs/${r.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pinned: next }),
+    });
+    if (res.ok) {
+      flash(next ? "pinned" : "unpinned");
+      mutate();
+    } else {
+      flash(next ? "pin failed" : "unpin failed");
+    }
   }
 
   async function onCopyLink(id: string) {
@@ -275,6 +296,21 @@ export default function HistoryClient() {
           )}
         </div>
         <div className="flex flex-wrap gap-1">
+          <button
+            type="button"
+            onClick={() => setPinnedOnly((v) => !v)}
+            aria-pressed={pinnedOnly}
+            title={pinnedOnly ? "Show all runs" : "Show pinned runs only"}
+            className={cn(
+              "rounded-md border px-2 py-1 text-[11px] font-mono uppercase tracking-wider inline-flex items-center gap-1",
+              pinnedOnly
+                ? "border-amber-300/60 bg-amber-300/10 text-amber-200"
+                : "border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-fg)]",
+            )}
+          >
+            <PushPin weight="duotone" size={12} />
+            pinned
+          </button>
           {KINDS.map((k) => (
             <button
               key={k}
@@ -363,7 +399,17 @@ export default function HistoryClient() {
                   >
                     <KindBadge kind={r.kind} />
                     <div className="min-w-0 flex-1">
-                      <div className="text-[13px] font-medium truncate">{r.title}</div>
+                      <div className="text-[13px] font-medium truncate flex items-center gap-1.5">
+                        {r.pinned && (
+                          <PushPin
+                            weight="fill"
+                            size={12}
+                            className="text-amber-300 shrink-0"
+                            aria-label="pinned"
+                          />
+                        )}
+                        <span className="truncate">{r.title}</span>
+                      </div>
                       <div className="text-[11px] text-[var(--color-muted)] truncate">
                         {r.summary || "no summary"}
                         {r.tags.length > 0 && (
@@ -380,6 +426,16 @@ export default function HistoryClient() {
                     {fmtTime(r.created_at)}
                   </div>
                   <div className="flex items-center gap-1">
+                    <IconBtn
+                      label={r.pinned ? "Unpin" : "Pin"}
+                      onClick={() => onTogglePin(r)}
+                      active={!!r.pinned}
+                    >
+                      <PushPin
+                        weight={r.pinned ? "fill" : "duotone"}
+                        size={14}
+                      />
+                    </IconBtn>
                     <IconBtn label="Re-run" onClick={() => undefined} as="a" href={rerunHref(r)}>
                       <ArrowClockwise weight="duotone" size={14} />
                     </IconBtn>
@@ -492,6 +548,7 @@ function IconBtn({
   onClick,
   label,
   danger,
+  active,
   as,
   href,
 }: {
@@ -499,12 +556,14 @@ function IconBtn({
   onClick?: () => void;
   label: string;
   danger?: boolean;
+  active?: boolean;
   as?: "a";
   href?: string;
 }) {
   const cls = cn(
     "inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-border)]/30",
     danger && "hover:border-red-400/50 hover:text-red-300",
+    active && "border-amber-300/60 bg-amber-300/10 text-amber-200",
   );
   if (as === "a" && href) {
     return (

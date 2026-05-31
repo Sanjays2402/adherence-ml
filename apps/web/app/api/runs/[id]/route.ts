@@ -20,6 +20,7 @@ export async function GET(
 const PatchSchema = z.object({
   title: z.string().min(1).max(200).optional(),
   tags: z.array(z.string().max(40)).max(12).optional(),
+  pinned: z.boolean().optional(),
 });
 
 export async function PATCH(
@@ -40,7 +41,16 @@ export async function PATCH(
       { status: 422 },
     );
   }
-  const updated = await updateRun(id, parsed.data);
+  const patch: {
+    title?: string;
+    tags?: string[];
+    pinned?: boolean;
+    pinned_at?: number | null;
+  } = { ...parsed.data };
+  if (parsed.data.pinned !== undefined) {
+    patch.pinned_at = parsed.data.pinned ? Date.now() : null;
+  }
+  const updated = await updateRun(id, patch);
   if (!updated) return NextResponse.json({ error: "not_found" }, { status: 404 });
   return NextResponse.json(updated);
 }
