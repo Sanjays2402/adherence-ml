@@ -31,6 +31,7 @@ from adherence_common.db import (
 )
 from adherence_common.logging import get_logger
 from adherence_common import outbound_policy
+from adherence_common import webhook_events as _webhook_catalog
 
 log = get_logger(__name__)
 
@@ -160,6 +161,14 @@ def dispatch(
     and ends in state ``failed``.
     """
     targets = list_targets(event_type)
+    if not _webhook_catalog.is_known(event_type):
+        # Catalog miss: emit a structured warning so it surfaces in
+        # observability without breaking any in-flight caller. Do not
+        # raise; the call site contract is best-effort.
+        log.warning(
+            "webhook_dispatch_unknown_event",
+            event_type=event_type, targets=len(targets),
+        )
     if not targets:
         return []
     body = json.dumps(payload, separators=(",", ":"), sort_keys=True,

@@ -2,6 +2,41 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Canonical webhook event catalog
+
+Webhook subscriptions historically accepted any free-form event name, so a typo in `event_types` silently produced a subscription that would never fire and procurement reviewers had no way to introspect what events the API actually emits. The new catalog lives in `packages/common/adherence_common/webhook_events.py` (mirrored in `apps/web/lib/webhook-catalog.ts`) and is enforced everywhere: `PUT /v1/webhooks/outbound/subscriptions` and `POST /v1/webhooks/outbound/test-send` reject any `event_type` not in the catalog with `400 unknown_event_type`, and `dispatch()` emits a structured warning if a caller fires an off-catalog event. Customers and procurement teams read the full contract (description, stability, schema, example payload) at `GET /v1/webhooks/event-catalog` or in the dashboard at `/workspace/webhooks/catalog`.
+
+Proven by `tests/unit/test_webhook_event_catalog.py` (5 tests):
+
+- Every shipped event type (`test.ping`, `intervention.recommended`, `run.created`, `drift.detected`, `api_key.rotated`, `member.invited`) is in the catalog and carries a non-empty payload example and field schema.
+- `GET /v1/webhooks/event-catalog` returns the full catalog plus a summary header to a viewer key holding only `webhooks:read`.
+- Subscribing to an unknown event type returns 400 with `code=unknown_event_type` and the offending names echoed back.
+- Subscribing to a mix of known event types succeeds and round-trips them sorted in the response.
+- Cross-tenant: tenant A's subscriptions are invisible to tenant B's `list`, and tenant B cannot hijack tenant A's subscription name (the existing per-tenant guard returns `403 cross_tenant_subscription`).
+
+### Try the event catalog
+
+Local API: <http://127.0.0.1:8000>. Local dashboard: <http://127.0.0.1:3000/workspace/webhooks/catalog>.
+
+```bash
+# Read the full catalog with a viewer-scope API key.
+curl -s http://127.0.0.1:8000/v1/webhooks/event-catalog \
+  -H "x-api-key: $ADHERENCE_API_KEY" | jq '{version, count, stable, beta, stable_event_types}'
+
+# Subscribe to two real events; the request succeeds and lists them in the response.
+curl -s -X PUT http://127.0.0.1:8000/v1/webhooks/outbound/subscriptions \
+  -H "x-api-key: $ADHERENCE_ADMIN_KEY" \
+  -H 'content-type: application/json' \
+  -d '{"name":"care-team","url":"https://example.com/hook","event_types":["intervention.recommended","drift.detected"],"active":true}'
+
+# A typo is now caught at the API edge instead of failing silently at dispatch.
+curl -s -X PUT http://127.0.0.1:8000/v1/webhooks/outbound/subscriptions \
+  -H "x-api-key: $ADHERENCE_ADMIN_KEY" \
+  -H 'content-type: application/json' \
+  -d '{"name":"typo","url":"https://example.com/hook","event_types":["intervention.recomended"],"active":true}'
+# 400 {"detail":{"code":"unknown_event_type","unknown":["intervention.recomended"],"known":[...]}}
+```
+
 ## DNS TXT verification for SSO auto-join domains
 
 Workspace owners can claim email domains for SSO auto-join (`acme.com` -> Acme workspace). Until this release a freshly claimed domain auto-joined inbound SSO sign-ins immediately, which meant any tenant could capture sign-ins for a domain they did not actually control. The API now refuses to honour a claim until the workspace owner publishes a TXT record at `_adherence-ml-verify.<domain>` carrying the per-claim secret `adherence-ml-verify=<token>`. `resolve_auto_join` only considers rows with `verified_at IS NOT NULL`, so the SSO exchange path (`POST /v1/admin/sso/exchange`) and every other caller honour the gate without per-route changes.

@@ -417,6 +417,12 @@ export default function WebhooksClient() {
             >
               <ArrowLeft size={14} weight="duotone" /> back
             </Link>
+            <Link
+              href="/workspace/webhooks/catalog"
+              className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border-strong)] px-2.5 py-1.5 text-[13px] hover:bg-[var(--color-border)]/40"
+            >
+              event catalog
+            </Link>
             <Button variant="ghost" onClick={refreshAll}>
               <ArrowsClockwise size={14} weight="duotone" /> refresh
             </Button>

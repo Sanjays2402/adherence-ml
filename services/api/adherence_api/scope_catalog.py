@@ -74,6 +74,7 @@ _CATALOG: tuple[ScopeRule, ...] = (
     ScopeRule("GET",  "/v1/train", "models:read",  "Read training jobs"),
 
     # ----- Webhooks + outbound
+    ScopeRule("GET",  "/v1/webhooks/event-catalog", "webhooks:read", "Read the canonical webhook event catalog"),
     ScopeRule("*",    "/v1/webhooks", "webhooks:write", "Manage webhook subscriptions"),
     ScopeRule("*",    "/v1/outbound", "webhooks:write", "Manage outbound delivery"),
 

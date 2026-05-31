@@ -21,6 +21,7 @@ from adherence_api.dry_run import dry_run_response
 from adherence_api.routes.predict import _caller_id
 from adherence_common import outbound as outbound_mod
 from adherence_common import outbound_policy
+from adherence_common import webhook_events as webhook_catalog
 from adherence_common.db import (
     WebhookDelivery, WebhookSubscription, init_db, session,
 )
@@ -107,7 +108,26 @@ def upsert_subscription(
             },
         )
     secret_val = body.secret or secrets.token_urlsafe(32)
-    csv = ",".join(sorted({e.strip() for e in body.event_types if e.strip()}))
+    requested = sorted({e.strip() for e in body.event_types if e.strip()})
+    # Validate every requested event_type against the canonical catalog.
+    # Subscribing to an unknown event would silently never fire, which
+    # masks integration bugs and breaks the contract introspection
+    # endpoint. Reject up front with a structured 400.
+    unknown = [e for e in requested if not webhook_catalog.is_known(e)]
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "unknown_event_type",
+                "reason": (
+                    "one or more event_types are not in the catalog; "
+                    "see GET /v1/webhooks/event-catalog"
+                ),
+                "unknown": unknown,
+                "known": sorted(webhook_catalog.known_event_types()),
+            },
+        )
+    csv = ",".join(requested)
     with session() as s:
         row = s.execute(
             select(WebhookSubscription).where(WebhookSubscription.name == body.name)
@@ -485,6 +505,18 @@ class TestSendOut(BaseModel):
 @router.post("/test-send", response_model=TestSendOut)
 def test_send(body: TestSendIn, p=Depends(require_admin)) -> TestSendOut:
     """Send a test event to all subscriptions matching ``event_type``."""
+    if not webhook_catalog.is_known(body.event_type):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "unknown_event_type",
+                "reason": (
+                    "event_type is not in the catalog; "
+                    "see GET /v1/webhooks/event-catalog"
+                ),
+                "event_type": body.event_type,
+            },
+        )
     ids = outbound_mod.dispatch(body.event_type, body.payload)
     return TestSendOut(delivery_ids=ids)
 
