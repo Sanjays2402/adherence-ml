@@ -163,6 +163,9 @@ export default function KeysClient() {
   const curlRuns = `curl http://localhost:3000/v1/runs?limit=10 \\
   -H "authorization: Bearer ${sampleKey}"`;
 
+  const curlRunGet = `curl http://localhost:3000/v1/runs/RUN_ID \\
+  -H "authorization: Bearer ${sampleKey}"`;
+
   const curlMe = `curl http://localhost:3000/v1/keys/me \\
   -H "authorization: Bearer ${sampleKey}"`;
 
@@ -415,6 +418,13 @@ export default function KeysClient() {
 {curlRuns}
           </pre>
           <div className="flex items-center justify-between pt-2">
+            <span className="text-[11px] text-[var(--color-muted)]">GET /v1/runs/&lt;id&gt; (fetch one run with full payload, requires read scope)</span>
+            <CopyBtn text={curlRunGet} label="copy curl" />
+          </div>
+          <pre className="rounded border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-[12px] leading-relaxed overflow-x-auto">
+{curlRunGet}
+          </pre>
+          <div className="flex items-center justify-between">
             <span className="text-[11px] text-[var(--color-muted)]">GET /v1/keys/me (verify a key, requires read scope, does not spend predict quota)</span>
             <CopyBtn text={curlMe} label="copy curl" />
           </div>

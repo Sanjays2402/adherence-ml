@@ -27,6 +27,10 @@ curl -X POST http://localhost:3000/v1/predict \
 curl "http://localhost:3000/v1/runs?limit=10" \
   -H "authorization: Bearer adh_YOUR_KEY"
 
+# fetch one run with its full payload (requires read scope)
+curl http://localhost:3000/v1/runs/RUN_ID \
+  -H "authorization: Bearer adh_YOUR_KEY"
+
 # verify a key without spending predict quota (requires read scope)
 curl http://localhost:3000/v1/keys/me \
   -H "authorization: Bearer adh_YOUR_KEY"
