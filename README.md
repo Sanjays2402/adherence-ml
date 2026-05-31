@@ -333,6 +333,44 @@ curl -X POST http://localhost:3000/api/notifications/<id>/read
 curl -X POST http://localhost:3000/api/notifications/read-all
 ```
 
+### Inbound webhooks (HMAC verified)
+
+Partner systems (Med-Tracker, EHR adapters) post ground-truth dose outcomes
+to `POST /v1/webhooks/medtracker/event` on the FastAPI service. Because
+those rows feed online metrics and challenger-model promotion, the endpoint
+verifies an HMAC envelope when a per-source secret is configured. Configure
+secrets with:
+
+```bash
+export ADHERENCE_INBOUND_WEBHOOK_SECRETS="medtracker:CHANGE_ME,partnerX:..."
+export ADHERENCE_INBOUND_WEBHOOK_MAX_SKEW_SECONDS=300
+# Optional: hard-reject any source that has no secret configured.
+export ADHERENCE_INBOUND_WEBHOOK_REQUIRE_SIGNED=true
+```
+
+Headers the partner must send:
+
+```
+X-Webhook-Timestamp: <unix seconds>
+X-Webhook-Signature: sha256=<hex(hmac_sha256(secret, ts + "." + raw_body))>
+```
+
+Try it locally:
+
+```bash
+BODY='{"source":"medtracker","events":[{"event_id":"evt-1","user_id":"u_000001","dose_id":"d1","scheduled_at":"2026-03-05T08:00:00Z","outcome":"taken"}]}'
+TS=$(date +%s)
+SIG="sha256=$(printf '%s.%s' "$TS" "$BODY" | openssl dgst -sha256 -hmac "CHANGE_ME" | awk '{print $2}')"
+curl -s -X POST http://localhost:8000/v1/webhooks/medtracker/event \
+  -H "x-api-key: $ADHERENCE_SERVICE_KEY" \
+  -H "X-Webhook-Timestamp: $TS" -H "X-Webhook-Signature: $SIG" \
+  -H 'content-type: application/json' --data "$BODY"
+```
+
+Bad signature, stale timestamp, or a missing header all return `401`.
+Unsigned partners are accepted only while no secret is configured for them
+and are logged as `inbound_webhook_unsigned` so operators can see them.
+
 ### Webhooks
 
 Register an HTTP endpoint and adherence.ml will POST a signed JSON envelope to

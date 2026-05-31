@@ -82,6 +82,17 @@ class Settings(BaseSettings):
     medtracker_base_url: str | None = None
     medtracker_api_key: str | None = None
 
+    # Inbound webhook HMAC verification. Format:
+    #   ADHERENCE_INBOUND_WEBHOOK_SECRETS="medtracker:s3cret,partnerX:hex..."
+    # When a source is present in this map, /v1/webhooks/<source>/* requires
+    # a valid X-Webhook-Signature header (sha256=<hex(hmac(secret, ts.body))>)
+    # plus an X-Webhook-Timestamp within inbound_webhook_max_skew_seconds.
+    # Sources NOT listed are still allowed (back-compat) but logged as
+    # `inbound_webhook_unsigned` so operators can spot unsigned partners.
+    inbound_webhook_secrets: str = ""
+    inbound_webhook_max_skew_seconds: int = 300
+    inbound_webhook_require_signed: bool = False
+
     # Sentry error tracking. Empty DSN disables shipping. Other knobs are still
     # parsed so they can be set ahead of enabling Sentry without restart churn.
     sentry_dsn: str | None = None

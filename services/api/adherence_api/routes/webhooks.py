@@ -10,12 +10,13 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.exc import IntegrityError
 
-from adherence_api.deps import require_service
+from adherence_api.deps import SettingsDep, require_service
 from adherence_common.db import DoseOutcome, init_db, session
+from adherence_common.inbound_webhook import verify as verify_inbound
 from adherence_common.logging import get_logger
 
 router = APIRouter(prefix="/v1/webhooks", tags=["webhooks"])
@@ -46,14 +47,46 @@ class OutcomeBatchResponse(BaseModel):
 
 
 @router.post("/medtracker/event", response_model=OutcomeBatchResponse)
-def medtracker_event(
-    payload: OutcomeBatchRequest, _p=Depends(require_service)
+async def medtracker_event(
+    request: Request,
+    settings: SettingsDep,
+    _p=Depends(require_service),
+    x_webhook_signature: str | None = Header(default=None),
+    x_webhook_timestamp: str | None = Header(default=None),
 ) -> OutcomeBatchResponse:
     """Persist one batch of dose outcomes.
 
     `event_id` is used for idempotency; duplicate posts are counted but do
     not error so partners can safely retry.
+
+    When ``ADHERENCE_INBOUND_WEBHOOK_SECRETS`` contains an entry for
+    ``medtracker``, this endpoint requires an HMAC envelope via
+    ``X-Webhook-Signature`` + ``X-Webhook-Timestamp`` (see
+    ``adherence_common.inbound_webhook``). Without it, requests are
+    rejected with 401. Unsigned partners are accepted only while no
+    secret is configured for them, and a warning is logged.
     """
+    raw = await request.body()
+    result = verify_inbound(
+        source="medtracker",
+        body=raw,
+        signature_header=x_webhook_signature,
+        timestamp_header=x_webhook_timestamp,
+        settings=settings,
+    )
+    if not result.ok:
+        log.warning(
+            "medtracker webhook signature rejected",
+            reason=result.reason,
+        )
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            detail=f"webhook signature: {result.reason}",
+        )
+    try:
+        payload = OutcomeBatchRequest.model_validate_json(raw)
+    except ValidationError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.errors())
     init_db()
     accepted = 0
     dupes = 0
@@ -80,10 +113,12 @@ def medtracker_event(
         s.commit()
     if accepted == 0 and dupes == len(payload.events):
         log.info("medtracker webhook all duplicates",
-                 source=payload.source, n=len(payload.events))
+                 source=payload.source, n=len(payload.events),
+                 signed=result.signed)
     else:
         log.info("medtracker webhook persisted",
-                 source=payload.source, accepted=accepted, dupes=dupes)
+                 source=payload.source, accepted=accepted, dupes=dupes,
+                 signed=result.signed)
     return OutcomeBatchResponse(
         accepted=accepted, duplicates=dupes, n=len(payload.events)
     )
