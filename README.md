@@ -45,10 +45,28 @@ curl -s http://localhost:8000/v1/predict \
   }' | jq .
 ```
 
+Project a user's next week of adherence with a confidence interval:
+
+```bash
+curl -s 'http://localhost:8000/v1/forecast/user?model_name=default' \
+  -H 'content-type: application/json' \
+  -d '{
+    "user_id": "demo-okafor-daniel",
+    "horizon_days": 7,
+    "history": [
+      {"user_id":"demo-okafor-daniel","dose_id":"metformin-am-d1","scheduled_at":"2026-05-23T15:00:00Z","taken_at":"2026-05-23T15:08:00Z","status":"taken","dose_class":"endocrine","dose_strength_mg":500}
+    ]
+  }' | jq .
+```
+
 ## Features
 
 - Landing demo (`/`) with three click-to-run patient scenarios, live miss
   probability, risk tier bars, latency, and SHAP reason codes.
+- Forecast page (`/forecast`) backed by `POST /v1/forecast/user`: pick a
+  persona and horizon (3, 7, or 14 days), see the projected adherence rate
+  with a 90 percent bootstrap CI, a daily projection chart, and a per-day
+  breakdown of dose count, high-risk doses, and miss probability.
 - Cohort browser (`/cohort`) backed by `POST /v1/cohort/risk` with CSV export
   via `/v1/cohort/risk/export`.
 - Predict endpoint with batch variant (`POST /v1/predict`, `POST /v1/predict/batch`).

@@ -12,6 +12,7 @@ const ALLOW: { method: string; pattern: RegExp }[] = [
   { method: "POST", pattern: /^v1\/interventions$/ },
   { method: "POST", pattern: /^v1\/interventions\/\d+\/ack$/ },
   { method: "POST", pattern: /^v1\/cohort\/risk$/ },
+  { method: "POST", pattern: /^v1\/forecast\/user$/ },
 ];
 
 function isAllowed(method: string, path: string) {
