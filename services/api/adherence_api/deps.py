@@ -117,27 +117,94 @@ def current_tenant(p=Depends(current_principal)) -> str:
     return str(p.get("tenant") or "default")
 
 
-def require_tenant_access(target_tenant: str, principal: dict[str, str]) -> None:
+def require_tenant_access(
+    target_tenant: str,
+    principal: dict[str, str],
+    request=None,
+) -> None:
     """Raise 403 unless the principal may operate on ``target_tenant``.
 
     Admins may cross tenants explicitly; everyone else is pinned to their
     own tenant. ``target_tenant`` of ``"*"`` is admin-only and signals a
     cross-tenant read (used by /v1/audit/list for compliance queries).
+
+    When ``request`` is supplied and the admin is crossing a tenant
+    boundary, a break-glass justification is required via the
+    ``X-Break-Glass-Justification`` header. Missing or too-short
+    justifications return 400 with a structured error so the operator
+    sees exactly what to supply. Each accepted cross-tenant access is
+    recorded in :class:`adherence_common.break_glass.BreakGlassEvent` so
+    the impacted tenant can review it.
     """
     own = str(principal.get("tenant") or "default")
     role = principal.get("role", "")
+
+    crossing = False
     if target_tenant == "*":
         if role != "admin":
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,
                 detail="cross-tenant access requires admin role",
             )
+        crossing = True
+    elif target_tenant != own:
+        if role != "admin":
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                detail=f"tenant mismatch: principal={own!r} target={target_tenant!r}",
+            )
+        crossing = True
+
+    if not crossing or request is None:
         return
-    if target_tenant == own:
-        return
-    if role == "admin":
-        return
-    raise HTTPException(
-        status.HTTP_403_FORBIDDEN,
-        detail=f"tenant mismatch: principal={own!r} target={target_tenant!r}",
+
+    # Cross-tenant admin access: require justification + record.
+    from adherence_common.break_glass import (
+        BreakGlassError,
+        JUSTIFICATION_HEADER,
+        record as record_break_glass,
+        validate_justification,
     )
+    raw = request.headers.get(JUSTIFICATION_HEADER)
+    try:
+        justification = validate_justification(raw)
+    except BreakGlassError as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "break_glass_required",
+                "reason": str(exc),
+                "header": JUSTIFICATION_HEADER,
+                "source_tenant": own,
+                "target_tenant": target_tenant,
+            },
+        )
+    caller = str(
+        principal.get("sub")
+        or principal.get("key_name")
+        or "unknown"
+    )
+    try:
+        client_ip = request.client.host if request.client else None
+    except Exception:
+        client_ip = None
+    request_id = request.headers.get("x-request-id") or getattr(
+        getattr(request, "state", object()), "request_id", None
+    )
+    try:
+        record_break_glass(
+            caller=caller,
+            caller_role=str(role or "unknown"),
+            source_tenant=own,
+            target_tenant=target_tenant,
+            route=str(request.url.path),
+            method=str(request.method),
+            justification=justification,
+            client_ip=client_ip,
+            request_id=request_id,
+        )
+    except Exception:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="failed to record break-glass event; access denied",
+        )

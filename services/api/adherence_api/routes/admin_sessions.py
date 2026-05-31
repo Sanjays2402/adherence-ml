@@ -133,7 +133,7 @@ def revoke_all(
     caller = str(p.get("sub") or p.get("key_name") or "unknown")
     # Non-admins cannot cross-tenant; admins can but we still record it.
     if body.tenant:
-        require_tenant_access(body.tenant, p)
+        require_tenant_access(body.tenant, p, request)
     if dry_run:
         cutoff = body.cutoff_iat
         if cutoff is None:

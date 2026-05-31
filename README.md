@@ -2,6 +2,60 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Break-glass logging for cross-tenant admin access
+
+Enterprise procurement reviewers (HIPAA, SOC2, ISO 27001) reject any
+SaaS that lets staff quietly read a customer's data. Admin roles in
+this API can already operate across tenants (compliance audits,
+support, fleet rollups). Until now, the only trail was a regular admin
+audit row buried among thousands of same-tenant ops.
+
+Every cross-tenant access now requires the
+`X-Break-Glass-Justification` header (10 to 2048 chars after strip) and
+is recorded in a dedicated, append-only `break_glass_events` table
+scoped to the *target* tenant. Owners of the impacted workspace see
+every time an outside operator (or another tenant's admin) reached
+into their data, with who, when, source tenant, route, method, client
+IP, request id, and the written justification.
+
+Fleet-wide access (`tenant=*`) is itself a break-glass action and is
+recorded against the `*` scope so the vendor's own SRE leadership can
+review it.
+
+### Try it
+
+Local API runs on `http://localhost:8000`.
+
+```
+# 1. Same-tenant admin reads its own audit log; no header required.
+curl -sS http://localhost:8000/v1/audit/list \
+  -H 'Authorization: Bearer <acme-admin-jwt>'
+
+# 2. Cross-tenant attempt without a justification is rejected 400.
+curl -sS -i 'http://localhost:8000/v1/audit/list?tenant=globex' \
+  -H 'Authorization: Bearer <acme-admin-jwt>'
+# HTTP/1.1 400 Bad Request
+# {"detail":{"code":"break_glass_required", ...}}
+
+# 3. With a real justification, the access succeeds AND a row is
+#    recorded against tenant=globex.
+curl -sS 'http://localhost:8000/v1/audit/list?tenant=globex' \
+  -H 'Authorization: Bearer <acme-admin-jwt>' \
+  -H 'X-Break-Glass-Justification: Investigating ticket SUP-4218 per signed SRE runbook'
+
+# 4. The impacted tenant's owner reviews break-glass activity.
+curl -sS http://localhost:8000/v1/admin/break-glass \
+  -H 'Authorization: Bearer <globex-admin-jwt>'
+
+# 5. Export the full log as CSV for the customer's SIEM.
+curl -sS http://localhost:8000/v1/admin/break-glass/export.csv \
+  -H 'Authorization: Bearer <globex-admin-jwt>' \
+  -o globex-break-glass.csv
+```
+
+See `packages/common/adherence_common/break_glass.py` and the
+integration suite at `tests/integration/test_break_glass.py`.
+
 ## Per-source IP allowlist for inbound webhooks
 
 Partner systems (Med-Tracker and friends) post ground-truth dose

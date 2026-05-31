@@ -99,10 +99,15 @@ def test_audit_stats_scopes_to_caller_tenant(tmp_path, monkeypatch):
 
     # Admins may opt in to cross-tenant rollups via tenant=*; that's the
     # documented escape hatch for fleet-wide compliance queries.
+    bg = {"x-api-key": acme_admin, "X-Break-Glass-Justification": "compliance fleet audit"}
+    # Without justification, cross-tenant calls now 400.
     r = client.get(
         "/v1/audit/stats?window_hours=24&tenant=*",
         headers={"x-api-key": acme_admin},
     )
+    assert r.status_code == 400
+    assert r.json()["detail"]["code"] == "break_glass_required"
+    r = client.get("/v1/audit/stats?window_hours=24&tenant=*", headers=bg)
     assert r.status_code == 200, r.text
     assert r.json()["n_calls"] == 4
 
@@ -110,7 +115,7 @@ def test_audit_stats_scopes_to_caller_tenant(tmp_path, monkeypatch):
     # admin-only, but it must not silently fall back to caller scope.
     r = client.get(
         "/v1/audit/stats?window_hours=24&tenant=globex",
-        headers={"x-api-key": acme_admin},
+        headers={"x-api-key": acme_admin, "X-Break-Glass-Justification": "customer support ticket 1234"},
     )
     assert r.status_code == 200
     assert r.json()["n_calls"] == 1

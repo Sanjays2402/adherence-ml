@@ -13,7 +13,7 @@ from typing import Any
 
 from adherence_common.audit_chain import verify_chain
 from adherence_common.db import PredictionAudit, init_db, session
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -78,6 +78,7 @@ class ShadowStatsResponse(BaseModel):
 
 @router.get("/shadow", response_model=ShadowStatsResponse)
 def shadow_stats(
+    request: Request,
     window_hours: int = Query(24, ge=1, le=24 * 30),
     large_threshold: float = Query(0.10, ge=0.0, le=1.0),
     tenant: str | None = Query(
@@ -97,7 +98,7 @@ def shadow_stats(
     """
     init_db()
     target = tenant or str(p.get("tenant") or "default")
-    require_tenant_access(target, p)
+    require_tenant_access(target, p, request)
     cutoff = datetime.utcnow() - timedelta(hours=window_hours)
     with session() as s:
         q = select(PredictionAudit).where(
@@ -146,6 +147,7 @@ def _row_to_model(r: PredictionAudit) -> AuditRow:
 
 @router.get("/list", response_model=AuditListResponse)
 def list_audit(
+    request: Request,
     limit: int = Query(100, ge=1, le=1000),
     user_id: str | None = None,
     route: str | None = None,
@@ -162,7 +164,7 @@ def list_audit(
 ) -> AuditListResponse:
     init_db()
     target = tenant or str(p.get("tenant") or "default")
-    require_tenant_access(target, p)
+    require_tenant_access(target, p, request)
     with session() as s:
         q = select(PredictionAudit).order_by(PredictionAudit.id.desc()).limit(limit)
         if target != "*":
@@ -196,6 +198,7 @@ class AuditVerifyResponse(BaseModel):
 
 @router.get("/verify", response_model=AuditVerifyResponse)
 def verify(
+    request: Request,
     limit: int | None = Query(None, ge=1, le=1_000_000),
     tenant: str | None = Query(
         None,
@@ -217,7 +220,7 @@ def verify(
     """
     init_db()
     target = tenant or str(p.get("tenant") or "default")
-    require_tenant_access(target, p)
+    require_tenant_access(target, p, request)
     res = verify_chain(limit=limit)
     if target == "*":
         breaks = res.breaks
@@ -267,6 +270,7 @@ def _percentile(values: list[float], pct: float) -> float | None:
 
 @router.get("/stats", response_model=AuditStatsResponse)
 def stats(
+    request: Request,
     window_hours: int = Query(24, ge=1, le=24 * 30),
     tenant: str | None = Query(
         None,
@@ -276,7 +280,7 @@ def stats(
 ) -> AuditStatsResponse:
     init_db()
     target = tenant or str(p.get("tenant") or "default")
-    require_tenant_access(target, p)
+    require_tenant_access(target, p, request)
     cutoff = datetime.utcnow() - timedelta(hours=window_hours)
     with session() as s:
         q = select(PredictionAudit).where(PredictionAudit.created_at >= cutoff)
@@ -361,6 +365,7 @@ def _stream_csv(rows: list[PredictionAudit]) -> Iterator[str]:
 
 @router.get("/export.csv")
 def export_csv(
+    request: Request,
     window_hours: int = Query(24, ge=1, le=24 * 90),
     user_id: str | None = None,
     route: str | None = None,
@@ -382,7 +387,7 @@ def export_csv(
     init_db()
     cutoff = datetime.utcnow() - timedelta(hours=window_hours)
     target = tenant or str(p.get("tenant") or "default")
-    require_tenant_access(target, p)
+    require_tenant_access(target, p, request)
     with session() as s:
         q = (
             select(PredictionAudit)

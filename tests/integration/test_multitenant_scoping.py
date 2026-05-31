@@ -88,8 +88,15 @@ def test_tenant_keys_isolate_audit_reads(tmp_path, monkeypatch):
     for row in r.json()["items"]:
         assert row["tenant_id"] == "default"
 
-    # Admin can pass an explicit tenant to read another bucket.
+    bg = "customer support ticket 4242"
+    # Without justification, cross-tenant queries are blocked.
     r = client.get("/v1/audit/list?limit=50&tenant=acme", headers=admin)
+    assert r.status_code == 400
+    # Admin can pass an explicit tenant to read another bucket with a justification.
+    r = client.get(
+        "/v1/audit/list?limit=50&tenant=acme",
+        headers={**admin, "X-Break-Glass-Justification": bg},
+    )
     assert r.status_code == 200
     items = r.json()["items"]
     assert items, "expected at least one acme audit row"
@@ -97,8 +104,11 @@ def test_tenant_keys_isolate_audit_reads(tmp_path, monkeypatch):
     assert any(it["user_id"] == "u_acme_1" for it in items)
     assert not any(it["user_id"] == "u_globex_1" for it in items)
 
-    # Cross-tenant wildcard requires admin.
-    r = client.get("/v1/audit/list?tenant=*", headers=admin)
+    # Cross-tenant wildcard requires admin and a justification.
+    r = client.get(
+        "/v1/audit/list?tenant=*",
+        headers={**admin, "X-Break-Glass-Justification": bg},
+    )
     assert r.status_code == 200
     tenants_seen = {it["tenant_id"] for it in r.json()["items"]}
     assert {"acme", "globex"}.issubset(tenants_seen)
@@ -127,10 +137,11 @@ def test_non_admin_cannot_cross_tenants(tmp_path, monkeypatch):
     r = client.post("/v1/predict", json=payload, headers={"x-api-key": globex_key})
     assert r.status_code == 200
 
-    # acme-pinned admin reading "globex": admin role overrides tenant pin.
+    # acme-pinned admin reading "globex": admin role overrides tenant pin,
+    # break-glass justification recorded.
     r = client.get(
         "/v1/audit/list?tenant=globex",
-        headers={"x-api-key": acme_admin_key},
+        headers={"x-api-key": acme_admin_key, "X-Break-Glass-Justification": "on-call incident IR-77"},
     )
     assert r.status_code == 200
     items = r.json()["items"]
