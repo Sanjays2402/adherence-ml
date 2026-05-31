@@ -65,7 +65,7 @@ def _seed_delivery(
         row = WebhookDelivery(
             subscription_id=subscription_id,
             tenant_id=tenant_id,
-            event_type="intervention.high_risk",
+            event_type="intervention.recommended",
             payload_json={"u": "u1"},
             attempt=1,
             status_code=status_code,
@@ -101,7 +101,7 @@ def test_subscription_health_summary_and_tenant_isolation(tmp_path, monkeypatch)
             json={
                 "name": name,
                 "url": url,
-                "event_types": ["intervention.high_risk"],
+                "event_types": ["intervention.recommended"],
                 "active": True,
             },
             headers={"x-api-key": tenant_key},
