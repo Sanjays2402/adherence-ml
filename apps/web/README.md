@@ -28,3 +28,19 @@ Set `ADHERENCE_API_KEY` to a key with admin role so the dashboard can call `/v1/
 ## Tech
 
 Next.js 15 App Router, React 19, Tailwind v4, SWR, Recharts, Phosphor duotone icons.
+
+## Run history
+
+Every POST through `/api/proxy/v1/{predict,cohort/risk,forecast/user}` is appended to
+`.data/runs.jsonl` (single-process JSONL store, no native bindings). The `/history`
+page lists every run with search, kind filter, pagination, copy-link, and delete.
+Public share URLs live at `/r/<id>` and render without the sidebar so they look
+clean in an incognito window.
+
+- `GET /api/runs?q=&kind=&limit=&offset=` lists with search and filter
+- `POST /api/runs` records a run (zod-validated)
+- `GET /api/runs/<id>` fetches one
+- `DELETE /api/runs/<id>` removes one
+
+Override the data dir with `ADHERENCE_DATA_DIR=/path/to/dir`. Run the test suite
+with `pnpm test`.
