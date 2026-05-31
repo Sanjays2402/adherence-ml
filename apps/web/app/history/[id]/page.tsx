@@ -2,9 +2,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getRun } from "@/lib/runs-store";
+import { getSession } from "@/lib/session";
 import { ArrowLeft, Clock, Link as LinkIcon } from "@phosphor-icons/react/dist/ssr";
 import { PageHeader, Card, CardHeader } from "@/components/ui/primitives";
 import RunActions from "./run-actions";
+import RunNotes from "./run-notes";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +38,7 @@ export default async function RunDetailPage({
   const rec = await getRun(id);
   if (!rec) notFound();
 
+  const sess = await getSession();
   const created = new Date(rec.created_at).toLocaleString();
   const pretty = JSON.stringify(rec.payload, null, 2);
 
@@ -92,6 +95,10 @@ export default async function RunDetailPage({
           <pre className="p-4 text-[11px] font-mono leading-snug overflow-auto max-h-[70vh] whitespace-pre-wrap break-all">
             {pretty}
           </pre>
+        </Card>
+
+        <Card className="md:col-span-3">
+          <RunNotes runId={rec.id} currentUserId={sess?.user.id ?? null} />
         </Card>
       </div>
     </div>

@@ -248,6 +248,23 @@ API surface:
 - `GET /api/runs/:id/pdf` per-run printable PDF report (single page, includes title, kind, timestamp, risk score if present, and a truncated payload dump)
 - `GET /api/runs/:id/share` current public-share status for a run
 - `POST /api/runs/:id/share` body `{ enabled: boolean }` mint or revoke a public share link
+- `GET /api/runs/:id/notes` list every note attached to a run, oldest first
+- `POST /api/runs/:id/notes` body `{ body: string }` append a note (1-2000 chars, attributed to the signed-in user when present)
+- `DELETE /api/runs/:id/notes/:noteId` soft-delete a note; only the original author may delete
+
+#### Notes on a run
+
+Open any run detail page at `/history/<id>` and scroll to the `Notes` card to
+add timestamped annotations. Useful for clinical follow-ups ("called patient,
+rescheduled dose"), QA tags ("flagged for retraining"), or shift handoffs.
+Notes are scoped to the run, attributed to the signed-in user's email, and
+can only be deleted by their author. Try it with curl:
+
+```bash
+curl -s -X POST http://localhost:3000/api/runs/<run-id>/notes \
+  -H 'Content-Type: application/json' \
+  -d '{"body":"Called patient, dose rescheduled to 9pm."}'
+```
 
 Share a single run publicly from its detail page with the `Create public link`
 button. That mints a 22-character token and exposes the run read-only at
