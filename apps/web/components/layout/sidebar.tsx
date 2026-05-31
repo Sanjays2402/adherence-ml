@@ -24,6 +24,7 @@ import {
 } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import SidebarUser from "./sidebar-user";
+import NotificationBell from "./notification-bell";
 
 const NAV = [
   { href: "/", label: "Overview", icon: House, hint: "What this does" },
@@ -42,6 +43,7 @@ const NAV = [
   { href: "/api-keys", label: "API keys", icon: Key, hint: "Programmatic access" },
   { href: "/usage", label: "Usage", icon: Gauge, hint: "Quota // billing" },
   { href: "/webhooks", label: "Webhooks", icon: Plugs, hint: "Outbound deliveries" },
+  { href: "/notifications", label: "Notifications", icon: Bell, hint: "Activity feed" },
   { href: "/settings", label: "Settings", icon: Gear, hint: "Profile // data // wipe" },
 ];
 
@@ -61,6 +63,9 @@ export default function Sidebar() {
           <span className="text-[10px] font-mono uppercase tracking-widest text-[var(--color-muted)]">
             observability
           </span>
+        </div>
+        <div className="ml-auto">
+          <NotificationBell />
         </div>
       </div>
       <nav className="flex md:flex-col gap-0.5 p-2 overflow-x-auto md:overflow-x-visible scrollbar-thin">

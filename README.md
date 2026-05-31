@@ -95,6 +95,22 @@ curl -s -X POST http://localhost:3000/api/settings/wipe \
   -d '{"confirm":"DELETE EVERYTHING"}'
 ```
 
+### Notifications
+
+An in-app activity feed lives at
+[/notifications](http://localhost:3000/notifications) with an unread-badge bell
+in the sidebar header. New entries land automatically when a run is saved, a
+batch job finishes, or a webhook delivery exhausts its retries. The bell
+polls every 30 seconds. Broadcasts (operator announcements with `user_id` of
+`null`) are visible to every account but the read state is tracked per user
+so marking one read does not silence it for everyone else. Try it:
+
+```bash
+curl http://localhost:3000/api/notifications
+curl -X POST http://localhost:3000/api/notifications/<id>/read
+curl -X POST http://localhost:3000/api/notifications/read-all
+```
+
 ### Webhooks
 
 Register an HTTP endpoint and adherence.ml will POST a signed JSON envelope to

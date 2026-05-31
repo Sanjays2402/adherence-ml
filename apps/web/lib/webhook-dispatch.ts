@@ -21,6 +21,7 @@ import {
   newDeliveryId,
   endpointSecretHash,
 } from "./webhooks-store";
+import { createNotification } from "./notifications-store";
 
 const MAX_ATTEMPTS = 4;
 const BACKOFF_MS = [0, 2_000, 8_000, 30_000];
@@ -156,6 +157,14 @@ async function dispatchToEndpoint(
     }
     delivery.finished_at = Date.now();
     await recordDelivery(delivery);
+    // final failure: broadcast a notification so the operator notices
+    void createNotification({
+      user_id: null,
+      kind: "webhook.failed",
+      title: `Webhook delivery failed: ${endpoint.name || endpoint.url}`,
+      body: `Event ${event} could not be delivered after ${MAX_ATTEMPTS} attempts.`,
+      href: `/webhooks`,
+    }).catch(() => {});
   };
 
   if (opts.awaitRetries) {

@@ -8,6 +8,7 @@ import {
   type RunRecord,
 } from "@/lib/runs-store";
 import { emit } from "@/lib/webhook-dispatch";
+import { createNotification } from "@/lib/notifications-store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -53,6 +54,16 @@ export async function POST(req: NextRequest) {
     tags: parsed.data.tags ?? [],
   };
   await appendRun(rec);
+  // in-app notification for the owning user (or broadcast when anonymous)
+  void createNotification({
+    user_id: rec.user_id,
+    kind: "run.completed",
+    title: rec.title || `New ${rec.kind} run`,
+    body: rec.summary || `Saved a ${rec.kind} run to your history.`,
+    href: `/history/${rec.id}`,
+  }).catch(() => {
+    // notifications are best-effort; never fail the request
+  });
   // fire-and-forget webhook fanout; never blocks the response
   void emit("run.created", {
     id: rec.id,

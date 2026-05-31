@@ -3,6 +3,8 @@ import { z } from "zod";
 
 import { ApiError, apiFetch } from "@/lib/api";
 import { parseCsv, toCsv } from "@/lib/csv";
+import { getSession } from "@/lib/session";
+import { createNotification } from "@/lib/notifications-store";
 import type { PredictResponse, DoseClass } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -210,6 +212,22 @@ export async function POST(req: NextRequest) {
     mean_miss_probability: predCount === 0 ? 0 : Number((probSum / predCount).toFixed(4)),
     latency_ms: Date.now() - t0,
   };
+
+  // best-effort notification for the user who ran the batch
+  void (async () => {
+    try {
+      const session = await getSession(req);
+      await createNotification({
+        user_id: session?.user.id ?? null,
+        kind: "batch.completed",
+        title: `Batch scored: ${summary.predictions} predictions across ${summary.users} users`,
+        body: `${summary.high_risk} high risk in ${summary.latency_ms}ms.`,
+        href: "/batch",
+      });
+    } catch {
+      // notifications are best-effort
+    }
+  })();
 
   if (format === "csv") {
     const csv = toCsv(
