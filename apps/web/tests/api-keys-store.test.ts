@@ -61,4 +61,35 @@ describe("api-keys-store", () => {
     expect(store.extractKey(h2)).toBe("xyz");
     expect(store.extractKey(new Headers())).toBeNull();
   });
+
+  it("rotates a key: old plaintext stops verifying, new one works, metadata is preserved", async () => {
+    const created = await store.createKey("prod backend");
+    // bump usage so we can confirm continuity through rotation.
+    await store.verifyKey(created.plaintext);
+    await store.verifyKey(created.plaintext);
+
+    const rotated = await store.rotateKey(created.record.id);
+    expect(rotated).not.toBeNull();
+    expect(rotated!.plaintext).toMatch(/^adh_/);
+    expect(rotated!.plaintext).not.toBe(created.plaintext);
+    expect(rotated!.record.id).toBe(created.record.id);
+    expect(rotated!.record.name).toBe("prod backend");
+    expect(rotated!.record.use_count).toBe(2);
+    expect(rotated!.record.prefix).toBe(rotated!.plaintext.slice(0, 12));
+    expect(rotated!.record.rotated_at).toBeTypeOf("number");
+
+    // Old secret no longer authenticates.
+    expect(await store.verifyKey(created.plaintext)).toBeNull();
+    // New secret does, and increments the preserved counter.
+    const v = await store.verifyKey(rotated!.plaintext);
+    expect(v).not.toBeNull();
+    expect(v!.use_count).toBe(3);
+  });
+
+  it("rotateKey returns null for unknown or revoked keys", async () => {
+    expect(await store.rotateKey("does-not-exist")).toBeNull();
+    const { record } = await store.createKey("will-revoke");
+    await store.revokeKey(record.id);
+    expect(await store.rotateKey(record.id)).toBeNull();
+  });
 });

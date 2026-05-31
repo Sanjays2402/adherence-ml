@@ -20,6 +20,7 @@ export interface ApiKeyRecord {
   last_used_at: number | null;
   use_count: number;
   revoked: boolean;
+  rotated_at?: number | null;
 }
 
 export interface NewApiKey {
@@ -97,6 +98,29 @@ export async function createKey(name: string): Promise<NewApiKey> {
   });
   await writeQueue;
   return { record, plaintext };
+}
+
+/**
+ * Rotate a key: generate a new plaintext + hash + prefix in place while
+ * preserving id, name, created_at, last_used_at, and use_count so dashboards
+ * and audit logs stay continuous. Revoked keys cannot be rotated; callers
+ * should issue a fresh key instead. Returns the new plaintext exactly once.
+ */
+export async function rotateKey(id: string): Promise<NewApiKey | null> {
+  let issued: NewApiKey | null = null;
+  writeQueue = writeQueue.then(async () => {
+    const s = await readStore();
+    const k = s.keys.find((k) => k.id === id);
+    if (!k || k.revoked) return;
+    const plaintext = "adh_" + randomBytes(24).toString("base64url");
+    k.prefix = plaintext.slice(0, 12);
+    k.hash = hashKey(plaintext);
+    k.rotated_at = Date.now();
+    issued = { record: { ...k }, plaintext };
+    await writeStore(s);
+  });
+  await writeQueue;
+  return issued;
 }
 
 export async function revokeKey(id: string): Promise<boolean> {

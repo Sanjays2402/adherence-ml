@@ -162,6 +162,12 @@ persisted to `apps/web/.data/api-keys.json`. Each successful call records
 last-used and increments a counter, and lands in the same run history under
 the `v1` tag.
 
+If a secret leaks, hit `Rotate` on the API keys page (or `POST
+/api/keys/<id>/rotate`) to mint a new plaintext in place. Rotation keeps the
+key id, name, created date, last-used time, and total call count so charts
+and audit trails stay continuous, while the old secret stops working
+immediately. Revoked keys cannot be rotated; create a fresh one instead.
+
 ```bash
 curl -X POST http://localhost:3000/v1/predict \
   -H "authorization: Bearer adh_YOUR_KEY" \

@@ -17,6 +17,7 @@ export async function GET() {
       last_used_at: k.last_used_at,
       use_count: k.use_count,
       revoked: k.revoked,
+      rotated_at: k.rotated_at ?? null,
     })),
   });
 }

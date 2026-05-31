@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listAllRuns, type RunRecord, type RunKind } from "@/lib/runs-store";
-import { filterRunsForExport, parseExportDate, type ExportFilters } from "@/lib/runs-export";
+import { filterRunsForExport, type ExportFilters } from "@/lib/runs-export";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,6 +47,18 @@ function toNdjson(rows: RunRecord[]): string {
   return rows.map((r) => JSON.stringify(r)).join("\n") + (rows.length ? "\n" : "");
 }
 
+/** Parse a date in YYYY-MM-DD or ISO form; returns epoch ms or null. */
+function parseDate(raw: string | null, endOfDay: boolean): number | null {
+  if (!raw) return null;
+  // Accept bare YYYY-MM-DD as a local-day boundary in UTC.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const t = Date.parse(raw + (endOfDay ? "T23:59:59.999Z" : "T00:00:00.000Z"));
+    return Number.isNaN(t) ? null : t;
+  }
+  const t = Date.parse(raw);
+  return Number.isNaN(t) ? null : t;
+}
+
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
   const fmt = (sp.get("format") ?? "json").toLowerCase();
@@ -61,8 +73,8 @@ export async function GET(req: NextRequest) {
     kind,
     tag: sp.get("tag") ?? undefined,
     user_id: sp.get("user_id") ?? undefined,
-    from: parseExportDate(sp.get("from"), false),
-    to: parseExportDate(sp.get("to"), true),
+    from: parseDate(sp.get("from"), false),
+    to: parseDate(sp.get("to"), true),
   };
 
   const all = await listAllRuns();

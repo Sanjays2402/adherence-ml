@@ -11,6 +11,7 @@ import {
   Terminal,
   Warning,
   ShieldCheck,
+  ArrowsClockwise,
 } from "@phosphor-icons/react";
 import {
   PageHeader,
@@ -33,6 +34,7 @@ type KeyRow = {
   last_used_at: number | null;
   use_count: number;
   revoked: boolean;
+  rotated_at: number | null;
 };
 
 type ListResp = { keys: KeyRow[] };
@@ -75,8 +77,9 @@ export default function KeysClient() {
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   const [createErr, setCreateErr] = useState<string | null>(null);
-  const [issued, setIssued] = useState<{ name: string; key: string } | null>(null);
+  const [issued, setIssued] = useState<{ name: string; key: string; rotated?: boolean } | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [rotatingId, setRotatingId] = useState<string | null>(null);
 
   const onCreate = useCallback(async () => {
     setCreateErr(null);
@@ -119,6 +122,32 @@ export default function KeysClient() {
     [mutate],
   );
 
+  const onRotate = useCallback(
+    async (k: KeyRow) => {
+      if (
+        !confirm(
+          `Rotate "${k.name}"? The old secret stops working immediately. Make sure you can update every client that uses it.`,
+        )
+      ) {
+        return;
+      }
+      setRotatingId(k.id);
+      try {
+        const res = await fetch(`/api/keys/${k.id}/rotate`, { method: "POST" });
+        const json = await res.json();
+        if (!res.ok) {
+          alert(json?.detail ?? "rotate failed");
+          return;
+        }
+        setIssued({ name: json.name, key: json.key, rotated: true });
+        mutate();
+      } finally {
+        setRotatingId(null);
+      }
+    },
+    [mutate],
+  );
+
   const keys = data?.keys ?? [];
   const active = keys.filter((k) => !k.revoked).length;
 
@@ -149,8 +178,12 @@ export default function KeysClient() {
       {issued ? (
         <Card className="border-[var(--color-accent)]/40">
           <CardHeader
-            title={`Key created: ${issued.name}`}
-            hint="Copy it now. We store only a hash, so you cannot view it again."
+            title={`${issued.rotated ? "Key rotated" : "Key created"}: ${issued.name}`}
+            hint={
+              issued.rotated
+                ? "The previous secret is now invalid. Copy the new one and update every client that uses it."
+                : "Copy it now. We store only a hash, so you cannot view it again."
+            }
             right={<ShieldCheck weight="duotone" size={16} className="text-[var(--color-accent)]" />}
           />
           <div className="p-4 pt-2 space-y-3">
@@ -224,6 +257,7 @@ export default function KeysClient() {
                     <th className="px-4 py-2 font-medium">Prefix</th>
                     <th className="px-4 py-2 font-medium">Created</th>
                     <th className="px-4 py-2 font-medium">Last used</th>
+                    <th className="px-4 py-2 font-medium">Rotated</th>
                     <th className="px-4 py-2 font-medium text-right">Calls</th>
                     <th className="px-4 py-2 font-medium">Status</th>
                     <th className="px-4 py-2 font-medium text-right">Actions</th>
@@ -240,6 +274,9 @@ export default function KeysClient() {
                       <td className="px-4 py-2 font-mono text-[11px] text-[var(--color-muted)]">
                         {fmt(k.last_used_at)}
                       </td>
+                      <td className="px-4 py-2 font-mono text-[11px] text-[var(--color-muted)]">
+                        {fmt(k.rotated_at)}
+                      </td>
                       <td className="px-4 py-2 text-right font-mono">{k.use_count}</td>
                       <td className="px-4 py-2">
                         {k.revoked ? (
@@ -250,16 +287,29 @@ export default function KeysClient() {
                       </td>
                       <td className="px-4 py-2 text-right">
                         {!k.revoked ? (
-                          <button
-                            type="button"
-                            onClick={() => onRevoke(k.id)}
-                            disabled={revokingId === k.id}
-                            className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-surface)] hover:border-[var(--color-high)]/40 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)] disabled:opacity-50"
-                            aria-label={`revoke ${k.name}`}
-                          >
-                            <Trash weight="duotone" size={12} />
-                            {revokingId === k.id ? "..." : "revoke"}
-                          </button>
+                          <div className="inline-flex items-center gap-1 justify-end">
+                            <button
+                              type="button"
+                              onClick={() => onRotate(k)}
+                              disabled={rotatingId === k.id}
+                              className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-surface)] hover:border-[var(--color-accent)]/40 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)] disabled:opacity-50"
+                              aria-label={`rotate ${k.name}`}
+                              title="Issue a new secret for this key without changing its name or history"
+                            >
+                              <ArrowsClockwise weight="duotone" size={12} />
+                              {rotatingId === k.id ? "..." : "rotate"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onRevoke(k.id)}
+                              disabled={revokingId === k.id}
+                              className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-surface)] hover:border-[var(--color-high)]/40 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)] disabled:opacity-50"
+                              aria-label={`revoke ${k.name}`}
+                            >
+                              <Trash weight="duotone" size={12} />
+                              {revokingId === k.id ? "..." : "revoke"}
+                            </button>
+                          </div>
                         ) : (
                           <span className="text-[11px] text-[var(--color-muted)]">--</span>
                         )}

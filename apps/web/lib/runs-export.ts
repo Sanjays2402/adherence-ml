@@ -9,7 +9,7 @@ export interface ExportFilters {
   user_id?: string;
 }
 
-/** Apply the same filter semantics the /api/runs GET uses, plus date range, tag, user. */
+/** Apply the same filter semantics /api/runs uses, plus date range, tag, user. */
 export function filterRunsForExport(
   all: RunRecord[],
   f: ExportFilters,
@@ -34,15 +34,4 @@ export function filterRunsForExport(
     }
     return true;
   });
-}
-
-/** Parse a date in YYYY-MM-DD or ISO form; returns epoch ms or null. */
-export function parseExportDate(raw: string | null, endOfDay: boolean): number | null {
-  if (!raw) return null;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-    const t = Date.parse(raw + (endOfDay ? "T23:59:59.999Z" : "T00:00:00.000Z"));
-    return Number.isNaN(t) ? null : t;
-  }
-  const t = Date.parse(raw);
-  return Number.isNaN(t) ? null : t;
 }
