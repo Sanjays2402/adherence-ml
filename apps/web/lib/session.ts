@@ -11,7 +11,11 @@
 import { createHmac, createHash, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import type { NextRequest } from "next/server";
-import { getUserById, type UserRecord } from "./users-store";
+import {
+  getUserById,
+  currentSessionGen,
+  type UserRecord,
+} from "./users-store";
 
 export const SESSION_COOKIE = "adh_session";
 export const MFA_PENDING_COOKIE = "adh_mfa_pending";
@@ -32,6 +36,13 @@ interface SessionPayload {
   eml: string;
   iat: number;
   exp: number;
+  /**
+   * Session generation. Cookies whose gen is below the user's current
+   * session_gen are rejected, enabling force-logout-all-sessions.
+   * Optional for backward compatibility with cookies minted before this
+   * field existed (those are treated as gen 1).
+   */
+  gen?: number;
 }
 
 function getSecret(): Buffer {
@@ -103,8 +114,20 @@ export function buildSession(user: UserRecord): {
     eml: user.email,
     iat: now,
     exp: now + SESSION_TTL_MS,
+    gen: currentSessionGen(user),
   };
   return { cookie: signSession(payload), expires: new Date(payload.exp) };
+}
+
+/** Cookie attributes object used by routes that re-mint the session. */
+export function sessionCookieOptions(expires: Date) {
+  return {
+    path: "/",
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: process.env.NODE_ENV === "production",
+    expires,
+  };
 }
 
 export interface SessionContext {
@@ -128,6 +151,11 @@ export async function getSession(req?: NextRequest): Promise<SessionContext | nu
   if (!payload) return null;
   const user = await getUserById(payload.uid);
   if (!user) return null;
+  // Reject cookies issued before the user's current session generation
+  // (force-logout-all). Missing `gen` in a payload is treated as gen 1
+  // so legacy cookies keep working until the user explicitly revokes.
+  const cookieGen = typeof payload.gen === "number" ? payload.gen : 1;
+  if (cookieGen < currentSessionGen(user)) return null;
   return { user, payload };
 }
 

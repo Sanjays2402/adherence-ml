@@ -22,6 +22,15 @@ export interface UserRecord {
   recovery_code_hashes?: string[];
   /** Unix ms when 2FA was last enabled or disabled, for audit display. */
   totp_updated_at?: number | null;
+  /**
+   * Session generation counter. Incremented when the user revokes all
+   * outstanding sessions; cookies whose `gen` claim is below this value
+   * are rejected by getSession. Defaults to 1 for users created before
+   * this field existed (legacy cookies without a `gen` claim still verify).
+   */
+  session_gen?: number;
+  /** Unix ms when sessions were last force-revoked. */
+  sessions_revoked_at?: number | null;
 }
 
 export interface MagicTokenRecord {
@@ -178,6 +187,29 @@ export async function getUserById(id: string): Promise<UserRecord | null> {
   if (!id) return null;
   const store = await readStore();
   return store.users.find((u) => u.id === id) ?? null;
+}
+
+/** Current session generation for a user; 1 if unset (legacy). */
+export function currentSessionGen(user: UserRecord | null | undefined): number {
+  if (!user) return 1;
+  const g = user.session_gen;
+  return typeof g === "number" && g >= 1 ? g : 1;
+}
+
+/**
+ * Force-revoke every outstanding session cookie for this user by bumping
+ * the session generation. Returns the updated user.
+ */
+export async function bumpSessionGen(
+  userId: string,
+): Promise<UserRecord | null> {
+  const store = await readStore();
+  const u = store.users.find((x) => x.id === userId);
+  if (!u) return null;
+  u.session_gen = currentSessionGen(u) + 1;
+  u.sessions_revoked_at = Date.now();
+  await writeStore(store);
+  return u;
 }
 
 // Test hooks - exported so the smoke test can reset state.

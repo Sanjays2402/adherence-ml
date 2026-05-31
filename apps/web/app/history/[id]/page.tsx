@@ -3,10 +3,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getRun } from "@/lib/runs-store";
 import { getSession } from "@/lib/session";
-import { ArrowLeft, Clock, Link as LinkIcon } from "@phosphor-icons/react/dist/ssr";
+import { ArrowLeft, Clock, Link as LinkIcon, Repeat } from "@phosphor-icons/react/dist/ssr";
 import { PageHeader, Card, CardHeader } from "@/components/ui/primitives";
 import RunActions from "./run-actions";
 import RunNotes from "./run-notes";
+import { isCloneable } from "@/lib/run-clone";
 
 export const dynamic = "force-dynamic";
 
@@ -41,6 +42,7 @@ export default async function RunDetailPage({
   const sess = await getSession();
   const created = new Date(rec.created_at).toLocaleString();
   const pretty = JSON.stringify(rec.payload, null, 2);
+  const cloneable = isCloneable(rec);
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -49,12 +51,22 @@ export default async function RunDetailPage({
         title={rec.title}
         description={rec.summary || "Saved model run, shareable by link."}
         actions={
-          <Link
-            href="/history"
-            className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[12px] hover:bg-[var(--color-border)]/30"
-          >
-            <ArrowLeft weight="duotone" size={14} /> Back to history
-          </Link>
+          <div className="flex flex-wrap items-center gap-2">
+            {cloneable && (
+              <Link
+                href={`/predict?from=${encodeURIComponent(rec.id)}`}
+                className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-accent)]/40 bg-[var(--color-accent)]/10 px-2.5 py-1.5 text-[12px] text-[var(--color-accent)] hover:bg-[var(--color-accent)]/20"
+              >
+                <Repeat weight="duotone" size={14} /> Re-run
+              </Link>
+            )}
+            <Link
+              href="/history"
+              className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[12px] hover:bg-[var(--color-border)]/30"
+            >
+              <ArrowLeft weight="duotone" size={14} /> Back to history
+            </Link>
+          </div>
         }
       />
 

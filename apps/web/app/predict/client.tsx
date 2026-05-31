@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Lightning,
   Plus,
@@ -120,6 +121,67 @@ export default function PredictClient() {
   useEffect(() => {
     setHistory(loadHistory());
   }, []);
+
+  // ?from=<runId> prefills the form from a saved run (Re-run button on /history/[id]).
+  const searchParams = useSearchParams();
+  const [cloneStatus, setCloneStatus] = useState<
+    | { kind: "idle" }
+    | { kind: "loading"; id: string }
+    | { kind: "loaded"; id: string }
+    | { kind: "error"; id: string; message: string }
+  >({ kind: "idle" });
+  useEffect(() => {
+    const from = searchParams?.get("from");
+    if (!from) return;
+    let cancelled = false;
+    setCloneStatus({ kind: "loading", id: from });
+    (async () => {
+      try {
+        const r = await fetch(`/api/runs/${encodeURIComponent(from)}/clone`, {
+          cache: "no-store",
+        });
+        const data = await r.json();
+        if (cancelled) return;
+        if (!r.ok) {
+          throw new Error(
+            typeof data?.detail === "string"
+              ? data.detail
+              : `clone failed (${r.status})`,
+          );
+        }
+        const inputs = data?.inputs as
+          | { user_id: string; top_k: number; rows: Row[] }
+          | undefined;
+        if (!inputs || !Array.isArray(inputs.rows) || inputs.rows.length === 0) {
+          throw new Error("clone response missing inputs");
+        }
+        setUserId(inputs.user_id);
+        setTopK(inputs.top_k);
+        setRows(
+          inputs.rows.map((r) => ({
+            dose_id: r.dose_id,
+            scheduled_at: r.scheduled_at,
+            dose_class: r.dose_class as DoseClass,
+            dose_strength_mg: Number(r.dose_strength_mg) || 0,
+          })),
+        );
+        setResult(null);
+        setLatencyMs(null);
+        setError(null);
+        setCloneStatus({ kind: "loaded", id: from });
+      } catch (e) {
+        if (cancelled) return;
+        setCloneStatus({
+          kind: "error",
+          id: from,
+          message: e instanceof Error ? e.message : String(e),
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams]);
 
   async function share() {
     if (!result) return;
@@ -265,6 +327,29 @@ export default function PredictClient() {
       />
 
       <div className="p-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        {cloneStatus.kind !== "idle" && (
+          <div className="lg:col-span-2">
+            {cloneStatus.kind === "loading" && (
+              <div className="inline-flex items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[12px] text-[var(--color-muted)]">
+                <Spinner weight="duotone" size={14} className="animate-spin" />
+                Loading inputs from run
+                <span className="font-mono">{cloneStatus.id}</span>
+              </div>
+            )}
+            {cloneStatus.kind === "loaded" && (
+              <div className="inline-flex items-center gap-2 rounded-md border border-[var(--color-accent)]/40 bg-[var(--color-accent)]/10 px-3 py-2 text-[12px] text-[var(--color-accent)]">
+                <CheckCircle weight="duotone" size={14} />
+                Prefilled from run <span className="font-mono">{cloneStatus.id}</span>. Edit and submit to re-run.
+              </div>
+            )}
+            {cloneStatus.kind === "error" && (
+              <div className="inline-flex items-center gap-2 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-[12px] text-red-400">
+                <X weight="duotone" size={14} />
+                Could not load run {cloneStatus.id}: {cloneStatus.message}
+              </div>
+            )}
+          </div>
+        )}
         <Card>
           <CardHeader title="Request" hint="POST /v1/predict" />
           <form onSubmit={submit} className="p-4 space-y-4">

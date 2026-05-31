@@ -421,6 +421,18 @@ honor the active search, kind, and date-range filters, so you can pull just
 "failed predict runs in the last 7 days" without post-processing. The detail
 page is a plain server route so links are shareable in incognito.
 
+**Re-run a past prediction.** Open any predict (or demo) run at
+`/history/<id>` and click **Re-run** in the header. The button deep-links
+to `/predict?from=<id>`, which fetches `/api/runs/<id>/clone` and prefills
+the user id, top-k, and the entire dose schedule so you can tweak one
+field and resubmit without retyping. Non-replayable kinds (explain,
+forecast) hide the button instead of showing a dead control.
+
+```bash
+# see the inputs that would be replayed
+curl -s http://localhost:3000/api/runs/<run-id>/clone | jq
+```
+
 **Saved views.** Once your filter bar is dialed in (search, kind, date range,
 tags, pinned-only) click *save view*, give it a name, and it appears as a
 one-click chip above the filters. Saved views are per-user (anonymous sessions
