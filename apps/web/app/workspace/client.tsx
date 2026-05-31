@@ -264,6 +264,12 @@ export default function WorkspaceClient() {
               <ShieldCheck weight="duotone" size={13} /> Single sign-on
             </Link>
             <Link
+              href="/workspace/domains"
+              className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[12px] hover:bg-[var(--color-surface-2)]"
+            >
+              <ShieldCheck weight="duotone" size={13} /> Verified domains
+            </Link>
+            <Link
               href="/workspace/security"
               className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[12px] hover:bg-[var(--color-surface-2)]"
             >

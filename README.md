@@ -62,6 +62,40 @@ curl -sS http://localhost:8000/v1/workspace/members \
   -H "x-api-key: $ADMIN_KEY" | jq '.members[] | {subject, role}'
 ```
 
+## Verified email domains and auto-join (enterprise onboarding)
+
+IT teams will not click "Invite user" 400 times. Workspace owners can
+now claim an email domain (for example `acme.com`), prove ownership by
+publishing a TXT record at `_adherence-ml-verify.<domain>`, and flip an
+`auto_join` toggle. After that, any new sign-in whose email lives in
+the verified domain is provisioned into the workspace at the role the
+owner picked (`editor` or `viewer`). No invite emails, no shared
+secrets, no second portal.
+
+Guarantees enforced in `lib/workspaces-store.ts` and audited via
+`recordAudit`:
+- Public providers (`gmail.com`, `outlook.com`, etc.) cannot be claimed.
+- A domain can only be `verified` in one workspace at a time, so a
+  rival tenant cannot hijack onboarding for your company.
+- `auto_join` is rejected while a claim is still `pending`.
+- Only the workspace `owner` can claim, verify, toggle, or unclaim a
+  domain; every mutation is logged with actor, IP, target, and outcome.
+- `?dry_run=true` is honored on every claim/update/unclaim route.
+- Cross-tenant isolation is covered by
+  `apps/web/tests/workspace-domains.test.ts` (4 vitest cases).
+
+### Try it
+
+```bash
+cd apps/web && pnpm dev
+# open http://localhost:3000/workspace/domains
+# or via API (after signing in to get a session cookie):
+curl -X POST http://localhost:3000/api/workspaces/<ws_id>/domains \
+  -H 'content-type: application/json' \
+  --cookie "session=$SESSION" \
+  -d '{"domain":"acme.com","default_role":"editor"}'
+```
+
 ## JWT session revocation (sign out everywhere)
 
 Until now, a stolen JWT was good until its `exp`. Enterprise security

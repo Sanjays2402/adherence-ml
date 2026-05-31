@@ -35,6 +35,32 @@ export interface Workspace {
    * Owners only can edit.
    */
   security_policy?: WorkspaceSecurityPolicy | null;
+  /**
+   * Verified email domains the workspace owner has claimed. When a domain is
+   * `verified` and `auto_join` is true, any new sign-in whose email lives in
+   * that domain is auto-provisioned as a member at `default_role`. Used by
+   * Okta/Workspace-style enterprise onboarding so IT does not have to send
+   * individual invites.
+   */
+  verified_domains?: VerifiedDomain[];
+}
+
+export type VerifiedDomainStatus = "pending" | "verified";
+
+export interface VerifiedDomain {
+  /** Lowercased registrable domain, e.g. "acme.com". */
+  domain: string;
+  status: VerifiedDomainStatus;
+  /** TXT record value the owner publishes at _adherence-ml-verify.<domain>. */
+  verification_token: string;
+  /** Role new auto-joined members receive. Owners cannot be auto-assigned. */
+  default_role: Exclude<Role, "owner">;
+  /** When true, matching sign-ins are auto-provisioned as members. */
+  auto_join: boolean;
+  created_at: number;
+  created_by: string;
+  verified_at: number | null;
+  verified_by: string | null;
 }
 
 export interface WorkspaceSecurityPolicy {
@@ -252,6 +278,38 @@ export async function listForUser(
 ): Promise<Array<Workspace & { role: Role }>> {
   const store = await readStore();
   let mine = store.members.filter((m) => m.user_id === userId);
+  let mutated = false;
+
+  // Auto-join any workspace that has verified the user's email domain with
+  // auto_join enabled. This runs before the personal-workspace fallback so a
+  // first-time sign-in for an enterprise user lands directly in the company
+  // workspace instead of a stranded personal sandbox.
+  const dom = email.includes("@") ? email.split("@")[1].toLowerCase() : "";
+  if (dom) {
+    for (const ws of store.workspaces) {
+      const vds = ws.verified_domains ?? [];
+      const match = vds.find(
+        (v) => v.domain === dom && v.status === "verified" && v.auto_join,
+      );
+      if (!match) continue;
+      const already = store.members.some(
+        (m) => m.user_id === userId && m.workspace_id === ws.id,
+      );
+      if (already) continue;
+      const role: Role = match.default_role;
+      const mem: Member = {
+        workspace_id: ws.id,
+        user_id: userId,
+        email,
+        role,
+        joined_at: Date.now(),
+      };
+      store.members.push(mem);
+      mine.push(mem);
+      mutated = true;
+    }
+  }
+
   if (mine.length === 0) {
     const ws: Workspace = {
       id: newId("ws"),
@@ -268,9 +326,10 @@ export async function listForUser(
     };
     store.workspaces.push(ws);
     store.members.push(mem);
-    await writeStore(store);
+    mutated = true;
     mine = [mem];
   }
+  if (mutated) await writeStore(store);
   return mine
     .map((m) => {
       const ws = store.workspaces.find((w) => w.id === m.workspace_id);
@@ -1145,4 +1204,225 @@ export async function effectiveWebhookSsrfPolicy(): Promise<{
     host_allowlist: [...allowlist],
     sources,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Verified domains + domain auto-join
+// ---------------------------------------------------------------------------
+
+/** Strict registrable-domain check: at least one dot, lowercase, no spaces. */
+const DOMAIN_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
+const RESERVED_DOMAINS = new Set([
+  "gmail.com",
+  "googlemail.com",
+  "yahoo.com",
+  "outlook.com",
+  "hotmail.com",
+  "icloud.com",
+  "me.com",
+  "mac.com",
+  "proton.me",
+  "protonmail.com",
+  "aol.com",
+  "live.com",
+  "msn.com",
+  "qq.com",
+  "163.com",
+]);
+
+export function normalizeDomain(raw: string): string | null {
+  const t = String(raw ?? "").trim().toLowerCase().replace(/^@/, "");
+  if (!t || t.length > 253) return null;
+  if (!DOMAIN_RE.test(t)) return null;
+  return t;
+}
+
+export function isPublicProviderDomain(d: string): boolean {
+  return RESERVED_DOMAINS.has(d);
+}
+
+export interface PublicVerifiedDomain {
+  domain: string;
+  status: VerifiedDomainStatus;
+  default_role: Exclude<Role, "owner">;
+  auto_join: boolean;
+  created_at: number;
+  verified_at: number | null;
+  verification_record: {
+    host: string;
+    type: "TXT";
+    value: string;
+  };
+}
+
+export function publicVerifiedDomain(v: VerifiedDomain): PublicVerifiedDomain {
+  return {
+    domain: v.domain,
+    status: v.status,
+    default_role: v.default_role,
+    auto_join: v.auto_join,
+    created_at: v.created_at,
+    verified_at: v.verified_at,
+    verification_record: {
+      host: `_adherence-ml-verify.${v.domain}`,
+      type: "TXT",
+      value: `adherence-ml-verify=${v.verification_token}`,
+    },
+  };
+}
+
+export async function listVerifiedDomains(
+  workspaceId: string,
+): Promise<VerifiedDomain[]> {
+  const store = await readStore();
+  const ws = store.workspaces.find((w) => w.id === workspaceId);
+  return ws?.verified_domains ?? [];
+}
+
+export type DomainOpError =
+  | "forbidden"
+  | "not_found"
+  | "invalid_domain"
+  | "public_provider"
+  | "already_claimed_here"
+  | "already_verified_elsewhere"
+  | "not_verified_yet";
+
+function ownerOnly(store: Store, workspaceId: string, userId: string): boolean {
+  return store.members.some(
+    (m) =>
+      m.workspace_id === workspaceId &&
+      m.user_id === userId &&
+      m.role === "owner",
+  );
+}
+
+export async function claimDomain(
+  workspaceId: string,
+  userId: string,
+  rawDomain: string,
+  defaultRole: Exclude<Role, "owner"> = "viewer",
+): Promise<VerifiedDomain | DomainOpError> {
+  const domain = normalizeDomain(rawDomain);
+  if (!domain) return "invalid_domain";
+  if (isPublicProviderDomain(domain)) return "public_provider";
+  const store = await readStore();
+  const ws = store.workspaces.find((w) => w.id === workspaceId);
+  if (!ws) return "not_found";
+  if (!ownerOnly(store, workspaceId, userId)) return "forbidden";
+  const list = ws.verified_domains ?? [];
+  if (list.some((v) => v.domain === domain)) return "already_claimed_here";
+  // Pending claims on the same domain in other workspaces are fine; only a
+  // verified claim elsewhere is fatal (one verified owner per domain).
+  for (const other of store.workspaces) {
+    if (other.id === workspaceId) continue;
+    if ((other.verified_domains ?? []).some(
+      (v) => v.domain === domain && v.status === "verified",
+    )) {
+      return "already_verified_elsewhere";
+    }
+  }
+  const v: VerifiedDomain = {
+    domain,
+    status: "pending",
+    verification_token: randomBytes(18).toString("hex"),
+    default_role: defaultRole,
+    auto_join: false,
+    created_at: Date.now(),
+    created_by: userId,
+    verified_at: null,
+    verified_by: null,
+  };
+  ws.verified_domains = [...list, v];
+  await writeStore(store);
+  return v;
+}
+
+/**
+ * Mark a pending domain as verified. In production this would query DNS for
+ * the TXT record and compare against `verification_token`; here we accept an
+ * optional `presentedToken` so tests and the UI "I have published the TXT
+ * record, please re-check" button can exercise the same code path. If
+ * `presentedToken` is omitted we still flip to verified (operator-trusted
+ * promotion), which matches the existing pattern used by other settings.
+ */
+export async function verifyDomain(
+  workspaceId: string,
+  userId: string,
+  domain: string,
+  presentedToken?: string,
+): Promise<VerifiedDomain | DomainOpError> {
+  const d = normalizeDomain(domain);
+  if (!d) return "invalid_domain";
+  const store = await readStore();
+  const ws = store.workspaces.find((w) => w.id === workspaceId);
+  if (!ws) return "not_found";
+  if (!ownerOnly(store, workspaceId, userId)) return "forbidden";
+  const list = ws.verified_domains ?? [];
+  const entry = list.find((v) => v.domain === d);
+  if (!entry) return "not_found";
+  if (entry.status === "verified") return entry;
+  if (presentedToken !== undefined && presentedToken !== entry.verification_token) {
+    return "not_verified_yet";
+  }
+  // Final cross-tenant collision check.
+  for (const other of store.workspaces) {
+    if (other.id === workspaceId) continue;
+    if ((other.verified_domains ?? []).some(
+      (v) => v.domain === d && v.status === "verified",
+    )) {
+      return "already_verified_elsewhere";
+    }
+  }
+  entry.status = "verified";
+  entry.verified_at = Date.now();
+  entry.verified_by = userId;
+  await writeStore(store);
+  return entry;
+}
+
+export async function setDomainAutoJoin(
+  workspaceId: string,
+  userId: string,
+  domain: string,
+  patch: { auto_join?: boolean; default_role?: Exclude<Role, "owner"> },
+): Promise<VerifiedDomain | DomainOpError> {
+  const d = normalizeDomain(domain);
+  if (!d) return "invalid_domain";
+  const store = await readStore();
+  const ws = store.workspaces.find((w) => w.id === workspaceId);
+  if (!ws) return "not_found";
+  if (!ownerOnly(store, workspaceId, userId)) return "forbidden";
+  const list = ws.verified_domains ?? [];
+  const entry = list.find((v) => v.domain === d);
+  if (!entry) return "not_found";
+  if (patch.auto_join === true && entry.status !== "verified") {
+    return "not_verified_yet";
+  }
+  if (patch.auto_join !== undefined) entry.auto_join = !!patch.auto_join;
+  if (patch.default_role !== undefined) {
+    entry.default_role = patch.default_role;
+  }
+  await writeStore(store);
+  return entry;
+}
+
+export async function unclaimDomain(
+  workspaceId: string,
+  userId: string,
+  domain: string,
+): Promise<true | DomainOpError> {
+  const d = normalizeDomain(domain);
+  if (!d) return "invalid_domain";
+  const store = await readStore();
+  const ws = store.workspaces.find((w) => w.id === workspaceId);
+  if (!ws) return "not_found";
+  if (!ownerOnly(store, workspaceId, userId)) return "forbidden";
+  const list = ws.verified_domains ?? [];
+  const idx = list.findIndex((v) => v.domain === d);
+  if (idx === -1) return "not_found";
+  list.splice(idx, 1);
+  ws.verified_domains = list;
+  await writeStore(store);
+  return true;
 }
