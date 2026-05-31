@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from adherence_api.deps import current_principal, require_service
+from adherence_api.quota_enforce import enforce_prediction_quota
 from adherence_common.audit import record as audit_record
 from adherence_common.errors import ModelNotFoundError
 from adherence_common.idempotency import (
@@ -47,6 +48,7 @@ def _caller_id(request: Request, principal: dict[str, str]) -> str:
 def predict(
     req: PredictRequest,
     request: Request,
+    response: Response,
     model_name: str = Query("default"),
     shadow: str | None = Query(
         None,
@@ -71,6 +73,9 @@ def predict(
     t0 = time.perf_counter()
     rid = getattr(request.state, "request_id", "")
     caller = _caller_id(request, p)
+    # Reserve one prediction against the workspace's monthly quota.
+    # Raises 429 with Retry-After + X-RateLimit-* headers on overage.
+    enforce_prediction_quota(p.get("tenant", "default"), response, cost=len(req.schedule) or 1)
     req_hash = hash_body({"req": req.model_dump(mode="json"),
                           "model_name": model_name, "shadow": shadow})
     if idempotency_key:
@@ -182,6 +187,7 @@ class BatchPredictResponse(BaseModel):
 def predict_batch(
     req: BatchPredictRequest,
     request: Request,
+    response: Response,
     model_name: str = Query("default"),
     p=Depends(require_service),
 ) -> BatchPredictResponse:
@@ -196,6 +202,9 @@ def predict_batch(
     rid = getattr(request.state, "request_id", "")
     caller = _caller_id(request, p)
     role = p.get("role", "service")
+    # Charge the batch up front; cost is total scheduled doses (min 1).
+    cost = sum(max(1, len(item.schedule)) for item in req.items)
+    enforce_prediction_quota(p.get("tenant", "default"), response, cost=cost)
 
     try:
         from adherence_worker.inference import load_model

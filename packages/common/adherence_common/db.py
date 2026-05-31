@@ -424,6 +424,9 @@ def _ensure_tenant_columns(engine) -> None:
 
 
 def init_db() -> None:
+    # Ensure ORM models from sibling modules are imported so their tables
+    # are registered on Base.metadata before create_all runs.
+    from adherence_common import quota as _quota  # noqa: F401
     engine = _engine()
     Base.metadata.create_all(engine)
     try:

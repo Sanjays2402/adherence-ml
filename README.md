@@ -171,6 +171,37 @@ curl -i http://localhost:3000/api/workspaces/<ws-id>/policy \
   -H "cookie: $YOUR_SESSION_COOKIE" | grep -i x-data-residency
 ```
 
+## Per-workspace plans and prediction quota
+
+Every workspace now belongs to a plan tier with a monthly prediction cap.
+Usage is counted per UTC calendar month and resets on the first. Every
+inference and forecast call charges the workspace's monthly counter and
+returns the standard rate-limit headers; overage is rejected with `429`
+and `Retry-After` pointing at the next month rollover.
+
+- Plans ship in code (`free`, `pro`, `enterprise`) and sales can set a
+  custom monthly cap per workspace without changing the plan label.
+- Every prediction returns `X-RateLimit-Limit`, `X-RateLimit-Remaining`,
+  `X-RateLimit-Reset`, `X-Quota-Plan`, and `X-Quota-Used`.
+- Plan changes are written to the admin audit log (caller, target
+  workspace, before/after, IP, request id).
+
+Try it locally:
+
+```bash
+pnpm --filter @adherence/web dev
+# Self-serve view at http://localhost:3000/workspace/quota
+# Inspect headers from a prediction:
+curl -i -X POST http://localhost:3000/v1/predict \
+  -H "authorization: Bearer $ADH_PREDICT_KEY" \
+  -H "content-type: application/json" \
+  -d '{"schedule":[{"due_at":"2026-01-01T08:00:00Z","medication":"x"}]}'
+# Admin: change plan or set a custom cap
+curl -i -X PUT http://localhost:3000/api/admin/quota/acme \
+  -H "content-type: application/json" \
+  -d '{"plan":"pro","monthly_predictions_override":500000}'
+```
+
 ## SIEM audit log export (`/v1/audit`)
 
 The dashboard's hash-chained audit log (settings changes, key rotations,

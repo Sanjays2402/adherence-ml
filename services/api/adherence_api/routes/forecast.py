@@ -17,10 +17,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from adherence_api.deps import require_service
+from adherence_api.quota_enforce import enforce_prediction_quota
 from adherence_common.errors import ModelNotFoundError
 from adherence_common.schemas import DoseEvent, ScheduledDose
 from adherence_worker.inference import predict_doses
@@ -145,6 +146,7 @@ def _bootstrap_ci(
 @router.post("/user", response_model=ForecastResponse)
 def forecast_user(
     req: ForecastRequest,
+    response: Response,
     model_name: str = "default",
     _p=Depends(require_service),
 ) -> ForecastResponse:
@@ -167,6 +169,11 @@ def forecast_user(
                 "or include enough `history` to derive typical dose times"
             ),
         )
+
+    # Charge the workspace quota for every dose we are about to score.
+    enforce_prediction_quota(
+        _p.get("tenant", "default"), response, cost=max(1, len(schedule)),
+    )
 
     history_df = None
     if req.history:
