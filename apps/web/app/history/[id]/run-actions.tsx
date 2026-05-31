@@ -6,6 +6,7 @@ import {
   ShareNetwork,
   Copy,
   DownloadSimple,
+  FilePdf,
   Check,
   ArrowSquareOut,
   CircleNotch,
@@ -96,6 +97,13 @@ export default function RunActions({ runId }: Props) {
           className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[12px] hover:bg-[var(--color-border)]/30"
         >
           <DownloadSimple weight="duotone" size={14} /> Download JSON
+        </a>
+        <a
+          href={`/api/runs/${runId}/pdf`}
+          download
+          className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[12px] hover:bg-[var(--color-border)]/30"
+        >
+          <FilePdf weight="duotone" size={14} /> Download PDF
         </a>
         {data.enabled ? (
           <>

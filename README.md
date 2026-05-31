@@ -245,6 +245,7 @@ API surface:
 - `GET /api/runs/tags?kind=` list every tag in use with its run count, optionally narrowed by kind, for the history filter chips
 - `GET /api/runs/export?format=csv|json|ndjson&q=&kind=&from=&to=&tag=&user_id=` filtered download (repeat `tag=` to AND multiple)
 - `GET /api/runs/:id/download` per-run JSON download (attachment with safe filename)
+- `GET /api/runs/:id/pdf` per-run printable PDF report (single page, includes title, kind, timestamp, risk score if present, and a truncated payload dump)
 - `GET /api/runs/:id/share` current public-share status for a run
 - `POST /api/runs/:id/share` body `{ enabled: boolean }` mint or revoke a public share link
 
@@ -253,11 +254,16 @@ button. That mints a 22-character token and exposes the run read-only at
 `/share/<token>`. Anyone with the link can view it without signing in, the
 owner can revoke it at any time, and the public page is `noindex` so it stays
 out of search. Use the `Download JSON` button to grab the full payload as a
-timestamped file.
+timestamped file, or `Download PDF` for a one-page printable report (handy
+for sharing with a clinician or attaching to a chart note). The PDF renderer
+is zero-dependency, so no headless browser is needed in production.
 
 Try it:
 
 ```bash
+# printable PDF report for a single run (replace <id> with a real run id)
+curl -sS -o report.pdf 'http://localhost:3000/api/runs/<id>/pdf'
+
 # every cohort run with the "prod" tag from June, as NDJSON
 curl -sS 'http://localhost:3000/api/runs/export?format=ndjson&kind=cohort&tag=prod&from=2025-06-01&to=2025-06-30' \
   -o cohort-prod-june.ndjson
