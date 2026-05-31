@@ -16,6 +16,7 @@ import {
   SESSION_COOKIE,
   buildMfaPending,
   buildSession,
+  requestContextFromHeaders,
   mfaRequiredButMissing,
 } from "@/lib/session";
 
@@ -156,7 +157,10 @@ export async function GET(req: NextRequest) {
     res.cookies.set(OAUTH_STATE_COOKIE, "", { path: "/", maxAge: 0 });
     return res;
   }
-  const { cookie, expires } = await buildSession(user);
+  const { cookie, expires } = await buildSession(
+    user,
+    requestContextFromHeaders(req.headers, "github"),
+  );
   const res = NextResponse.redirect(new URL(dest, req.url));
   res.cookies.set(SESSION_COOKIE, cookie, {
     path: "/",

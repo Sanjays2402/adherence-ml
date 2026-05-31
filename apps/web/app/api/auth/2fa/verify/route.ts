@@ -13,6 +13,7 @@ import {
   MFA_PENDING_COOKIE,
   SESSION_COOKIE,
   buildSession,
+  requestContextFromHeaders,
   getPendingMfa,
 } from "@/lib/session";
 import { consumeRecoveryCode, getUserById } from "@/lib/users-store";
@@ -75,7 +76,10 @@ export async function POST(req: NextRequest) {
   }
   // Re-read user to get an authoritative recovery_code_hashes count after consumption.
   const fresh = (await getUserById(user.id)) ?? user;
-  const { cookie, expires } = await buildSession(fresh);
+  const { cookie, expires } = await buildSession(
+    fresh,
+    requestContextFromHeaders(req.headers, "2fa"),
+  );
   const nextDest =
     pending.payload.next && pending.payload.next.startsWith("/") && !pending.payload.next.startsWith("//")
       ? pending.payload.next

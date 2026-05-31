@@ -7,6 +7,7 @@ import {
   buildMfaPending,
   buildSession,
   mfaRequiredButMissing,
+  requestContextFromHeaders,
 } from "@/lib/session";
 
 export const runtime = "nodejs";
@@ -29,7 +30,10 @@ export async function GET(req: NextRequest) {
   if (await mfaRequiredButMissing(user)) {
     return NextResponse.redirect(new URL("/login?error=mfa_enrollment_required", req.url));
   }
-  const { cookie, expires } = await buildSession(user);
+  const { cookie, expires } = await buildSession(
+    user,
+    requestContextFromHeaders(req.headers, "magic-link"),
+  );
   const dest = req.nextUrl.searchParams.get("next") || "/";
   // Only allow same-origin relative redirects; ignore anything fancy.
   const safeDest = dest.startsWith("/") && !dest.startsWith("//") ? dest : "/";
@@ -119,7 +123,10 @@ export async function POST(req: NextRequest) {
       { status: 403 },
     );
   }
-  const { cookie, expires } = await buildSession(user);
+  const { cookie, expires } = await buildSession(
+    user,
+    requestContextFromHeaders(req.headers, "magic-link"),
+  );
   const dest = body.next || "/";
   const safeDest = dest.startsWith("/") && !dest.startsWith("//") ? dest : "/";
   if (hasTotpEnabled(user)) {

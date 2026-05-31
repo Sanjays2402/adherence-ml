@@ -4,6 +4,47 @@ ML risk scoring for medication adherence. Predicts which upcoming doses a user
 is likely to miss in the next 24 hours and turns those scores into ranked
 interventions.
 
+## Active sessions: per-device list and revoke
+
+Every sign-in (magic link, SSO, GitHub OAuth, post-2FA) now mints a
+server-tracked session record alongside the signed HMAC cookie. Owners can
+see every browser currently signed into their account and revoke any one
+of them without nuking the whole generation.
+
+- `GET /api/auth/sessions/list` returns one row per non-revoked, non-expired
+  session with label (`magic-link` / `sso` / `github` / `2fa` /
+  `revoke-all`), last IP, user agent, created and last-seen timestamps, plus
+  a `current_sid` field so the UI can mark the calling device.
+- `DELETE /api/auth/sessions/revoke/:sid` revokes one session. Cross-account
+  revoke is impossible because `revokeSession()` filters by `user_id` at the
+  store layer; the request also refuses to revoke the caller's own current
+  cookie (that is the sign-out path). Every call is written to the
+  hash-chained dashboard audit log as `session.revoke` (success / denied).
+  Honours `?dry_run=true`.
+- `POST /api/auth/sessions/revoke-all` keeps its existing "sign out
+  everywhere" semantics and now also flips every per-session record (with
+  optional `keep_current`) and writes a `session.revoke_all` audit entry.
+- Account erasure (`DELETE /api/auth/account`) calls `purgeSessionsForUser`
+  so deleted users leave no orphan session rows behind.
+- Settings UI lives at `/settings/sessions`: phosphor-duotone device icons,
+  responsive at 375px and 1440px, loading skeletons, empty + error states,
+  and a `Sign out everywhere` card that only fires when there is at least
+  one other session.
+
+Cross-user isolation is covered by `apps/web/lib/__tests__/sessions-store.test.ts`:
+alice cannot revoke bob's session, bob's session survives alice's purge, and
+revoked rows disappear from `getSessionRecord` on next read.
+
+Try it:
+
+    pnpm --filter @adherence/web dev
+    # sign in at http://localhost:3000/login, open http://localhost:3000/settings/sessions
+    # or hit the API directly:
+    curl -s http://localhost:3000/api/auth/sessions/list \
+      --cookie "adh_session=$YOUR_COOKIE" | jq
+    curl -s -X DELETE http://localhost:3000/api/auth/sessions/revoke/$SID \
+      --cookie "adh_session=$YOUR_COOKIE"
+
 ## Right to erasure: delete your account
 
 Settings now has a dedicated GDPR Article 17 / CCPA self-service path that

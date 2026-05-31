@@ -89,6 +89,15 @@ export async function eraseAccount(
   const workspaces = await eraseUserFromWorkspaces(user.id);
   const bumped = await bumpSessionGen(user.id);
   const sessions_revoked_at = bumped?.sessions_revoked_at ?? null;
+  // Drop every per-session record so the audit trail and the cookies tied
+  // to them are gone before the user row itself disappears.
+  try {
+    const { purgeSessionsForUser } = await import("./sessions-store");
+    await purgeSessionsForUser(user.id);
+  } catch {
+    // sessions store may not exist yet for legacy installs; bumpSessionGen
+    // above is still enough to invalidate every outstanding cookie.
+  }
   await deleteUserRecord(user.id);
   return {
     user_id: user.id,

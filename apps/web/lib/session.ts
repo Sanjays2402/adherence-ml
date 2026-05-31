@@ -17,6 +17,11 @@ import {
   type UserRecord,
 } from "./users-store";
 import { effectivePolicyForUser } from "./workspaces-store";
+import {
+  createSession,
+  getSessionRecord,
+  touchSession,
+} from "./sessions-store";
 
 /**
  * True when any workspace the user belongs to requires MFA and the user has
@@ -59,6 +64,34 @@ interface SessionPayload {
    * field existed (those are treated as gen 1).
    */
   gen?: number;
+  /**
+   * Per-session identifier persisted in the sessions store. Lets the user
+   * see active sessions and revoke any individual one. Missing on cookies
+   * minted before this field shipped; those keep working until the user
+   * signs in again (no forced sign-out on upgrade).
+   */
+  sid?: string;
+}
+
+/** Caller-supplied request context recorded with the session record. */
+export interface SessionRequestContext {
+  ip?: string | null;
+  user_agent?: string | null;
+  label?: string;
+}
+
+/** Pull ip + user-agent off a Request/Headers-like object for storage. */
+export function requestContextFromHeaders(
+  headers: Headers,
+  label: string,
+): SessionRequestContext {
+  const fwd = headers.get("x-forwarded-for");
+  const ip = fwd ? fwd.split(",")[0]!.trim() : headers.get("x-real-ip");
+  return {
+    ip: ip ?? null,
+    user_agent: headers.get("user-agent"),
+    label,
+  };
 }
 
 function getSecret(): Buffer {
@@ -120,9 +153,13 @@ export function verifySession(raw: string | undefined): SessionPayload | null {
   return payload;
 }
 
-export async function buildSession(user: UserRecord): Promise<{
+export async function buildSession(
+  user: UserRecord,
+  ctx?: SessionRequestContext,
+): Promise<{
   cookie: string;
   expires: Date;
+  sid: string;
 }> {
   const now = Date.now();
   // Workspace security policy may cap session lifetime below the default.
@@ -136,14 +173,30 @@ export async function buildSession(user: UserRecord): Promise<{
   } catch {
     // policy store unavailable: fall back to default TTL rather than block login.
   }
+  const expMs = now + ttl;
+  let sid = "";
+  try {
+    const rec = await createSession({
+      user_id: user.id,
+      expires_at: expMs,
+      ip: ctx?.ip ?? null,
+      user_agent: ctx?.user_agent ?? null,
+      label: ctx?.label ?? "session",
+    });
+    sid = rec.sid;
+  } catch {
+    // sessions store unavailable: still mint a cookie so login works, but
+    // without per-session revoke. Cookie verifies via HMAC + generation.
+  }
   const payload: SessionPayload = {
     uid: user.id,
     eml: user.email,
     iat: now,
-    exp: now + ttl,
+    exp: expMs,
     gen: currentSessionGen(user),
+    sid: sid || undefined,
   };
-  return { cookie: signSession(payload), expires: new Date(payload.exp) };
+  return { cookie: signSession(payload), expires: new Date(payload.exp), sid };
 }
 
 /** Cookie attributes object used by routes that re-mint the session. */
@@ -183,6 +236,23 @@ export async function getSession(req?: NextRequest): Promise<SessionContext | nu
   // so legacy cookies keep working until the user explicitly revokes.
   const cookieGen = typeof payload.gen === "number" ? payload.gen : 1;
   if (cookieGen < currentSessionGen(user)) return null;
+  // Per-session revoke: if the cookie carries a sid (cookies minted after
+  // this feature shipped) require the record to still be live. Missing sid
+  // (legacy cookie) falls back to the generation check above.
+  if (payload.sid) {
+    const rec = await getSessionRecord(payload.sid);
+    if (!rec || rec.user_id !== payload.uid) return null;
+    // Best-effort touch; never fail the request if disk write hiccups.
+    try {
+      const hdrs = req ? req.headers : null;
+      const fwd = hdrs?.get("x-forwarded-for") ?? null;
+      const ip = fwd ? fwd.split(",")[0]!.trim() : hdrs?.get("x-real-ip") ?? null;
+      const ua = hdrs?.get("user-agent") ?? null;
+      await touchSession(payload.sid, ip, ua);
+    } catch {
+      // ignore
+    }
+  }
   // Re-evaluate workspace security policy on every request so tightening the
   // session_max_age_minutes invalidates already-minted long-lived cookies.
   try {
