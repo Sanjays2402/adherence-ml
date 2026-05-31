@@ -34,12 +34,19 @@ class Plan:
     name: str
     monthly_predictions: int
     seats: int
+    # Human / SSO members allowed in the workspace. Pending invitations
+    # count toward this cap until they expire or are revoked, so a
+    # workspace cannot oversubscribe by issuing many open invites. API
+    # key (service) seats are governed separately by ``seats``.
+    member_seats: int = 0
 
 
 PLANS: dict[str, Plan] = {
-    "free": Plan("free", monthly_predictions=1_000, seats=3),
-    "pro": Plan("pro", monthly_predictions=100_000, seats=25),
-    "enterprise": Plan("enterprise", monthly_predictions=2_000_000, seats=500),
+    "free": Plan("free", monthly_predictions=1_000, seats=3, member_seats=3),
+    "pro": Plan("pro", monthly_predictions=100_000, seats=25, member_seats=25),
+    "enterprise": Plan(
+        "enterprise", monthly_predictions=2_000_000, seats=500, member_seats=500,
+    ),
 }
 DEFAULT_PLAN = "free"
 
@@ -60,6 +67,7 @@ class WorkspaceQuota(Base):
     plan = Column(String(32), nullable=False, default=DEFAULT_PLAN)
     monthly_predictions_override = Column(Integer, nullable=True)
     seats_override = Column(Integer, nullable=True)
+    member_seats_override = Column(Integer, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
@@ -108,12 +116,31 @@ def get_plan(tenant_id: str) -> tuple[Plan, int, int]:
     return plan, int(cap), int(seats)
 
 
+def member_seat_limit(tenant_id: str) -> tuple[int, str]:
+    """Return ``(effective_member_seat_cap, plan_name)`` for a workspace.
+
+    Honors a per-workspace ``member_seats_override``.  Workspaces with
+    no quota row default to the free plan's member cap so the gate is
+    never silently disabled by row absence.
+    """
+    tid = (tenant_id or "default").strip() or "default"
+    with session() as db:
+        row = db.scalar(select(WorkspaceQuota).where(WorkspaceQuota.tenant_id == tid))
+    if row is None:
+        plan = PLANS[DEFAULT_PLAN]
+        return plan.member_seats, plan.name
+    plan = PLANS.get(row.plan or DEFAULT_PLAN, PLANS[DEFAULT_PLAN])
+    cap = row.member_seats_override or plan.member_seats
+    return int(cap), plan.name
+
+
 def set_plan(
     tenant_id: str,
     *,
     plan: str | None = None,
     monthly_predictions_override: int | None = None,
     seats_override: int | None = None,
+    member_seats_override: int | None = None,
 ) -> WorkspaceQuota:
     if plan is not None and plan not in PLANS:
         raise ValueError(f"unknown plan: {plan}")
@@ -125,6 +152,7 @@ def set_plan(
                 plan=plan or DEFAULT_PLAN,
                 monthly_predictions_override=monthly_predictions_override,
                 seats_override=seats_override,
+                member_seats_override=member_seats_override,
             )
             db.add(row)
         else:
@@ -134,6 +162,8 @@ def set_plan(
                 row.monthly_predictions_override = monthly_predictions_override or None
             if seats_override is not None:
                 row.seats_override = seats_override or None
+            if member_seats_override is not None:
+                row.member_seats_override = member_seats_override or None
             row.updated_at = _now().replace(tzinfo=None)
         db.commit()
         db.refresh(row)
@@ -275,6 +305,106 @@ def enforce_seat_capacity(tenant_id: str) -> tuple[int, int, str]:
     if used >= seats:
         raise SeatLimitExceeded(tid, used=used, limit=seats, plan=plan.name)
     return used + 1, seats, plan.name
+
+
+def member_seat_usage(tenant_id: str) -> tuple[int, int, int]:
+    """Return ``(total, members, pending_invitations)`` for ``tenant_id``.
+
+    A workspace member seat is consumed by:
+
+    * every row in ``workspace_members`` for that tenant, and
+    * every *pending* invitation (not accepted, not revoked, not
+      expired) for that tenant.
+
+    Pending invitations count so a workspace cannot quietly oversubscribe
+    by sitting on a stack of open invites and accepting them later.  The
+    counter falls back to zero when the memberships tables are not
+    present (older deployments before the memberships migration ran).
+    """
+    tid = (tenant_id or "default").strip() or "default"
+    try:
+        from adherence_common.memberships import (  # noqa: WPS433
+            WorkspaceInvitation,
+            WorkspaceMember,
+        )
+    except Exception:
+        return 0, 0, 0
+    now = _now().replace(tzinfo=None)
+    with session() as db:
+        try:
+            members = int(
+                db.scalar(
+                    select(func.count(WorkspaceMember.id)).where(
+                        WorkspaceMember.tenant_id == tid,
+                    )
+                )
+                or 0
+            )
+            pending = int(
+                db.scalar(
+                    select(func.count(WorkspaceInvitation.id)).where(
+                        WorkspaceInvitation.tenant_id == tid,
+                        WorkspaceInvitation.accepted_at.is_(None),
+                        WorkspaceInvitation.revoked_at.is_(None),
+                        WorkspaceInvitation.expires_at > now,
+                    )
+                )
+                or 0
+            )
+        except Exception:
+            # Tables not migrated yet: fail-open with zeroes so existing
+            # workspaces are not bricked by the new gate.
+            return 0, 0, 0
+    return members + pending, members, pending
+
+
+class MemberSeatLimitExceeded(Exception):
+    """Raised when inviting or adding another member would exceed the
+    workspace's member-seat cap. Carries the current usage, limit, and
+    plan name so callers can surface a precise structured error.
+    """
+
+    def __init__(
+        self,
+        tenant_id: str,
+        *,
+        used: int,
+        limit: int,
+        plan: str,
+        members: int,
+        pending: int,
+    ) -> None:
+        self.tenant_id = tenant_id
+        self.used = used
+        self.limit = limit
+        self.plan = plan
+        self.members = members
+        self.pending = pending
+        super().__init__(
+            f"member seat limit reached for workspace {tenant_id!r}: "
+            f"{used}/{limit} on plan {plan!r} "
+            f"({members} members, {pending} pending invitations)"
+        )
+
+
+def enforce_member_seat_capacity(
+    tenant_id: str, *, extra: int = 1,
+) -> tuple[int, int, str]:
+    """Raise :class:`MemberSeatLimitExceeded` if adding ``extra`` member
+    seats would exceed the workspace member-seat cap. Returns
+    ``(used_after, limit, plan_name)`` on success.
+    """
+    tid = (tenant_id or "default").strip() or "default"
+    limit, plan_name = member_seat_limit(tid)
+    used, members, pending = member_seat_usage(tid)
+    if extra < 0:
+        extra = 0
+    if limit > 0 and used + extra > limit:
+        raise MemberSeatLimitExceeded(
+            tid, used=used, limit=limit, plan=plan_name,
+            members=members, pending=pending,
+        )
+    return used + extra, limit, plan_name
 
 
 def snapshot(tenant_ids: Iterable[str] | None = None) -> list[dict]:

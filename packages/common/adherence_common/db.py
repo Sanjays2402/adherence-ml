@@ -589,6 +589,18 @@ def _ensure_tenant_columns(engine) -> None:
                     "ADD COLUMN max_active_keys INTEGER"
                 ))
 
+    # Workspace quota: optional per-tenant override for the human member
+    # seat cap. Added with the member-seat enforcement feature; older
+    # rows fall back to the plan default when NULL.
+    if "workspace_quota" in existing_tables:
+        cols = {c["name"] for c in insp.get_columns("workspace_quota")}
+        if "member_seats_override" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE workspace_quota "
+                    "ADD COLUMN member_seats_override INTEGER"
+                ))
+
 
 def init_db() -> None:
     # Ensure ORM models from sibling modules are imported so their tables

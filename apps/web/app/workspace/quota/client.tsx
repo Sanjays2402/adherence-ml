@@ -8,6 +8,7 @@ import {
   Gauge,
   Lightning,
   ShieldCheck,
+  UsersThree,
   Warning,
 } from "@phosphor-icons/react";
 import {
@@ -26,6 +27,7 @@ type PlanInfo = {
   name: string;
   monthly_predictions: number;
   seats: number;
+  member_seats?: number;
 };
 
 type QuotaView = {
@@ -37,6 +39,11 @@ type QuotaView = {
   seats_limit: number;
   seats_used: number;
   seats_remaining: number;
+  member_seats_limit: number;
+  member_seats_used: number;
+  member_seats_remaining: number;
+  members: number;
+  pending_invitations: number;
   plans: PlanInfo[];
 };
 
@@ -75,6 +82,7 @@ export default function QuotaClient() {
 
   const [plan, setPlan] = useState<string>("");
   const [override, setOverride] = useState<string>("");
+  const [memberOverride, setMemberOverride] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [adminErr, setAdminErr] = useState<string | null>(null);
   const [adminOk, setAdminOk] = useState<string | null>(null);
@@ -94,6 +102,15 @@ export default function QuotaClient() {
         return;
       }
       body.monthly_predictions_override = n;
+    }
+    if (memberOverride.trim() !== "") {
+      const n = Number(memberOverride);
+      if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
+        setSaving(false);
+        setAdminErr("Member seat override must be a non-negative integer. Use 0 to clear.");
+        return;
+      }
+      body.member_seats_override = n;
     }
     if (Object.keys(body).length === 0) {
       setSaving(false);
@@ -120,13 +137,14 @@ export default function QuotaClient() {
       setAdminOk("Plan updated.");
       setPlan("");
       setOverride("");
+      setMemberOverride("");
       mutate();
     } catch (e) {
       setAdminErr((e as Error).message);
     } finally {
       setSaving(false);
     }
-  }, [data, plan, override, mutate]);
+  }, [data, plan, override, memberOverride, mutate]);
 
   return (
     <div>
@@ -252,6 +270,58 @@ export default function QuotaClient() {
                   </div>
                 ) : null}
 
+                <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
+                  <div className="flex items-center justify-between text-[12px]">
+                    <div className="flex items-center gap-1.5 text-[var(--color-text-muted)]">
+                      <UsersThree weight="duotone" size={13} /> people seats
+                    </div>
+                    <div className="font-mono">
+                      {fmt(data.member_seats_used)} / {fmt(data.member_seats_limit)}
+                    </div>
+                  </div>
+                  <div
+                    className="mt-2 h-2 w-full overflow-hidden rounded-full bg-[var(--color-surface-2)]"
+                    role="progressbar"
+                    aria-valuemin={0}
+                    aria-valuemax={data.member_seats_limit}
+                    aria-valuenow={data.member_seats_used}
+                  >
+                    <div
+                      className={`h-full ${barTone(pct(data.member_seats_used, data.member_seats_limit))}`}
+                      style={{
+                        width: `${pct(data.member_seats_used, data.member_seats_limit)}%`,
+                      }}
+                    />
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-[var(--color-text-muted)] sm:grid-cols-3">
+                    <div>
+                      members <span className="ml-1 font-mono text-[var(--color-text)]">{fmt(data.members)}</span>
+                    </div>
+                    <div>
+                      pending invites <span className="ml-1 font-mono text-[var(--color-text)]">{fmt(data.pending_invitations)}</span>
+                    </div>
+                    <div>
+                      remaining <span className="ml-1 font-mono text-[var(--color-text)]">{fmt(data.member_seats_remaining)}</span>
+                    </div>
+                  </div>
+                  <div className="mt-2 text-[11px] text-[var(--color-text-muted)]">
+                    People seats count every workspace member plus every pending
+                    invitation. Adding a member or sending another invite past
+                    the cap returns HTTP 409 with code member_seat_limit.
+                  </div>
+                </div>
+
+                {data.member_seats_remaining === 0 ? (
+                  <div className="flex items-start gap-2 rounded-md border border-rose-500/40 bg-rose-500/10 p-3 text-[12px]">
+                    <Warning weight="duotone" size={14} />
+                    <div>
+                      People seat cap reached. New invitations and member
+                      additions will be rejected with HTTP 409 until an invite
+                      is revoked, a member is removed, or the plan is upgraded.
+                    </div>
+                  </div>
+                ) : null}
+
                 {pct(
                   data.monthly_predictions_used,
                   data.monthly_predictions_limit,
@@ -283,7 +353,8 @@ export default function QuotaClient() {
                     <tr>
                       <th className="py-1.5 pr-3">name</th>
                       <th className="py-1.5 pr-3">monthly predictions</th>
-                      <th className="py-1.5 pr-3">seats</th>
+                      <th className="py-1.5 pr-3">api key seats</th>
+                      <th className="py-1.5 pr-3">people seats</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -297,6 +368,7 @@ export default function QuotaClient() {
                           {fmt(p.monthly_predictions)}
                         </td>
                         <td className="py-2 pr-3 font-mono">{fmt(p.seats)}</td>
+                        <td className="py-2 pr-3 font-mono">{fmt(p.member_seats ?? 0)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -345,6 +417,19 @@ export default function QuotaClient() {
                   aria-label="Custom monthly prediction override"
                 />
               </div>
+              <div>
+                <label className="mb-1 block text-[11px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                  custom people seat cap (0 clears)
+                </label>
+                <Input
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  placeholder="e.g. 75"
+                  value={memberOverride}
+                  onChange={(e) => setMemberOverride(e.target.value)}
+                  aria-label="Custom people seat override"
+                />
+              </div>
             </div>
             {adminErr ? <ErrorBox message={adminErr} /> : null}
             {adminOk ? (
@@ -355,7 +440,10 @@ export default function QuotaClient() {
             <div>
               <Button
                 onClick={save}
-                disabled={saving || (!plan && override.trim() === "")}
+                disabled={
+                  saving ||
+                  (!plan && override.trim() === "" && memberOverride.trim() === "")
+                }
               >
                 {saving ? "Saving..." : "Save changes"}
               </Button>

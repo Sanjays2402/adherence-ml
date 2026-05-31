@@ -179,7 +179,13 @@ def upsert_member(
     role: str,
     added_by: str | None,
 ) -> MemberView:
-    """Insert or update a membership row. Returns the resulting view."""
+    """Insert or update a membership row. Returns the resulting view.
+
+    Adding a brand-new member is gated by the workspace's member-seat
+    cap (:func:`adherence_common.quota.enforce_member_seat_capacity`).
+    Role-only updates to an existing member never consume a new seat
+    and are always allowed.
+    """
     tid = (tenant_id or "default").strip() or "default"
     sub = subject.strip()
     if not sub:
@@ -195,6 +201,9 @@ def upsert_member(
             )
         ).scalar_one_or_none()
         if row is None:
+            # Local import to avoid an import cycle (quota -> memberships).
+            from adherence_common import quota as _quota  # noqa: WPS433
+            _quota.enforce_member_seat_capacity(tid, extra=1)
             row = WorkspaceMember(
                 tenant_id=tid,
                 subject=sub,
@@ -357,6 +366,11 @@ def create_invitation(
             raise DuplicateInvitation(
                 f"a pending invitation already exists for {em!r} in workspace {tid!r}"
             )
+        # Block when the workspace is out of member seats. Existing
+        # members and other pending invitations both consume seats so
+        # an admin cannot oversubscribe with a stack of open invites.
+        from adherence_common import quota as _quota  # noqa: WPS433
+        _quota.enforce_member_seat_capacity(tid, extra=1)
         token = secrets.token_urlsafe(32)
         row = WorkspaceInvitation(
             tenant_id=tid,

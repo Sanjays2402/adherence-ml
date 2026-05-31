@@ -33,6 +33,7 @@ _EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 
 from adherence_common.admin_audit import record_admin_action
 from adherence_common import memberships as mem
+from adherence_common import quota as quota_mod
 from adherence_common.memberships import (
     DEFAULT_INVITE_TTL_HOURS,
     DuplicateInvitation,
@@ -351,6 +352,30 @@ def create_invitation(
             request_id=_rid(request), tenant_id=tenant,
         )
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    except quota_mod.MemberSeatLimitExceeded as exc:
+        record_admin_action(
+            action="workspace.invitation.create", principal=p, target=body.email,
+            details={
+                "role": role,
+                "plan": exc.plan,
+                "used": exc.used,
+                "limit": exc.limit,
+            },
+            ok=False, error="member seat limit",
+            request_id=_rid(request), tenant_id=tenant,
+        )
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "member_seat_limit",
+                "message": str(exc),
+                "plan": exc.plan,
+                "used": exc.used,
+                "limit": exc.limit,
+                "members": exc.members,
+                "pending_invitations": exc.pending,
+            },
+        )
     except ValueError as exc:
         record_admin_action(
             action="workspace.invitation.create", principal=p, target=body.email,

@@ -29,6 +29,41 @@ curl -sS -X POST 'http://127.0.0.1:3000/api/webhooks/ep_abc123/rotate?dry_run=tr
 
 # End the grace window immediately.
 curl -sS -X DELETE http://127.0.0.1:3000/api/webhooks/ep_abc123/rotate
+
+## Per-workspace people seat enforcement
+
+Enterprise pricing is per-seat, so the API now enforces a **member seat cap on every workspace**. A seat is consumed by every row in `workspace_members` and by every *pending* invitation in `workspace_invitations`, so an admin cannot quietly oversubscribe by sitting on a stack of open invites. Caps live on the plan catalog (`free=3`, `pro=25`, `enterprise=500`) with a per-workspace `member_seats_override` for custom contracts. Adding a member or sending another invite past the cap returns HTTP 409 with a structured `member_seat_limit` error carrying `plan`, `used`, `limit`, `members`, `pending_invitations`, so the dashboard and partner CLIs can show a precise upgrade prompt.
+
+Enforcement is wired at the data layer (`adherence_common.memberships.upsert_member`, `create_invitation`) so every code path that adds a member is gated, not just the new ones. Acceptance is seat-neutral by design: a pending invite ticks down by one while the new member row ticks up by one. `GET /v1/quota/me` and `/v1/admin/quota/{tid}` now expose `member_seats_limit / used / remaining`, `members`, `pending_invitations` alongside the existing prediction and API-key seat counters, and the `/workspace/quota` dashboard page renders a second progress bar with a warning when the cap is reached. Validated by `tests/unit/test_workspace_member_seats.py`: tenant isolation (one workspace's usage does not block another), the third invite trips the gate on free, accept is seat-neutral, revoking a pending invite frees a seat, and `member_seats_override` raises the effective cap.
+
+### Try people seats
+
+Local API: <http://127.0.0.1:8000>. Dashboard: <http://127.0.0.1:3000/workspace/quota>.
+
+```bash
+# 1. As a workspace admin, see how many people seats you have.
+curl -s http://127.0.0.1:8000/v1/quota/me \
+  -H "authorization: Bearer $WORKSPACE_ADMIN_JWT"
+# { ..., "member_seats_limit": 3, "member_seats_used": 2,
+#        "members": 1, "pending_invitations": 1, ... }
+
+# 2. Invite the third teammate. Free plan cap = 3.
+curl -s -X POST http://127.0.0.1:8000/v1/workspace/invitations \
+  -H "authorization: Bearer $WORKSPACE_ADMIN_JWT" \
+  -H 'content-type: application/json' \
+  -d '{"email":"c@acme.test","role":"viewer"}'
+
+# 3. The fourth invite is rejected with a structured 409 the UI can surface.
+curl -s -X POST http://127.0.0.1:8000/v1/workspace/invitations \
+  -H "authorization: Bearer $WORKSPACE_ADMIN_JWT" \
+  -H 'content-type: application/json' \
+  -d '{"email":"d@acme.test","role":"viewer"}'
+# 409  {"detail":{"code":"member_seat_limit","plan":"free","used":3,"limit":3,...}}
+
+# 4. Operator lifts the cap for an enterprise contract without changing tier.
+curl -s -X PUT http://127.0.0.1:8000/v1/admin/quota/acme \
+  -H "x-api-key: $ADMIN_KEY" -H 'content-type: application/json' \
+  -d '{"member_seats_override": 75}'
 ```
 
 ## Per-API-key daily usage counters
