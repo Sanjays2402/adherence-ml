@@ -107,6 +107,42 @@ _CATALOG: tuple[WebhookEvent, ...] = (
         ),
     ),
     WebhookEvent(
+        event_type="intervention.high_risk",
+        description=(
+            "Fired when a patient's calibrated risk score crosses the "
+            "high-risk threshold configured for the workspace. "
+            "Distinct from intervention.recommended in that it is a "
+            "threshold-crossing signal (raw risk), not a recommended "
+            "clinical action. Receivers typically use this to wake "
+            "on-call clinicians via paging integrations."
+        ),
+        stability="stable",
+        version=1,
+        since="2025-03-01",
+        payload_example={
+            "event": "intervention.high_risk",
+            "delivery_id": 12349,
+            "tenant_id": "acme",
+            "patient_external_id": "P-00042",
+            "patient_id": "P-00042",
+            "risk": 0.93,
+            "risk_score": 0.93,
+            "threshold": 0.85,
+            "model_version": "ridge-v7",
+            "detected_at": "2025-05-31T16:00:00Z",
+        },
+        payload_fields=(
+            ("event", "string", "Always 'intervention.high_risk'."),
+            ("delivery_id", "integer", "Unique delivery row id."),
+            ("tenant_id", "string", "Workspace owning the patient."),
+            ("patient_external_id", "string", "Stable patient identifier."),
+            ("risk_score", "number", "Calibrated probability in [0,1]."),
+            ("threshold", "number", "Workspace high-risk threshold that was crossed."),
+            ("model_version", "string", "Model used to score this patient."),
+            ("detected_at", "string", "ISO-8601 UTC."),
+        ),
+    ),
+    WebhookEvent(
         event_type="run.created",
         description=(
             "Fired when a new inference run completes for a cohort or "

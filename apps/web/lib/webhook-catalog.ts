@@ -77,6 +77,36 @@ export const CATALOG_EVENTS: CatalogEvent[] = [
     ],
   },
   {
+    event_type: "intervention.high_risk",
+    description:
+      "Fired when a patient's calibrated risk score crosses the high-risk threshold configured for the workspace. Distinct from intervention.recommended in that it is a threshold-crossing signal (raw risk), not a recommended clinical action. Receivers typically use this to wake on-call clinicians via paging integrations.",
+    stability: "stable",
+    version: 1,
+    since: "2025-03-01",
+    payload_example: {
+      event: "intervention.high_risk",
+      delivery_id: 12349,
+      tenant_id: "acme",
+      patient_external_id: "P-00042",
+      patient_id: "P-00042",
+      risk: 0.93,
+      risk_score: 0.93,
+      threshold: 0.85,
+      model_version: "ridge-v7",
+      detected_at: "2025-05-31T16:00:00Z",
+    },
+    payload_fields: [
+      { name: "event", type: "string", description: "Always 'intervention.high_risk'." },
+      { name: "delivery_id", type: "integer", description: "Unique delivery row id." },
+      { name: "tenant_id", type: "string", description: "Workspace owning the patient." },
+      { name: "patient_external_id", type: "string", description: "Stable patient identifier." },
+      { name: "risk_score", type: "number", description: "Calibrated probability in [0,1]." },
+      { name: "threshold", type: "number", description: "Workspace high-risk threshold that was crossed." },
+      { name: "model_version", type: "string", description: "Model used to score this patient." },
+      { name: "detected_at", type: "string", description: "ISO-8601 UTC." },
+    ],
+  },
+  {
     event_type: "run.created",
     description:
       "Fired when a new inference run completes for a cohort or individual prediction request. Carries the run id so receivers can fetch detail via /v1/predict/{run_id}.",
