@@ -19,6 +19,12 @@ import {
 import { consumeRecoveryCode, getUserById } from "@/lib/users-store";
 import { verifyTotp } from "@/lib/totp";
 import { recordAuthEvent } from "@/lib/auth-audit";
+import {
+  checkLockout,
+  clearBucket,
+  clientIpFromRequest,
+  recordFailure,
+} from "@/lib/login-throttle";
 
 export const runtime = "nodejs";
 
@@ -56,6 +62,58 @@ export async function POST(req: NextRequest) {
     );
   }
   const user = pending.user;
+
+  // Pre-check brute-force lockout for both the user's email and the
+  // client IP. Same lockout response shape as the magic-link route.
+  const ip = clientIpFromRequest(req);
+  const emailLock = await checkLockout("totp_verify", user.email);
+  if (!emailLock.ok) {
+    const retrySec = Math.max(1, Math.ceil(emailLock.retry_after_ms / 1000));
+    await recordAuthEvent({
+      verb: "mfa",
+      method: parsed.recovery ? "recovery_code" : "totp",
+      outcome: "denied",
+      reason: "locked_out_email",
+      email: user.email,
+      userId: user.id,
+      request: req,
+    });
+    return NextResponse.json(
+      {
+        error: {
+          code: "locked_out",
+          message:
+            "Too many wrong codes. Try again later or use a recovery code after the cool-down.",
+          retry_after_seconds: retrySec,
+        },
+      },
+      { status: 429, headers: { "Retry-After": String(retrySec) } },
+    );
+  }
+  const ipLock = await checkLockout("totp_verify", ip);
+  if (!ipLock.ok) {
+    const retrySec = Math.max(1, Math.ceil(ipLock.retry_after_ms / 1000));
+    await recordAuthEvent({
+      verb: "mfa",
+      method: parsed.recovery ? "recovery_code" : "totp",
+      outcome: "denied",
+      reason: "locked_out_ip",
+      email: user.email,
+      userId: user.id,
+      request: req,
+    });
+    return NextResponse.json(
+      {
+        error: {
+          code: "locked_out",
+          message: "Too many wrong codes from this network. Try again later.",
+          retry_after_seconds: retrySec,
+        },
+      },
+      { status: 429, headers: { "Retry-After": String(retrySec) } },
+    );
+  }
+
   let ok = false;
   let usedRecovery = false;
   if (parsed.code && user.totp_secret && verifyTotp(user.totp_secret, parsed.code)) {
@@ -65,6 +123,10 @@ export async function POST(req: NextRequest) {
     usedRecovery = ok;
   }
   if (!ok) {
+    // Count both axes so a single attacker can't dodge per-email throttling
+    // by rotating IPs nor dodge per-IP throttling by rotating emails.
+    await recordFailure("totp_verify", user.email);
+    await recordFailure("totp_verify", ip);
     await recordAuthEvent({
       verb: "mfa",
       method: parsed.recovery ? "recovery_code" : "totp",
@@ -86,6 +148,10 @@ export async function POST(req: NextRequest) {
   }
   // Re-read user to get an authoritative recovery_code_hashes count after consumption.
   const fresh = (await getUserById(user.id)) ?? user;
+  // Successful 2FA clears the email bucket so the user is not penalised
+  // for prior typos. We leave the IP bucket alone since multiple users
+  // may share an egress IP and we only want to forgive on real success.
+  await clearBucket("totp_verify", user.email);
   const { cookie, expires } = await buildSession(
     fresh,
     requestContextFromHeaders(req.headers, "2fa"),

@@ -3,8 +3,40 @@ import { z } from "zod";
 import { issueMagicToken, isValidEmail, normalizeEmail } from "@/lib/users-store";
 import { findSsoForEmail } from "@/lib/workspaces-store";
 import { recordAuthEvent } from "@/lib/auth-audit";
+import {
+  checkLockout,
+  clientIpFromRequest,
+  recordFailure,
+} from "@/lib/login-throttle";
 
 export const runtime = "nodejs";
+
+function lockoutResponse(
+  scope: "magic_request" | "totp_verify",
+  lockedKey: string,
+  retryAfterMs: number,
+) {
+  const retrySec = Math.max(1, Math.ceil(retryAfterMs / 1000));
+  return NextResponse.json(
+    {
+      error: {
+        code: "locked_out",
+        message:
+          "Too many sign-in attempts. Try again later or contact your workspace admin.",
+        retry_after_seconds: retrySec,
+        scope,
+        key: lockedKey,
+      },
+    },
+    {
+      status: 429,
+      headers: {
+        "Retry-After": String(retrySec),
+        "X-RateLimit-Scope": scope,
+      },
+    },
+  );
+}
 
 const Body = z.object({
   email: z.string().min(3).max(254),
@@ -49,6 +81,34 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Brute-force / mailbox-pump throttle: refuse magic-link issuance when
+  // either the target email or the client IP is currently locked out.
+  const ip = clientIpFromRequest(req);
+  const emailLock = await checkLockout("magic_request", email);
+  if (!emailLock.ok) {
+    await recordAuthEvent({
+      verb: "login_request",
+      method: "magic_link",
+      outcome: "denied",
+      reason: "locked_out_email",
+      email,
+      request: req,
+    });
+    return lockoutResponse("magic_request", email, emailLock.retry_after_ms);
+  }
+  const ipLock = await checkLockout("magic_request", ip);
+  if (!ipLock.ok) {
+    await recordAuthEvent({
+      verb: "login_request",
+      method: "magic_link",
+      outcome: "denied",
+      reason: "locked_out_ip",
+      email,
+      request: req,
+    });
+    return lockoutResponse("magic_request", ip, ipLock.retry_after_ms);
+  }
+
   // SSO enforcement: if this email's workspace requires SSO, refuse to
   // mint a magic link. Tell the caller where to go instead.
   const ssoMatch = await findSsoForEmail(email);
@@ -80,6 +140,12 @@ export async function POST(req: NextRequest) {
   }
 
   const { token, expires_at } = await issueMagicToken(email);
+  // Issuance counts as one attempt against the rolling window: this is
+  // what stops an attacker from spamming the user's mailbox even when no
+  // login ever succeeds. Successful sign-in (in /api/auth/verify) does
+  // not need to clear it because the window expires naturally.
+  await recordFailure("magic_request", email);
+  await recordFailure("magic_request", ip);
   await recordAuthEvent({
     verb: "login_request",
     method: "magic_link",

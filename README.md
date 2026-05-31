@@ -2,6 +2,42 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Brute-force protection on sign-in
+
+Magic-link issuance and TOTP verification are both throttled per-email
+and per-IP. Five failed attempts inside a rolling window lock the
+offending bucket for 15 minutes; the response is HTTP 429 with
+`Retry-After` and `{ "error": { "code": "locked_out" } }`. Successful
+2FA clears the email bucket so a real user is not stranded by earlier
+typos. The protection covers credential stuffing on the second factor
+and mailbox-pump attacks against the magic-link endpoint without
+touching SSO sign-in.
+
+Workspace admins can see active lockouts at
+`/settings/login-throttle` and clear individual buckets; every clear is
+recorded in the dashboard audit log.
+
+### Try it
+
+```bash
+# Locked-out response after the threshold is crossed:
+curl -i -X POST http://localhost:3000/api/auth/request \
+  -H "content-type: application/json" \
+  -d '{"email":"abuser@example.com"}'
+# HTTP/1.1 429 Too Many Requests
+# Retry-After: 900
+# X-RateLimit-Scope: magic_request
+
+# Admin view of currently locked buckets (requires a dashboard session):
+curl -sS http://localhost:3000/api/auth/lockouts?only_locked=1 \
+  -b cookies.txt
+
+# Forgive one bucket:
+curl -sS -X POST http://localhost:3000/api/auth/lockouts \
+  -H "content-type: application/json" -b cookies.txt \
+  -d '{"scope":"magic_request","key":"abuser@example.com"}'
+```
+
 ## Per-tenant SIEM audit drain
 
 Enterprise security teams require that audit events flow to their own
