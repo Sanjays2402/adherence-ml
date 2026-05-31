@@ -35,10 +35,11 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - run: |
           TAG="${GITHUB_REF_NAME#v}"
+          OWNER="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
           for svc in api worker trainer; do
             DF=infra/docker/Dockerfile
             [ "$svc" != "api" ] && DF="infra/docker/Dockerfile.$svc"
-            IMG="ghcr.io/${{ github.repository_owner }}/adherence-ml"
-            [ "$svc" != "api" ] && IMG="ghcr.io/${{ github.repository_owner }}/adherence-ml-$svc"
+            IMG="ghcr.io/$OWNER/adherence-ml"
+            [ "$svc" != "api" ] && IMG="ghcr.io/$OWNER/adherence-ml-$svc"
             docker buildx build --push -f "$DF" -t "$IMG:$TAG" -t "$IMG:latest" .
           done
