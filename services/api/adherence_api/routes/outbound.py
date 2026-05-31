@@ -9,7 +9,7 @@ Each attempt is recorded in WebhookDelivery for audit and replay.
 from __future__ import annotations
 
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -611,4 +611,169 @@ def check_policy(body: PolicyCheckIn, p=Depends(require_admin)) -> PolicyCheckOu
         allowed=decision.allowed,
         reason=decision.reason,
         resolved_ips=list(decision.resolved_ips),
+    )
+
+
+class DeliveryHealthOut(BaseModel):
+    """Rolling-window delivery health for a single subscription.
+
+    Computed on demand from ``webhook_deliveries``. Tenant-scoped: we
+    only count rows whose denormalised ``tenant_id`` matches the caller,
+    so cross-tenant requests can never see another workspace's numbers
+    (and a typo'd subscription name in a foreign workspace returns 404,
+    not zeros, so it can't be used as an existence oracle).
+    """
+    name: str
+    subscription_id: int
+    window_minutes: int
+    window_started_at: str
+    total: int
+    success: int
+    failed: int
+    dead_letter: int
+    queued: int
+    blocked: int
+    success_rate: float = Field(
+        ..., description="success / total over the window, 0..1. 1.0 when no deliveries.",
+    )
+    p50_latency_ms: float | None
+    p95_latency_ms: float | None
+    last_status_code: int | None
+    last_state: str | None
+    last_error: str | None
+    last_attempt_at: str | None
+    last_success_at: str | None
+    consecutive_failures: int
+    active: bool
+    disabled_at: str | None
+    disabled_reason: str | None
+
+
+def _percentile(sorted_vals: list[float], pct: float) -> float | None:
+    if not sorted_vals:
+        return None
+    if len(sorted_vals) == 1:
+        return float(sorted_vals[0])
+    # Nearest-rank: index = ceil(pct * N) - 1, clamped.
+    import math
+    k = max(0, min(len(sorted_vals) - 1, math.ceil(pct * len(sorted_vals)) - 1))
+    return float(sorted_vals[k])
+
+
+@router.get(
+    "/subscriptions/{name}/health",
+    response_model=DeliveryHealthOut,
+)
+def subscription_health(
+    name: str,
+    window_minutes: int = Query(
+        1440, ge=1, le=10080,
+        description=(
+            "Lookback window in minutes. Default 24h, max 7 days. "
+            "Counts every delivery attempt created within the window."
+        ),
+    ),
+    p=Depends(require_admin),
+) -> DeliveryHealthOut:
+    """Return a rolling-window delivery health summary for ``name``.
+
+    Lets operators answer "is this receiver healthy right now" without
+    paging through individual delivery rows. Returns 404 if the named
+    subscription does not belong to the caller's tenant so the endpoint
+    cannot be used to enumerate another workspace's webhooks.
+    """
+    init_db()
+    tenant_id = str(p.get("tenant") or "default")
+    cutoff = datetime.utcnow() - timedelta(minutes=window_minutes)
+    with session() as s:
+        sub = s.execute(
+            select(WebhookSubscription).where(
+                WebhookSubscription.name == name,
+                WebhookSubscription.tenant_id == tenant_id,
+            )
+        ).scalar_one_or_none()
+        if sub is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, detail="subscription not found",
+            )
+        rows = list(s.scalars(
+            select(WebhookDelivery)
+            .where(
+                WebhookDelivery.subscription_id == sub.id,
+                WebhookDelivery.tenant_id == tenant_id,
+                WebhookDelivery.created_at >= cutoff,
+            )
+            .order_by(WebhookDelivery.id.desc())
+        ))
+        # Last attempt (any state) across all history, not just the window,
+        # so a quiet subscription still shows when it last fired.
+        last_any = s.execute(
+            select(WebhookDelivery)
+            .where(
+                WebhookDelivery.subscription_id == sub.id,
+                WebhookDelivery.tenant_id == tenant_id,
+            )
+            .order_by(WebhookDelivery.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        last_success = s.execute(
+            select(WebhookDelivery)
+            .where(
+                WebhookDelivery.subscription_id == sub.id,
+                WebhookDelivery.tenant_id == tenant_id,
+                WebhookDelivery.state == "success",
+            )
+            .order_by(WebhookDelivery.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        active = bool(sub.active)
+        disabled_at = getattr(sub, "disabled_at", None)
+        disabled_reason = getattr(sub, "disabled_reason", None)
+        consecutive_failures = int(getattr(sub, "consecutive_failures", 0) or 0)
+
+    by_state: dict[str, int] = {}
+    latencies: list[float] = []
+    for r in rows:
+        by_state[r.state] = by_state.get(r.state, 0) + 1
+        if r.latency_ms is not None and r.state == "success":
+            latencies.append(float(r.latency_ms))
+    latencies.sort()
+    total = len(rows)
+    success = by_state.get("success", 0)
+    failed = by_state.get("failed", 0)
+    dead_letter = by_state.get("dead_letter", 0)
+    queued = by_state.get("queued", 0)
+    blocked = by_state.get("blocked", 0)
+    # success_rate over terminal-or-attempted rows; treat "no traffic" as
+    # healthy (1.0) so a quiet receiver isn't flagged red.
+    denom = total
+    rate = 1.0 if denom == 0 else success / denom
+
+    return DeliveryHealthOut(
+        name=sub.name,
+        subscription_id=sub.id,
+        window_minutes=window_minutes,
+        window_started_at=cutoff.isoformat(),
+        total=total,
+        success=success,
+        failed=failed,
+        dead_letter=dead_letter,
+        queued=queued,
+        blocked=blocked,
+        success_rate=round(rate, 4),
+        p50_latency_ms=_percentile(latencies, 0.50),
+        p95_latency_ms=_percentile(latencies, 0.95),
+        last_status_code=(last_any.status_code if last_any else None),
+        last_state=(last_any.state if last_any else None),
+        last_error=(last_any.error if last_any else None),
+        last_attempt_at=(
+            last_any.created_at.isoformat() if last_any else None
+        ),
+        last_success_at=(
+            last_success.created_at.isoformat() if last_success else None
+        ),
+        consecutive_failures=consecutive_failures,
+        active=active,
+        disabled_at=disabled_at.isoformat() if disabled_at else None,
+        disabled_reason=disabled_reason,
     )

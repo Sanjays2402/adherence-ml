@@ -2,6 +2,64 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Per-subscription webhook delivery health
+
+Operators previously had to page through individual `webhook_deliveries` rows (or trip the circuit breaker) to know whether an outbound subscription was healthy. The API now exposes a rolling-window health summary so a workspace admin can answer "is this receiver healthy right now" with a single request, without leaking another tenant's numbers.
+
+`GET /v1/webhooks/outbound/subscriptions/{name}/health` returns, for the calling tenant only: total / success / failed / dead_letter / queued / blocked counts within `window_minutes` (default 1440, max 7 days), `success_rate` (1.0 when there has been no traffic, so quiet receivers are not flagged red), p50 + p95 latency over successful attempts, last status code, last attempt time, last success time, current `consecutive_failures`, and the active / disabled state from the subscription row itself. A name that belongs to another workspace returns 404, not zeros, so the endpoint cannot be used to enumerate cross-tenant subscriptions.
+
+Proven by `tests/integration/test_outbound_subscription_health.py`:
+
+- Counts only deliveries created within `window_minutes` (ancient rows are excluded).
+- `success_rate = success / total`, with 1.0 when total is 0 so idle receivers stay green.
+- p95 is computed over successful latencies via nearest-rank.
+- Tenant A asking for tenant B's subscription name gets 404, never another tenant's numbers.
+- Unknown subscription returns 404 (no existence oracle).
+- All-time `last_attempt_at` and `last_success_at` still surface even when the window is empty.
+
+### Try delivery health
+
+Local API: <http://127.0.0.1:8000>.
+
+```bash
+# Default 24h window
+curl -s http://127.0.0.1:8000/v1/webhooks/outbound/subscriptions/prod-hook/health \
+  -H "x-api-key: $ADMIN_KEY"
+
+# Tight 15-minute window for an active incident
+curl -s "http://127.0.0.1:8000/v1/webhooks/outbound/subscriptions/prod-hook/health?window_minutes=15" \
+  -H "x-api-key: $ADMIN_KEY"
+```
+
+Response shape:
+
+```json
+{
+  "name": "prod-hook",
+  "subscription_id": 42,
+  "window_minutes": 1440,
+  "window_started_at": "2026-05-30T16:00:00",
+  "total": 128,
+  "success": 124,
+  "failed": 3,
+  "dead_letter": 1,
+  "queued": 0,
+  "blocked": 0,
+  "success_rate": 0.9688,
+  "p50_latency_ms": 42.0,
+  "p95_latency_ms": 310.0,
+  "last_status_code": 200,
+  "last_state": "success",
+  "last_error": null,
+  "last_attempt_at": "2026-05-31T22:14:09",
+  "last_success_at": "2026-05-31T22:14:09",
+  "consecutive_failures": 0,
+  "active": true,
+  "disabled_at": null,
+  "disabled_reason": null
+}
+```
+
 ## Canonical webhook event catalog
 
 Webhook subscriptions historically accepted any free-form event name, so a typo in `event_types` silently produced a subscription that would never fire and procurement reviewers had no way to introspect what events the API actually emits. The new catalog lives in `packages/common/adherence_common/webhook_events.py` (mirrored in `apps/web/lib/webhook-catalog.ts`) and is enforced everywhere: `PUT /v1/webhooks/outbound/subscriptions` and `POST /v1/webhooks/outbound/test-send` reject any `event_type` not in the catalog with `400 unknown_event_type`, and `dispatch()` emits a structured warning if a caller fires an off-catalog event. Customers and procurement teams read the full contract (description, stability, schema, example payload) at `GET /v1/webhooks/event-catalog` or in the dashboard at `/workspace/webhooks/catalog`.
