@@ -185,6 +185,36 @@ The `/webhooks` dashboard now ships status filter chips, expandable rows
 showing the full payload plus per-attempt log, and a one-click `redeliver`
 button on every non-test delivery.
 
+#### Webhooks API (key authenticated)
+
+The same endpoints are reachable from outside the browser using an API key
+with the `webhooks` scope. Mint a key at
+[/api-keys](http://localhost:3000/api-keys) with `webhooks` checked, then:
+
+```bash
+# list endpoints
+curl http://localhost:3000/v1/webhooks \
+  -H "authorization: Bearer adh_..."
+
+# register a new endpoint (response includes `secret` exactly once)
+curl -X POST http://localhost:3000/v1/webhooks \
+  -H "authorization: Bearer adh_..." \
+  -H "content-type: application/json" \
+  -d '{"name":"prod","url":"https://example.com/hook","events":["run.created"]}'
+
+# tail deliveries (status: all|ok|failed|pending)
+curl 'http://localhost:3000/v1/webhooks/deliveries?status=failed&limit=20' \
+  -H "authorization: Bearer adh_..."
+
+# delete an endpoint
+curl -X DELETE http://localhost:3000/v1/webhooks/<id> \
+  -H "authorization: Bearer adh_..."
+```
+
+GET requests also accept the existing `read` scope so dashboards can audit
+endpoints and deliveries without holding write power. Every call is recorded
+in per-key usage at [/api-keys/&lt;id&gt;](http://localhost:3000/api-keys).
+
 ### API keys
 
 Issue your own keys for the public `/v1/predict` endpoint and call it from

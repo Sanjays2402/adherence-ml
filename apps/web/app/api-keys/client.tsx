@@ -26,7 +26,7 @@ import {
   MonoChip,
 } from "@/components/ui/primitives";
 
-type Scope = "predict" | "read";
+type Scope = "predict" | "read" | "webhooks";
 
 type KeyRow = {
   id: string;
@@ -278,6 +278,7 @@ export default function KeysClient() {
             {([
               { value: "predict" as const, label: "predict", hint: "POST /v1/predict" },
               { value: "read" as const, label: "read", hint: "GET /v1/runs" },
+              { value: "webhooks" as const, label: "webhooks", hint: "manage /v1/webhooks endpoints" },
             ]).map((s) => {
               const checked = scopes.includes(s.value);
               return (

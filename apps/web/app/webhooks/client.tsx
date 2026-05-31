@@ -645,6 +645,45 @@ export default function WebhooksClient() {
             </div>
           )}
         </Card>
+
+        <Card>
+          <CardHeader
+            title="Manage from the API"
+            hint="Same endpoints, key authenticated. Issue a key with the 'webhooks' scope from /api-keys."
+          />
+          <div className="space-y-3 text-[12px]">
+            <div>
+              <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--color-muted)] mb-1">
+                list endpoints
+              </div>
+              <pre className="font-mono text-[11px] whitespace-pre-wrap break-words bg-[var(--color-bg)] border border-[var(--color-border)] rounded p-2 overflow-auto">{`curl http://localhost:3000/v1/webhooks \\
+  -H "authorization: Bearer adh_..."`}</pre>
+            </div>
+            <div>
+              <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--color-muted)] mb-1">
+                register endpoint (secret returned once)
+              </div>
+              <pre className="font-mono text-[11px] whitespace-pre-wrap break-words bg-[var(--color-bg)] border border-[var(--color-border)] rounded p-2 overflow-auto">{`curl -X POST http://localhost:3000/v1/webhooks \\
+  -H "authorization: Bearer adh_..." \\
+  -H "content-type: application/json" \\
+  -d '{"name":"prod","url":"https://example.com/hook","events":["run.created"]}'`}</pre>
+            </div>
+            <div>
+              <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--color-muted)] mb-1">
+                inspect deliveries
+              </div>
+              <pre className="font-mono text-[11px] whitespace-pre-wrap break-words bg-[var(--color-bg)] border border-[var(--color-border)] rounded p-2 overflow-auto">{`curl 'http://localhost:3000/v1/webhooks/deliveries?status=failed&limit=20' \\
+  -H "authorization: Bearer adh_..."`}</pre>
+            </div>
+            <div>
+              <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--color-muted)] mb-1">
+                delete an endpoint
+              </div>
+              <pre className="font-mono text-[11px] whitespace-pre-wrap break-words bg-[var(--color-bg)] border border-[var(--color-border)] rounded p-2 overflow-auto">{`curl -X DELETE http://localhost:3000/v1/webhooks/<id> \\
+  -H "authorization: Bearer adh_..."`}</pre>
+            </div>
+          </div>
+        </Card>
       </div>
     </div>
   );
