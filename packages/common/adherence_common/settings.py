@@ -101,14 +101,6 @@ class Settings(BaseSettings):
     # cannot post forged events from an arbitrary egress IP.
     inbound_webhook_ip_allowlist: str = ""
 
-    # Optional mapping from inbound webhook source name to the workspace
-    # tenant_id whose per-tenant PII redaction policy should be applied
-    # to partner-supplied free text (currently DoseOutcome.notes).
-    # Format: ``source:tenant_id,source:tenant_id``. When a source has no
-    # mapping, no value-level scrubbing is performed and the field is
-    # persisted verbatim (back-compat).
-    inbound_source_tenants: str = ""
-
     # Outbound webhook destination policy (SSRF defense). Subscriptions
     # are validated at create time AND at dispatch time (DNS rebinding
     # defense). Defaults deny private/loopback/link-local IPs and plain

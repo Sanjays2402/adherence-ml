@@ -93,15 +93,6 @@ def record_admin_action(
     tid = (tenant_id or p.get("tenant") or "default")
     tid = str(tid)[:64]
     redacted = redact_details(details) if details is not None else None
-    # Per-tenant PII scrub on free-text values inside the (already
-    # secret-key-redacted) details blob. Fail-open: any error returns
-    # the input unchanged so the audit write still happens.
-    if redacted is not None:
-        try:
-            from adherence_common.pii_policy import scrub_value
-            redacted = scrub_value(tid, redacted)
-        except Exception as exc:  # pragma: no cover - defensive
-            log.warning("admin_audit_pii_scrub_failed", error=str(exc))
     try:
         with session() as s:
             row = AdminAuditLog(

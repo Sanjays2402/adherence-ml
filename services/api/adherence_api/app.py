@@ -20,7 +20,6 @@ from adherence_api.routes import admin_mfa as admin_mfa_route
 from adherence_api.routes import admin_sessions as admin_sessions_route
 from adherence_api.routes import memberships as memberships_route
 from adherence_api.routes import session_policy as session_policy_route
-from adherence_api.routes import pii_policy as pii_policy_route
 from adherence_api.routes import residency as residency_route
 from adherence_api.routes import api_key_policy as api_key_policy_route
 from adherence_api.routes import retention_policy as retention_policy_route
@@ -173,7 +172,6 @@ def create_app() -> FastAPI:
     app.include_router(admin_sessions_route.router)
     app.include_router(memberships_route.router)
     app.include_router(session_policy_route.router)
-    app.include_router(pii_policy_route.router)
     app.include_router(residency_route.router)
     app.include_router(api_key_policy_route.router)
     app.include_router(retention_policy_route.router)
