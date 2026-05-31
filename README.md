@@ -22,10 +22,15 @@ an append-only audit log with CSV export.
 ## Try it
 
 With the API on `:8000` and the web app on `:3000`, open
-[http://localhost:3000](http://localhost:3000) for the live demo landing page.
-Three preloaded patient scenarios (cardiac, psych, diabetic polypharmacy) post
-to `POST /v1/predict` and render miss probability, risk tier, latency, and
-SHAP reason codes against the calibrated ensemble.
+[http://localhost:3000/demo](http://localhost:3000/demo) for the one-click
+demo. Three preloaded patient personas (stable hypertension, slipping
+diabetes plus SSRI, newly prescribed antibiotic course) ship with 14 days of
+synthetic dosing history. Picking a persona POSTs the full schedule and
+history to `POST /v1/predict` and renders per-dose miss probability, risk
+tier, a recharts risk distribution, SHAP-derived reason codes, and observed
+call latency against the calibrated ensemble. The landing page at
+[http://localhost:3000](http://localhost:3000) still offers an inline
+three-card preview.
 
 ```bash
 curl -s http://localhost:8000/v1/predict \

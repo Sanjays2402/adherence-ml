@@ -11,11 +11,13 @@ import {
   UsersThree,
   ClipboardText,
   House,
+  Sparkle,
 } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
   { href: "/", label: "Overview", icon: House, hint: "What this does" },
+  { href: "/demo", label: "Try a sample", icon: Sparkle, hint: "3 patient personas" },
   { href: "/dashboard", label: "Performance", icon: ChartLine, hint: "AUC // Brier // ECE" },
   { href: "/cohort", label: "Cohort", icon: UsersThree, hint: "Population risk" },
   { href: "/explain", label: "Explainer", icon: Lightbulb, hint: "SHAP contributions" },
