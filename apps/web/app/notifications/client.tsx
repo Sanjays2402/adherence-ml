@@ -12,6 +12,8 @@ import {
   Warning,
   Sparkle,
   ArrowsClockwise,
+  X,
+  Trash,
 } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 
@@ -52,37 +54,79 @@ function relTime(ms: number): string {
   return `${d}d ago`;
 }
 
+const KIND_OPTIONS: { value: string; label: string }[] = [
+  { value: "run.completed", label: "Runs" },
+  { value: "batch.completed", label: "Batch" },
+  { value: "webhook.failed", label: "Webhook fail" },
+  { value: "webhook.delivered", label: "Webhook ok" },
+  { value: "system", label: "System" },
+];
+
 export default function NotificationsClient() {
   const [data, setData] = useState<ApiResp | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "unread">("all");
+  const [kinds, setKinds] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async (which: "all" | "unread") => {
-    setLoading(true);
-    setError(null);
-    try {
-      const url = which === "unread" ? "/api/notifications?unread=1" : "/api/notifications";
-      const r = await fetch(url, { cache: "no-store" });
-      if (!r.ok) throw new Error(`load_failed:${r.status}`);
-      setData((await r.json()) as ApiResp);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "unknown_error");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const load = useCallback(
+    async (which: "all" | "unread", kindSet: Set<string>) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const params = new URLSearchParams();
+        if (which === "unread") params.set("unread", "1");
+        if (kindSet.size > 0) params.set("kinds", Array.from(kindSet).join(","));
+        const qs = params.toString();
+        const url = qs ? `/api/notifications?${qs}` : "/api/notifications";
+        const r = await fetch(url, { cache: "no-store" });
+        if (!r.ok) throw new Error(`load_failed:${r.status}`);
+        setData((await r.json()) as ApiResp);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "unknown_error");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
-    void load(filter);
-  }, [filter, load]);
+    void load(filter, kinds);
+  }, [filter, kinds, load]);
+
+  function toggleKind(k: string) {
+    setKinds((prev) => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+  }
 
   async function markOne(id: string) {
     setBusy(true);
     try {
       await fetch(`/api/notifications/${id}/read`, { method: "POST" });
-      await load(filter);
+      await load(filter, kinds);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function dismissOne(id: string) {
+    setBusy(true);
+    try {
+      // optimistic remove
+      setData((d) =>
+        d ? { ...d, items: d.items.filter((n) => n.id !== id) } : d,
+      );
+      const r = await fetch(`/api/notifications/${id}`, { method: "DELETE" });
+      if (!r.ok) {
+        // refetch to recover
+        await load(filter, kinds);
+      }
     } finally {
       setBusy(false);
     }
@@ -92,7 +136,18 @@ export default function NotificationsClient() {
     setBusy(true);
     try {
       await fetch("/api/notifications/read-all", { method: "POST" });
-      await load(filter);
+      await load(filter, kinds);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearRead() {
+    if (!confirm("Delete every notification you have already read?")) return;
+    setBusy(true);
+    try {
+      await fetch("/api/notifications/clear-read", { method: "POST" });
+      await load(filter, kinds);
     } finally {
       setBusy(false);
     }
@@ -141,7 +196,7 @@ export default function NotificationsClient() {
             </button>
           </div>
           <button
-            onClick={() => void load(filter)}
+            onClick={() => void load(filter, kinds)}
             className="rounded-md border border-[var(--color-border)] px-2 py-1.5 text-xs text-[var(--color-muted)] hover:text-[var(--color-fg)] transition-colors"
             aria-label="Refresh"
           >
@@ -153,6 +208,15 @@ export default function NotificationsClient() {
             className="rounded-md border border-[var(--color-border)] px-2.5 py-1.5 text-xs hover:bg-[var(--color-accent-soft)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             Mark all read
+          </button>
+          <button
+            onClick={clearRead}
+            disabled={busy || !data || !data.authenticated}
+            className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2.5 py-1.5 text-xs text-[var(--color-muted)] hover:text-[var(--color-high)] hover:border-[var(--color-high)]/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            title="Delete every notification you have already read"
+          >
+            <Trash weight="duotone" size={12} />
+            Clear read
           </button>
         </div>
       </header>
@@ -166,6 +230,40 @@ export default function NotificationsClient() {
           </Link>
         </div>
       ) : null}
+
+      <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter by kind">
+        <span className="text-[10px] font-mono uppercase tracking-[0.14em] text-[var(--color-muted)] mr-1">
+          Kind
+        </span>
+        {KIND_OPTIONS.map((k) => {
+          const active = kinds.has(k.value);
+          return (
+            <button
+              key={k.value}
+              type="button"
+              onClick={() => toggleKind(k.value)}
+              aria-pressed={active}
+              className={cn(
+                "rounded-full border px-2.5 py-0.5 text-[11px] transition-colors",
+                active
+                  ? "border-[var(--color-accent)]/50 bg-[var(--color-accent-soft)] text-[var(--color-fg)]"
+                  : "border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-fg)]",
+              )}
+            >
+              {k.label}
+            </button>
+          );
+        })}
+        {kinds.size > 0 ? (
+          <button
+            type="button"
+            onClick={() => setKinds(new Set())}
+            className="text-[11px] text-[var(--color-muted)] hover:text-[var(--color-fg)] underline underline-offset-2 ml-1"
+          >
+            Clear
+          </button>
+        ) : null}
+      </div>
 
       {error ? (
         <div className="rounded-md border border-[var(--color-high)]/40 bg-[var(--color-high)]/10 px-4 py-3 text-sm text-[var(--color-high)]">
@@ -244,6 +342,18 @@ export default function NotificationsClient() {
                         className="text-xs text-[var(--color-muted)] hover:text-[var(--color-fg)] disabled:opacity-40"
                       >
                         Mark read
+                      </button>
+                    ) : null}
+                    {data?.authenticated && n.user_id !== null ? (
+                      <button
+                        onClick={() => dismissOne(n.id)}
+                        disabled={busy}
+                        aria-label="Dismiss notification"
+                        title="Delete this notification"
+                        className="inline-flex items-center gap-1 text-xs text-[var(--color-muted)] hover:text-[var(--color-high)] disabled:opacity-40"
+                      >
+                        <X weight="bold" size={11} />
+                        Dismiss
                       </button>
                     ) : null}
                   </div>

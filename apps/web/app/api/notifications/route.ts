@@ -5,6 +5,7 @@ import {
   createNotification,
   listForUser,
   unreadCountForUser,
+  type NotificationKind,
 } from "@/lib/notifications-store";
 
 export const runtime = "nodejs";
@@ -17,7 +18,24 @@ export async function GET(req: NextRequest) {
   const limitParam = req.nextUrl.searchParams.get("limit");
   const limit = limitParam ? Math.max(1, Math.min(500, parseInt(limitParam, 10) || 100)) : 100;
 
-  const items = await listForUser(uid, { unreadOnly, limit });
+  const ALLOWED_KINDS: NotificationKind[] = [
+    "run.completed",
+    "batch.completed",
+    "webhook.failed",
+    "webhook.delivered",
+    "system",
+  ];
+  const kindsParam = req.nextUrl.searchParams.get("kinds");
+  const kinds = kindsParam
+    ? (kindsParam
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s): s is NotificationKind =>
+          (ALLOWED_KINDS as string[]).includes(s),
+        ))
+    : undefined;
+
+  const items = await listForUser(uid, { unreadOnly, limit, kinds });
   const unread = await unreadCountForUser(uid);
   return NextResponse.json({ items, unread, authenticated: !!uid });
 }

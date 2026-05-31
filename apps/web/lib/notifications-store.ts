@@ -114,6 +114,7 @@ async function writeReadIndex(idx: ReadIndex): Promise<void> {
 export interface ListOptions {
   unreadOnly?: boolean;
   limit?: number;
+  kinds?: NotificationKind[];
 }
 
 export interface NotificationView extends NotificationRecord {
@@ -128,8 +129,11 @@ export async function listForUser(
   const idx = await readReadIndex();
   const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500);
 
+  const kindSet = opts.kinds && opts.kinds.length > 0 ? new Set(opts.kinds) : null;
   const visible = all.filter(
-    (n) => n.user_id === null || (userId !== null && n.user_id === userId),
+    (n) =>
+      (n.user_id === null || (userId !== null && n.user_id === userId)) &&
+      (!kindSet || kindSet.has(n.kind)),
   );
 
   const mapped: NotificationView[] = visible.map((n) => {
@@ -208,6 +212,60 @@ export async function markAllRead(userId: string | null): Promise<number> {
   }
   await writeReadIndex(idx);
   return n;
+}
+
+/**
+ * Delete a single notification owned by `userId`. Broadcasts (user_id===null)
+ * cannot be deleted by users; they can only mark them read.
+ * Returns true on success, false if not found or not permitted.
+ */
+export async function deleteNotification(
+  userId: string | null,
+  notificationId: string,
+): Promise<boolean> {
+  if (!userId) return false;
+  const all = await readAll();
+  const target = all.find((n) => n.id === notificationId);
+  if (!target) return false;
+  if (target.user_id === null) return false; // cannot delete broadcasts
+  if (target.user_id !== userId) return false;
+
+  const next = all.filter((n) => n.id !== notificationId);
+  const out = next.length === 0 ? "" : next.map((n) => JSON.stringify(n)).join("\n") + "\n";
+  writeQueue = writeQueue.then(() => fs.writeFile(FILE, out, "utf8"));
+  await writeQueue;
+
+  // also drop any per-user read entry for this id (cleanup)
+  const idx = await readReadIndex();
+  const k = `${userId}|${notificationId}`;
+  if (idx[k]) {
+    delete idx[k];
+    await writeReadIndex(idx);
+  }
+  return true;
+}
+
+/**
+ * Delete every targeted, already-read notification for `userId`. Returns the
+ * number removed. Broadcasts are never deleted, only hidden by mark-read.
+ */
+export async function deleteAllRead(userId: string | null): Promise<number> {
+  if (!userId) return 0;
+  const all = await readAll();
+  const keep: NotificationRecord[] = [];
+  let removed = 0;
+  for (const rec of all) {
+    if (rec.user_id === userId && rec.read) {
+      removed++;
+      continue;
+    }
+    keep.push(rec);
+  }
+  if (removed === 0) return 0;
+  const out = keep.length === 0 ? "" : keep.map((n) => JSON.stringify(n)).join("\n") + "\n";
+  writeQueue = writeQueue.then(() => fs.writeFile(FILE, out, "utf8"));
+  await writeQueue;
+  return removed;
 }
 
 /** Test helper: wipe both files. */

@@ -98,4 +98,57 @@ describe("notifications-store", () => {
     expect(unread).toHaveLength(1);
     expect(unread[0].title).toBe("b");
   });
+
+  it("filters by kind when kinds option is provided", async () => {
+    await store.createNotification({ user_id: "u1", kind: "run.completed", title: "r", body: "" });
+    await store.createNotification({ user_id: "u1", kind: "batch.completed", title: "b", body: "" });
+    await store.createNotification({ user_id: "u1", kind: "webhook.failed", title: "w", body: "" });
+    const onlyRun = await store.listForUser("u1", { kinds: ["run.completed"] });
+    expect(onlyRun.map((n) => n.title)).toEqual(["r"]);
+    const runOrBatch = await store.listForUser("u1", {
+      kinds: ["run.completed", "batch.completed"],
+    });
+    expect(runOrBatch.map((n) => n.title).sort()).toEqual(["b", "r"]);
+  });
+
+  it("deletes a targeted notification but never a broadcast", async () => {
+    const a = await store.createNotification({ user_id: "u1", kind: "run.completed", title: "mine", body: "" });
+    const bc = await store.createNotification({ user_id: null, kind: "system", title: "all", body: "" });
+
+    expect(await store.deleteNotification("u1", a.id)).toBe(true);
+    expect(await store.listForUser("u1")).toHaveLength(1); // broadcast remains
+
+    // broadcast cannot be deleted by a user
+    expect(await store.deleteNotification("u1", bc.id)).toBe(false);
+    // unknown id
+    expect(await store.deleteNotification("u1", "nope")).toBe(false);
+    // anonymous cannot delete
+    expect(await store.deleteNotification(null, bc.id)).toBe(false);
+    // foreign user cannot delete
+    const c = await store.createNotification({ user_id: "u1", kind: "run.completed", title: "x", body: "" });
+    expect(await store.deleteNotification("u2", c.id)).toBe(false);
+  });
+
+  it("deleteAllRead removes only the caller's already-read targeted items", async () => {
+    const a = await store.createNotification({ user_id: "u1", kind: "run.completed", title: "a", body: "" });
+    const b = await store.createNotification({ user_id: "u1", kind: "run.completed", title: "b", body: "" });
+    await store.createNotification({ user_id: "u1", kind: "run.completed", title: "c", body: "" });
+    await store.createNotification({ user_id: "u2", kind: "run.completed", title: "other-read", body: "" }).then(async (rec) => {
+      await store.markRead("u2", rec.id);
+    });
+    await store.createNotification({ user_id: null, kind: "system", title: "broadcast", body: "" });
+
+    await store.markRead("u1", a.id);
+    await store.markRead("u1", b.id);
+
+    const removed = await store.deleteAllRead("u1");
+    expect(removed).toBe(2);
+
+    const remaining = await store.listForUser("u1");
+    // unread "c" + broadcast
+    expect(remaining.map((n) => n.title).sort()).toEqual(["broadcast", "c"]);
+
+    // u2's read item is untouched
+    expect(await store.listForUser("u2")).toHaveLength(2); // their read item + broadcast
+  });
 });
