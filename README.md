@@ -2,6 +2,40 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Fine-grained API key scope enforcement
+
+API keys carry a comma-separated scope allowlist (e.g.
+`predict:write,interventions:read`). Until now only `/v1/gdpr/*`
+consulted that list; every other mutating route fell back to coarse
+role checks, meaning a key marked `predict:read` could still mint
+tokens, manage members, or change retention policy. A new
+`ScopeEnforceMiddleware` now maps every catalogued route to a canonical
+scope (see `services/api/adherence_api/scope_catalog.py`) and returns
+`403 insufficient_scope` with an `X-Required-Scope` header when a
+scoped key reaches a route outside its allowlist. Keys with an empty
+scope set keep the legacy "role-only" behaviour so existing deployments
+upgrade cleanly.
+
+### Try it
+
+```bash
+# 1. List the canonical scope catalog and the scopes your credential holds.
+curl -s http://localhost:8000/v1/auth/scopes \
+  -H "x-api-key: $ADHERENCE_API_KEY" | jq
+
+# 2. Dry-run a permission decision without invoking the route.
+curl -s "http://localhost:8000/v1/auth/scopes/check?method=POST&path=/v1/admin/memberships" \
+  -H "x-api-key: $ADHERENCE_API_KEY" | jq
+
+# 3. A scoped key hitting an out-of-scope route returns 403.
+curl -i http://localhost:8000/v1/admin/token \
+  -H "x-api-key: $SCOPED_KEY" \
+  -H "content-type: application/json" \
+  -d '{"subject":"u1","role":"viewer"}'
+# HTTP/1.1 403 Forbidden
+# X-Required-Scope: admin:keys
+```
+
 ## Per-workspace data residency
 
 Enterprise buyers (especially EU healthcare and US public sector)
