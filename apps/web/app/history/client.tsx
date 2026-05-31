@@ -14,6 +14,7 @@ import {
   Trash,
   ClockCounterClockwise,
   Tag as TagIcon,
+  X,
 } from "@phosphor-icons/react";
 import { PageHeader, Card } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
@@ -66,6 +67,11 @@ export default function HistoryClient() {
   const [pinnedOnly, setPinnedOnly] = useState(false);
   const [page, setPage] = useState(0);
   const [toast, setToast] = useState<string | null>(null);
+  // Bulk-select state: set of run ids currently checked across pages.
+  // We deliberately preserve selection across page/filter changes so a user
+  // can build a working set, then act on it from the toolbar.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   useEffect(() => {
     setPage(0);
@@ -194,6 +200,45 @@ export default function HistoryClient() {
     }
   }
 
+  const toggleOne = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+
+  async function runBulk(action: "delete" | "pin" | "unpin") {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    if (action === "delete" && !confirm(`Delete ${ids.length} run${ids.length === 1 ? "" : "s"}? This cannot be undone.`)) {
+      return;
+    }
+    setBulkBusy(true);
+    try {
+      const res = await fetch("/api/runs/bulk", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action, ids }),
+      });
+      if (!res.ok) {
+        flash(`bulk ${action} failed`);
+        return;
+      }
+      const body = (await res.json()) as { affected: number };
+      flash(`${action} ${body.affected} run${body.affected === 1 ? "" : "s"}`);
+      clearSelection();
+      mutate();
+    } catch {
+      flash(`bulk ${action} failed`);
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
   async function onCopyLink(id: string) {
     const url = `${window.location.origin}/history/${id}`;
     try {
@@ -207,6 +252,23 @@ export default function HistoryClient() {
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / PAGE));
+  const visibleIds = items.map((r) => r.id);
+  const allVisibleSelected =
+    visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
+  const someVisibleSelected =
+    visibleIds.some((id) => selectedIds.has(id)) && !allVisibleSelected;
+  const toggleAllVisible = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        for (const id of visibleIds) next.delete(id);
+      } else {
+        for (const id of visibleIds) next.add(id);
+      }
+      return next;
+    });
+  };
+  const selectionCount = selectedIds.size;
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -387,12 +449,39 @@ export default function HistoryClient() {
           ) : items.length === 0 ? (
             <EmptyState />
           ) : (
+            <>
+              <div className="px-4 py-2 border-b border-[var(--color-border)] flex items-center gap-3 text-[11px] font-mono uppercase tracking-wider text-[var(--color-muted)]">
+                <label className="inline-flex items-center gap-2 cursor-pointer select-none" title={allVisibleSelected ? "Clear selection on this page" : "Select all on this page"}>
+                  <input
+                    type="checkbox"
+                    aria-label="Select all runs on this page"
+                    className="h-3.5 w-3.5 accent-[var(--color-accent)] cursor-pointer"
+                    checked={allVisibleSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = someVisibleSelected;
+                    }}
+                    onChange={toggleAllVisible}
+                  />
+                  <span>{allVisibleSelected ? "selected" : "select page"}</span>
+                </label>
+                {selectionCount > 0 && (
+                  <span className="text-[var(--color-fg)]">{selectionCount} selected</span>
+                )}
+              </div>
             <ul className="divide-y divide-[var(--color-border)]">
               {items.map((r) => (
                 <li
                   key={r.id}
                   className="px-4 py-3 flex flex-col gap-2 md:flex-row md:items-center md:gap-4 hover:bg-[var(--color-border)]/10"
                 >
+                  <input
+                    type="checkbox"
+                    aria-label={`Select run ${r.title}`}
+                    className="h-3.5 w-3.5 accent-[var(--color-accent)] cursor-pointer self-start md:self-center"
+                    checked={selectedIds.has(r.id)}
+                    onChange={() => toggleOne(r.id)}
+                    onClick={(e) => e.stopPropagation()}
+                  />
                   <Link
                     href={`/history/${r.id}`}
                     className="flex-1 min-w-0 flex items-start gap-3"
@@ -455,6 +544,7 @@ export default function HistoryClient() {
                 </li>
               ))}
             </ul>
+            </>
           )}
         </Card>
 
@@ -482,6 +572,55 @@ export default function HistoryClient() {
           </div>
         )}
       </div>
+
+      {selectionCount > 0 && (
+        <div
+          role="region"
+          aria-label="Bulk actions"
+          className="fixed inset-x-0 bottom-0 z-30 border-t border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur supports-[backdrop-filter]:bg-[var(--color-surface)]/80 px-4 py-3 shadow-[0_-4px_24px_-12px_rgba(0,0,0,0.6)]"
+        >
+          <div className="mx-auto flex max-w-5xl flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3 text-[12px]">
+              <span className="inline-flex items-center rounded-md border border-[var(--color-accent)]/40 bg-[var(--color-accent-soft)] px-2 py-0.5 font-mono text-[11px] text-[var(--color-fg)]">
+                {selectionCount} selected
+              </span>
+              <button
+                type="button"
+                onClick={clearSelection}
+                className="inline-flex items-center gap-1 text-[11px] font-mono uppercase tracking-wider text-[var(--color-muted)] hover:text-[var(--color-fg)]"
+              >
+                <X weight="duotone" size={12} /> clear
+              </button>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={bulkBusy}
+                onClick={() => runBulk("pin")}
+                className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[12px] hover:bg-[var(--color-border)]/30 disabled:opacity-50"
+              >
+                <PushPin weight="duotone" size={14} /> Pin
+              </button>
+              <button
+                type="button"
+                disabled={bulkBusy}
+                onClick={() => runBulk("unpin")}
+                className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[12px] hover:bg-[var(--color-border)]/30 disabled:opacity-50"
+              >
+                <PushPin weight="regular" size={14} /> Unpin
+              </button>
+              <button
+                type="button"
+                disabled={bulkBusy}
+                onClick={() => runBulk("delete")}
+                className="inline-flex items-center gap-1.5 rounded-md border border-red-400/40 bg-red-500/10 px-2.5 py-1.5 text-[12px] text-red-200 hover:bg-red-500/20 disabled:opacity-50"
+              >
+                <Trash weight="duotone" size={14} /> Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {toast && (
         <div className="fixed bottom-6 right-6 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[12px] shadow-lg">

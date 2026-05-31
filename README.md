@@ -254,7 +254,9 @@ app is automatically saved to a per-instance run log under `apps/web/.data/runs.
 (override path with `ADHERENCE_DATA_DIR`). Open
 [http://localhost:3000/history](http://localhost:3000/history) to search,
 filter by kind, rename, tag, pin important runs to the top, copy a shareable link (`/history/<id>`), delete,
-or export the full log as CSV, JSON, or NDJSON. The History page exports
+or export the full log as CSV, JSON, or NDJSON. Select multiple rows with the
+per-row checkboxes (or the page-level select-all) and the floating action bar
+lets you pin, unpin, or delete the entire selection in one request. The History page exports
 honor the active search, kind, and date-range filters, so you can pull just
 "failed predict runs in the last 7 days" without post-processing. The detail
 page is a plain server route so links are shareable in incognito.
@@ -266,6 +268,7 @@ API surface:
 - `GET /api/runs/:id` fetch one
 - `PATCH /api/runs/:id` rename, retag, or pin (`{ title?, tags?, pinned? }`)
 - `DELETE /api/runs/:id` remove
+- `POST /api/runs/bulk` body `{ action: "delete"|"pin"|"unpin", ids: string[] }` bulk operate on up to 500 runs in a single write
 - `GET /api/runs/tags?kind=` list every tag in use with its run count, optionally narrowed by kind, for the history filter chips
 - `GET /api/runs/export?format=csv|json|ndjson&q=&kind=&from=&to=&tag=&user_id=` filtered download (repeat `tag=` to AND multiple)
 - `GET /api/runs/:id/download` per-run JSON download (attachment with safe filename)

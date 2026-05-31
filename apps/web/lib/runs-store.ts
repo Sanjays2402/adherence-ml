@@ -155,6 +155,54 @@ export async function deleteRun(id: string): Promise<boolean> {
   return true;
 }
 
+/**
+ * Bulk delete a list of runs. Returns the number actually removed.
+ * Unknown ids are silently ignored. Writes the file once at the end so
+ * a 100-id bulk delete is a single rename, not 100.
+ */
+export async function deleteRuns(ids: string[]): Promise<number> {
+  ensureDir();
+  const set = new Set(ids);
+  if (set.size === 0) return 0;
+  const all = await readAll();
+  const next = all.filter((r) => !set.has(r.id));
+  const removed = all.length - next.length;
+  if (removed === 0) return 0;
+  const tmp = RUNS_FILE + ".tmp";
+  const body = next.map((r) => JSON.stringify(r)).join("\n") + (next.length ? "\n" : "");
+  await fs.writeFile(tmp, body, "utf8");
+  await fs.rename(tmp, RUNS_FILE);
+  return removed;
+}
+
+/**
+ * Bulk set the pinned flag on a list of runs. Returns the number of
+ * runs whose pinned state actually changed.
+ */
+export async function setRunsPinned(
+  ids: string[],
+  pinned: boolean,
+): Promise<number> {
+  ensureDir();
+  const set = new Set(ids);
+  if (set.size === 0) return 0;
+  const all = await readAll();
+  let changed = 0;
+  const now = Date.now();
+  const next = all.map((r) => {
+    if (!set.has(r.id)) return r;
+    if (!!r.pinned === pinned) return r;
+    changed += 1;
+    return { ...r, pinned, pinned_at: pinned ? now : null };
+  });
+  if (changed === 0) return 0;
+  const tmp = RUNS_FILE + ".tmp";
+  const body = next.map((r) => JSON.stringify(r)).join("\n") + (next.length ? "\n" : "");
+  await fs.writeFile(tmp, body, "utf8");
+  await fs.rename(tmp, RUNS_FILE);
+  return changed;
+}
+
 export async function countRuns(): Promise<number> {
   const all = await readAll();
   return all.length;
