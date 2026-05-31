@@ -309,6 +309,45 @@ curl -X POST http://localhost:3000/api/workspaces/<ws_id>/invites \
 ```
 
 
+### Schedules (recurring predictions)
+
+Save a prediction payload once and have it re-run on a daily or weekly
+cadence at a fixed UTC hour. Each fire appends a new record to history
+tagged `scheduled` and fans the `run.created` event out to registered
+webhooks. Manage schedules at
+[/schedules](http://localhost:3000/schedules): create, pause/resume, fire
+now, delete, and inspect the last 25 deliveries with latency and error
+detail. State lives in `apps/web/.data/schedules.json`.
+
+A cron tick endpoint at `/api/schedules/tick` fires every schedule whose
+`next_run_at` is in the past. Wire it into Vercel Cron, GitHub Actions, or
+plain `crond`. Set `ADHERENCE_CRON_SECRET` to require an `x-cron-secret`
+header. The pure scheduling math is covered by
+`tests/schedules-store.test.ts` (6 cases across daily and weekly rollover).
+
+```bash
+# Create a daily schedule that fires at 14:00 UTC.
+curl -X POST http://localhost:3000/api/schedules \
+  -H 'content-type: application/json' \
+  -d '{
+    "name": "Daily risk sweep",
+    "cadence": "daily",
+    "hour_utc": 14,
+    "payload": {
+      "user_id": "u_demo",
+      "doses": [{
+        "dose_id": "d1",
+        "scheduled_at": "2025-06-15T20:00:00Z",
+        "dose_class": "statin",
+        "dose_strength_mg": 20
+      }]
+    }
+  }'
+
+# Manually tick the cron (use GET so it is curl + Vercel Cron friendly).
+curl http://localhost:3000/api/schedules/tick
+```
+
 ## Try it
 
 With the API on `:8000` and the web app on `:3000`, open
