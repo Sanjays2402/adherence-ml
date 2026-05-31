@@ -161,7 +161,11 @@ your own analytics, or a downstream nudge engine. Manage endpoints at
 attempt history, and counters live in `apps/web/.data/webhooks.json`. The
 signing secret is shown exactly once at creation; only a SHA-256 hash is
 persisted. Failed deliveries retry with exponential backoff (4 attempts over
-~40s) and the last 500 attempts are kept in a delivery log.
+~40s) and the last 500 attempts are kept in a delivery log. The /webhooks
+page exposes one-click **CSV / NDJSON download** of the current delivery view
+(scoped by status filter and endpoint), or hit
+`GET /api/webhooks/deliveries/export?format=csv&status=failed&limit=500`
+directly for postmortem analysis in Excel, Splunk, or duckdb.
 
 Signature header: `X-Adherence-Signature: t=<unix>,v1=<hex>` where
 `v1 = HMAC_SHA256(secret_hash, t + "." + raw_body)`. Receivers should reject

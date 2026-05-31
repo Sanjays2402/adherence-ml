@@ -19,6 +19,7 @@ import {
   ArrowClockwise,
   CaretRight,
   ArrowCounterClockwise,
+  DownloadSimple,
 } from "@phosphor-icons/react";
 import {
   PageHeader,
@@ -474,11 +475,31 @@ export default function WebhooksClient() {
                 {label}
               </button>
             ))}
-            {redeliverErr ? (
-              <span className="ml-auto font-mono text-[11px] text-[var(--color-danger)]">
-                {redeliverErr}
-              </span>
-            ) : null}
+            <div className="ml-auto flex items-center gap-1">
+              {redeliverErr ? (
+                <span className="font-mono text-[11px] text-[var(--color-danger)] mr-2">
+                  {redeliverErr}
+                </span>
+              ) : null}
+              <a
+                href={`/api/webhooks/deliveries/export?format=csv&status=${statusFilter}&limit=500`}
+                className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.14em] px-2 py-1 rounded border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-fg)]"
+                title={`Download ${statusFilter === "all" ? "all" : statusFilter} deliveries as CSV`}
+                aria-label="download deliveries CSV"
+              >
+                <DownloadSimple weight="duotone" size={12} />
+                csv
+              </a>
+              <a
+                href={`/api/webhooks/deliveries/export?format=ndjson&status=${statusFilter}&limit=500`}
+                className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.14em] px-2 py-1 rounded border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-fg)]"
+                title={`Download ${statusFilter === "all" ? "all" : statusFilter} deliveries as NDJSON`}
+                aria-label="download deliveries NDJSON"
+              >
+                <DownloadSimple weight="duotone" size={12} />
+                ndjson
+              </a>
+            </div>
           </div>
           {delivLoading && deliveries.length === 0 ? (
             <div className="p-4 flex flex-col gap-2">
@@ -674,6 +695,13 @@ export default function WebhooksClient() {
               </div>
               <pre className="font-mono text-[11px] whitespace-pre-wrap break-words bg-[var(--color-bg)] border border-[var(--color-border)] rounded p-2 overflow-auto">{`curl 'http://localhost:3000/v1/webhooks/deliveries?status=failed&limit=20' \\
   -H "authorization: Bearer adh_..."`}</pre>
+            </div>
+            <div>
+              <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--color-muted)] mb-1">
+                export deliveries (csv)
+              </div>
+              <pre className="font-mono text-[11px] whitespace-pre-wrap break-words bg-[var(--color-bg)] border border-[var(--color-border)] rounded p-2 overflow-auto">{`curl 'http://localhost:3000/api/webhooks/deliveries/export?format=csv&status=failed&limit=500' \
+  -OJ`}</pre>
             </div>
             <div>
               <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--color-muted)] mb-1">
