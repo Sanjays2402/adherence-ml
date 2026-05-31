@@ -666,6 +666,40 @@ The API Keys page calls the dry-run path before every revoke and surfaces
 the server summary in the confirmation prompt, so the same review story
 works from the dashboard.
 
+### FastAPI service-side dry-run (`/v1/...`)
+
+The FastAPI control plane mirrors the same contract on every destructive
+route the dashboard does not own directly. Each accepts a `?dry_run=true`
+query parameter and, when set, returns
+`{ "dry_run": true, "would_<verb>": true, ... }` without mutating, deleting,
+or revoking anything. A missing target still returns HTTP 404 so previews
+cannot leak existence across tenants. Admin-audited routes still write an
+audit entry with `details.dry_run = true` so SOC2 reviewers can see who
+probed what. Coverage:
+
+- `DELETE /v1/users/{user_id}/mute`
+- `DELETE /v1/users/{user_id}/data` (GDPR erase, returns candidate counts)
+- `DELETE /v1/webhooks/outbound/subscriptions/{name}`
+- `DELETE /v1/policies/risk?scope_type=&scope_id=`
+- `DELETE /v1/policies/quiet-hours/{user_id}`
+- `DELETE /v1/policies/notification-budget/{user_id}`
+- `DELETE /v1/admin/ip-allowlist/{entry_id}`
+- `POST   /v1/admin/api-keys/{name}/revoke?dry_run=true`
+
+Try it:
+
+```bash
+# Preview a GDPR erase (per-table candidate counts, no rows deleted)
+curl -s -X DELETE \
+  'http://localhost:8000/v1/users/USER_ID/data?dry_run=true' \
+  -H "x-api-key: $ADM_KEY" | jq
+
+# Preview an API key revoke (audit entry tagged dry_run=true)
+curl -s -X POST \
+  'http://localhost:8000/v1/admin/api-keys/legacy-cron/revoke?dry_run=true' \
+  -H "x-api-key: $ADM_KEY" | jq
+```
+
 Destructive endpoints (`/api/settings/wipe`) also still require an explicit
 confirm string for the real call.
 

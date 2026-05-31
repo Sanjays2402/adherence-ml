@@ -6,10 +6,11 @@ mutes for ops review.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from adherence_api.deps import require_admin, require_service
+from adherence_api.dry_run import dry_run_response
 from adherence_common import mutes as mutes_mod
 
 router = APIRouter(prefix="/v1", tags=["mutes"])
@@ -53,7 +54,19 @@ def set_mute(user_id: str, body: MuteIn, p=Depends(require_service)) -> MuteOut:
 
 
 @router.delete("/users/{user_id}/mute")
-def clear_mute(user_id: str, _p=Depends(require_service)) -> dict:
+def clear_mute(
+    user_id: str,
+    dry_run: bool = Query(
+        False,
+        description="Preview without clearing. Returns 404 if no mute exists.",
+    ),
+    _p=Depends(require_service),
+) -> dict:
+    if dry_run:
+        existing = mutes_mod.get_mute(user_id)
+        if existing is None or not existing.active:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="no mute set")
+        return dry_run_response(would="clear", user_id=user_id)
     cleared = mutes_mod.clear_mute(user_id)
     if not cleared:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="no mute set")

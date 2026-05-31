@@ -18,7 +18,7 @@ from __future__ import annotations
 from adherence_common import gdpr as gdpr_mod
 from adherence_common.admin_audit import record_admin_action
 from adherence_common.logging import get_logger
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
 
 from adherence_api.deps import current_principal
@@ -86,15 +86,24 @@ def export_user_data(
     )
 
 
-@router.delete("/users/{user_id}/data", response_model=EraseResponse)
+@router.delete("/users/{user_id}/data")
 def erase_user_data(
     user_id: str,
     request: Request,
+    dry_run: bool = Query(
+        False,
+        description=(
+            "Preview erasure without deleting any rows. Returns per-table "
+            "candidate counts and a ``dry_run`` flag. Recommended as a "
+            "two-step confirmation flow before hard-delete."
+        ),
+    ),
     p: dict = Depends(current_principal),
-) -> EraseResponse:
+):
     if not (_is_admin(p) or _has_scope(p, "gdpr:erase")):
         record_admin_action(
             action="gdpr.erase", principal=p, target=user_id,
+            details={"dry_run": dry_run},
             ok=False, error="forbidden",
             request_id=getattr(request.state, "request_id", None),
         )
@@ -102,16 +111,44 @@ def erase_user_data(
             status.HTTP_403_FORBIDDEN,
             detail="requires admin role or gdpr:erase scope",
         )
+    rid = getattr(request.state, "request_id", None)
+    if dry_run:
+        try:
+            preview = gdpr_mod.export_user(user_id)
+        except ValueError as exc:
+            record_admin_action(
+                action="gdpr.erase", principal=p, target=user_id,
+                details={"dry_run": True},
+                ok=False, error=str(exc), request_id=rid,
+            )
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        total = sum(preview.counts.values())
+        log.warning(
+            "gdpr_erase_preview",
+            user_id=user_id, caller=p.get("sub"), role=p.get("role"),
+            request_id=rid, candidates=preview.counts, total=total,
+        )
+        record_admin_action(
+            action="gdpr.erase", principal=p, target=user_id,
+            details={"dry_run": True, "candidates": preview.counts, "total": total},
+            request_id=rid,
+        )
+        return {
+            "dry_run": True,
+            "would_erase": True,
+            "user_id": user_id,
+            "candidates": preview.counts,
+            "total": total,
+        }
     try:
         result = gdpr_mod.erase_user(user_id)
     except ValueError as exc:
         record_admin_action(
             action="gdpr.erase", principal=p, target=user_id,
             ok=False, error=str(exc),
-            request_id=getattr(request.state, "request_id", None),
+            request_id=rid,
         )
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    rid = getattr(request.state, "request_id", None)
     log.warning(
         "gdpr_erase_request",
         user_id=user_id,

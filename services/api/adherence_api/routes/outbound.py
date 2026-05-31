@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field, HttpUrl
 from sqlalchemy import select
 
 from adherence_api.deps import require_admin
+from adherence_api.dry_run import dry_run_response
 from adherence_api.routes.predict import _caller_id
 from adherence_common import outbound as outbound_mod
 from adherence_common.db import (
@@ -108,9 +109,26 @@ def list_subscriptions(p=Depends(require_admin)) -> list[SubscriptionOut]:
 
 
 @router.delete("/subscriptions/{name}")
-def delete_subscription(name: str, p=Depends(require_admin)):
+def delete_subscription(
+    name: str,
+    dry_run: bool = Query(
+        False,
+        description="Preview without deleting. Returns 404 if subscription is missing.",
+    ),
+    p=Depends(require_admin),
+):
     from sqlalchemy import delete as _del
     init_db()
+    if dry_run:
+        with session() as s:
+            row = s.execute(
+                select(WebhookSubscription).where(WebhookSubscription.name == name)
+            ).scalar_one_or_none()
+        if row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="subscription not found")
+        return dry_run_response(
+            would="delete", name=name, subscription_id=row.id, url=row.url,
+        )
     with session() as s:
         res = s.execute(_del(WebhookSubscription).where(WebhookSubscription.name == name))
         s.commit()

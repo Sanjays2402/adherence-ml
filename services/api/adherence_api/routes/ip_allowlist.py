@@ -7,10 +7,11 @@ narrowed the network exposure and when.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
 from adherence_api.deps import require_admin
+from adherence_api.dry_run import dry_run_response
 from adherence_common import ip_allowlist as ipa
 from adherence_common.admin_audit import record_admin_action
 
@@ -98,9 +99,29 @@ def add_allowlist(
 def remove_allowlist(
     entry_id: int,
     request: Request,
+    dry_run: bool = Query(
+        False,
+        description="Preview without removing. Returns 404 if entry is missing.",
+    ),
     p=Depends(require_admin),
 ) -> dict:
     tid = str(p.get("tenant") or "default")
+    if dry_run:
+        entries = ipa.list_entries(tid)
+        match = next((e for e in entries if e.id == entry_id), None)
+        if match is None:
+            record_admin_action(
+                action="ip_allowlist.remove", principal=p, target=str(entry_id),
+                details={"dry_run": True},
+                ok=False, error="entry not found", request_id=_rid(request),
+            )
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="entry not found")
+        record_admin_action(
+            action="ip_allowlist.remove", principal=p, target=str(entry_id),
+            details={"dry_run": True, "cidr": match.cidr, "label": match.label},
+            request_id=_rid(request),
+        )
+        return dry_run_response(would="remove", id=entry_id, cidr=match.cidr)
     ok = ipa.remove_entry(tenant_id=tid, entry_id=entry_id)
     if not ok:
         record_admin_action(

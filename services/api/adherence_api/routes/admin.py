@@ -4,10 +4,11 @@ from __future__ import annotations
 from adherence_common import api_keys as ak
 from adherence_common.admin_audit import list_admin_actions, record_admin_action
 from adherence_common.auth import mint_jwt
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
 from adherence_api.deps import SettingsDep, require_admin
+from adherence_api.dry_run import dry_run_response
 from adherence_api.routes.admin_mfa import require_admin_mfa
 
 router = APIRouter(prefix="/v1/admin", tags=["admin"])
@@ -183,8 +184,30 @@ def list_api_keys(_p=Depends(require_admin)) -> list[APIKeyOut]:
 def revoke_api_key(
     name: str,
     request: Request,
+    dry_run: bool = Query(
+        False,
+        description="Preview without revoking. Returns 404 if the key does not exist.",
+    ),
     p=Depends(require_admin_mfa),
 ) -> dict:
+    if dry_run:
+        match = next((k for k in ak.list_keys() if k.name == name), None)
+        if match is None:
+            record_admin_action(
+                action="api_key.revoke", principal=p, target=name,
+                details={"dry_run": True},
+                ok=False, error="api key not found", request_id=_rid(request),
+            )
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="api key not found")
+        already = match.revoked_at is not None
+        record_admin_action(
+            action="api_key.revoke", principal=p, target=name,
+            details={"dry_run": True, "already_revoked": already},
+            request_id=_rid(request),
+        )
+        return dry_run_response(
+            would="revoke", name=name, already_revoked=already,
+        )
     ok = ak.revoke_key(name, by=p.get("sub"))
     if not ok:
         record_admin_action(

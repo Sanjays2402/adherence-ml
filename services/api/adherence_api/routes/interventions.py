@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
 from adherence_api.deps import require_admin, require_service
+from adherence_api.dry_run import dry_run_response
 from adherence_api.routes.predict import _caller_id  # reuse identity helper
 from adherence_common.audit import record as audit_record
 from adherence_common import deliveries as deliveries_mod
@@ -372,10 +373,25 @@ def quiet_hours_get(user_id: str, p=Depends(require_admin)):
 
 
 @router.delete("/policies/quiet-hours/{user_id}", tags=["policies"])
-def quiet_hours_delete(user_id: str, p=Depends(require_admin)):
-    from sqlalchemy import delete as _del
+def quiet_hours_delete(
+    user_id: str,
+    dry_run: bool = Query(
+        False,
+        description="Preview without deleting. Returns 404 if no policy exists.",
+    ),
+    p=Depends(require_admin),
+):
+    from sqlalchemy import delete as _del, select as _sel
     from adherence_common.db import QuietHoursPolicy, init_db, session
     init_db()
+    if dry_run:
+        with session() as s:
+            row = s.execute(
+                _sel(QuietHoursPolicy).where(QuietHoursPolicy.user_id == user_id)
+            ).scalar_one_or_none()
+        if row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="no policy for user")
+        return dry_run_response(would="delete", user_id=user_id, policy="quiet_hours")
     with session() as s:
         res = s.execute(_del(QuietHoursPolicy).where(QuietHoursPolicy.user_id == user_id))
         s.commit()
@@ -556,10 +572,25 @@ def budget_get(user_id: str, p=Depends(require_admin)) -> BudgetOut:
 
 
 @router.delete("/policies/notification-budget/{user_id}", tags=["policies"])
-def budget_delete(user_id: str, p=Depends(require_admin)):
-    from sqlalchemy import delete as _del
+def budget_delete(
+    user_id: str,
+    dry_run: bool = Query(
+        False,
+        description="Preview without deleting. Returns 404 if no budget exists.",
+    ),
+    p=Depends(require_admin),
+):
+    from sqlalchemy import delete as _del, select as _sel
     from adherence_common.db import NotificationBudget, init_db, session
     init_db()
+    if dry_run:
+        with session() as s:
+            row = s.execute(
+                _sel(NotificationBudget).where(NotificationBudget.user_id == user_id)
+            ).scalar_one_or_none()
+        if row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="no budget for user")
+        return dry_run_response(would="delete", user_id=user_id, policy="notification_budget")
     with session() as s:
         res = s.execute(_del(NotificationBudget).where(NotificationBudget.user_id == user_id))
         s.commit()

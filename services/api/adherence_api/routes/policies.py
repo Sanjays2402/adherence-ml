@@ -3,10 +3,11 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from adherence_api.deps import require_admin
+from adherence_api.dry_run import dry_run_response
 from adherence_common import risk_policy
 
 router = APIRouter(prefix="/v1/policies/risk", tags=["policies"])
@@ -52,7 +53,21 @@ def upsert(body: RiskPolicyIn, p=Depends(require_admin)):
 
 @router.delete("")
 def delete_(scope_type: Literal["user", "dose_class"], scope_id: str,
+            dry_run: bool = Query(
+                False,
+                description="Preview without deleting. Returns 404 if policy is missing.",
+            ),
             p=Depends(require_admin)):
+    if dry_run:
+        found = any(
+            r["scope_type"] == scope_type and r["scope_id"] == scope_id
+            for r in risk_policy.list_policies()
+        )
+        if not found:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="policy not found")
+        return dry_run_response(
+            would="delete", scope_type=scope_type, scope_id=scope_id,
+        )
     deleted = risk_policy.delete_policy(scope_type, scope_id)
     if not deleted:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="policy not found")
