@@ -14,6 +14,14 @@ export interface UserRecord {
   email: string;         // lowercased
   created_at: number;
   last_login_at: number | null;
+  /** TOTP secret in base32. Set during 2FA setup, cleared on disable. */
+  totp_secret?: string | null;
+  /** True once the user has verified a code from their authenticator app. */
+  totp_enabled?: boolean;
+  /** Hashed (sha256) one-time recovery codes. Cleared as they are used. */
+  recovery_code_hashes?: string[];
+  /** Unix ms when 2FA was last enabled or disabled, for audit display. */
+  totp_updated_at?: number | null;
 }
 
 export interface MagicTokenRecord {
@@ -172,7 +180,107 @@ export async function getUserById(id: string): Promise<UserRecord | null> {
   return store.users.find((u) => u.id === id) ?? null;
 }
 
-// Test hooks — exported so the smoke test can reset state.
+// Test hooks - exported so the smoke test can reset state.
 export async function _resetForTests(): Promise<void> {
   await writeStore({ version: 1, users: [], tokens: [] });
 }
+
+// ---------------------------------------------------------------------------
+// Two-factor auth (TOTP)
+// ---------------------------------------------------------------------------
+
+function hashRecoveryCode(plain: string): string {
+  return createHash("sha256").update(plain.trim().toLowerCase()).digest("hex");
+}
+
+/**
+ * Generate N human-friendly recovery codes (xxxx-xxxx, base32 alphabet).
+ * Returns plaintext for one-time display to the user.
+ */
+export function generateRecoveryCodes(count = 10): string[] {
+  const alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // omit confusables
+  const out: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const buf = randomBytes(8);
+    let chars = "";
+    for (const b of buf) chars += alphabet[b % alphabet.length];
+    out.push(`${chars.slice(0, 4)}-${chars.slice(4, 8)}`);
+  }
+  return out;
+}
+
+/**
+ * Stage a pending TOTP secret on the user. The secret is stored immediately
+ * so a later /enable call can verify against it, but `totp_enabled` stays
+ * false until the user confirms a code.
+ */
+export async function setPendingTotpSecret(
+  userId: string,
+  secretBase32: string,
+): Promise<UserRecord | null> {
+  const store = await readStore();
+  const user = store.users.find((u) => u.id === userId);
+  if (!user) return null;
+  user.totp_secret = secretBase32;
+  user.totp_enabled = false;
+  user.recovery_code_hashes = [];
+  await writeStore(store);
+  return user;
+}
+
+/**
+ * Mark TOTP as enabled and persist the hashed recovery codes. The caller
+ * must have already verified a fresh code against the pending secret.
+ */
+export async function enableTotp(
+  userId: string,
+  recoveryCodesPlain: string[],
+): Promise<UserRecord | null> {
+  const store = await readStore();
+  const user = store.users.find((u) => u.id === userId);
+  if (!user || !user.totp_secret) return null;
+  user.totp_enabled = true;
+  user.recovery_code_hashes = recoveryCodesPlain.map(hashRecoveryCode);
+  user.totp_updated_at = Date.now();
+  await writeStore(store);
+  return user;
+}
+
+/** Fully disable TOTP and forget all secrets/codes. */
+export async function disableTotp(userId: string): Promise<UserRecord | null> {
+  const store = await readStore();
+  const user = store.users.find((u) => u.id === userId);
+  if (!user) return null;
+  user.totp_secret = null;
+  user.totp_enabled = false;
+  user.recovery_code_hashes = [];
+  user.totp_updated_at = Date.now();
+  await writeStore(store);
+  return user;
+}
+
+/**
+ * Consume a recovery code if it matches one of the hashes on the user.
+ * Returns true on success; the matching code is removed from the user.
+ */
+export async function consumeRecoveryCode(
+  userId: string,
+  submitted: string,
+): Promise<boolean> {
+  if (!submitted) return false;
+  const want = hashRecoveryCode(submitted);
+  const store = await readStore();
+  const user = store.users.find((u) => u.id === userId);
+  if (!user || !user.recovery_code_hashes?.length) return false;
+  const idx = user.recovery_code_hashes.indexOf(want);
+  if (idx < 0) return false;
+  user.recovery_code_hashes.splice(idx, 1);
+  await writeStore(store);
+  return true;
+}
+
+/** True if the user has completed TOTP setup. */
+export function hasTotpEnabled(user: UserRecord | null | undefined): boolean {
+  return Boolean(user && user.totp_enabled && user.totp_secret);
+}
+

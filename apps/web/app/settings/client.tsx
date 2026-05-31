@@ -12,6 +12,8 @@ import {
   UserCircle,
   Bell,
   ShieldWarning,
+  ShieldCheck,
+  CaretRight,
 } from "@phosphor-icons/react";
 import {
   PageHeader,
@@ -336,6 +338,36 @@ export default function SettingsClient() {
               saved at {fmtTime(savedAt)}
             </div>
           ) : null}
+        </Card>
+
+        {/* SECURITY */}
+        <Card>
+          <CardHeader
+            title="security"
+            hint="Two-factor authentication and recovery codes."
+            right={
+              <ShieldCheck
+                weight="duotone"
+                size={16}
+                className="text-[var(--color-accent)]"
+              />
+            }
+          />
+          <a
+            href="/settings/security"
+            className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-[var(--color-border)]/30 transition-colors group"
+          >
+            <div className="min-w-0">
+              <div className="text-[13px]">Manage two-factor authentication</div>
+              <div className="text-[11px] text-[var(--color-muted)] mt-0.5">
+                Add a TOTP app, view recovery codes, or turn 2FA off.
+              </div>
+            </div>
+            <CaretRight
+              size={14}
+              className="text-[var(--color-muted)] group-hover:text-[var(--color-text)] shrink-0"
+            />
+          </a>
         </Card>
 
         {/* NOTIFICATIONS */}

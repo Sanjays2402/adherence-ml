@@ -139,6 +139,31 @@ navigations when the network is down. Mutating APIs under `/api/*` and
 new worker version takes control the UI surfaces a small "new version
 ready, reload" chip.
 
+### Two-factor authentication (TOTP)
+
+Visit [/settings/security](http://localhost:3000/settings/security) to add a
+second factor to your account. The flow is dependency-free RFC 6238 TOTP:
+set up generates a fresh 160-bit base32 secret, surfaces an `otpauth://` URI
+plus a manual-entry key for any authenticator app (1Password, Authy, Google
+Authenticator, Bitwarden), and only flips 2FA on after the first valid
+6-digit code. Confirming the code mints ten one-time recovery codes that you
+can download as `.txt`. The next sign-in (magic link or GitHub OAuth) issues
+a short-lived `adh_mfa_pending` cookie and bounces through
+[/verify-2fa](http://localhost:3000/verify-2fa) before any real session
+cookie is set, so a stolen inbox is no longer enough on its own.
+
+```bash
+# After signing in normally:
+curl -s -b 'adh_session=...' http://localhost:3000/api/auth/2fa/status
+curl -s -X POST -b 'adh_session=...' http://localhost:3000/api/auth/2fa/setup
+curl -s -X POST -b 'adh_session=...' http://localhost:3000/api/auth/2fa/enable \
+  -H 'content-type: application/json' -d '{"code":"123456"}'
+```
+
+Disabling 2FA requires a current authenticator code or one of the recovery
+codes, so a stolen session cookie cannot silently turn the second factor
+off.
+
 ### Settings and your data
 
 Visit [/settings](http://localhost:3000/settings) for the workspace profile

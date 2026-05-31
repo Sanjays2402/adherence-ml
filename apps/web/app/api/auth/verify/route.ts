@@ -1,6 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { consumeMagicToken } from "@/lib/users-store";
-import { SESSION_COOKIE, buildSession } from "@/lib/session";
+import { consumeMagicToken, hasTotpEnabled } from "@/lib/users-store";
+import {
+  MFA_PENDING_COOKIE,
+  SESSION_COOKIE,
+  buildMfaPending,
+  buildSession,
+} from "@/lib/session";
 
 export const runtime = "nodejs";
 
@@ -17,6 +22,20 @@ export async function GET(req: NextRequest) {
   const dest = req.nextUrl.searchParams.get("next") || "/";
   // Only allow same-origin relative redirects; ignore anything fancy.
   const safeDest = dest.startsWith("/") && !dest.startsWith("//") ? dest : "/";
+  if (hasTotpEnabled(user)) {
+    const { cookie: pendCookie, expires: pendExp } = buildMfaPending(user, safeDest);
+    const res = NextResponse.redirect(
+      new URL(`/verify-2fa?next=${encodeURIComponent(safeDest)}`, req.url),
+    );
+    res.cookies.set(MFA_PENDING_COOKIE, pendCookie, {
+      path: "/",
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      expires: pendExp,
+    });
+    return res;
+  }
   const res = NextResponse.redirect(new URL(safeDest, req.url));
   res.cookies.set(SESSION_COOKIE, cookie, {
     path: "/",
@@ -62,6 +81,22 @@ export async function POST(req: NextRequest) {
   const { cookie, expires } = buildSession(user);
   const dest = body.next || "/";
   const safeDest = dest.startsWith("/") && !dest.startsWith("//") ? dest : "/";
+  if (hasTotpEnabled(user)) {
+    const { cookie: pendCookie, expires: pendExp } = buildMfaPending(user, safeDest);
+    const res = NextResponse.json({
+      ok: true,
+      mfa_required: true,
+      next: `/verify-2fa?next=${encodeURIComponent(safeDest)}`,
+    });
+    res.cookies.set(MFA_PENDING_COOKIE, pendCookie, {
+      path: "/",
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      expires: pendExp,
+    });
+    return res;
+  }
   const res = NextResponse.json({ ok: true, user: { id: user.id, email: user.email }, next: safeDest });
   res.cookies.set(SESSION_COOKIE, cookie, {
     path: "/",

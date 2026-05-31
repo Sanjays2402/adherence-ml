@@ -14,7 +14,18 @@ import type { NextRequest } from "next/server";
 import { getUserById, type UserRecord } from "./users-store";
 
 export const SESSION_COOKIE = "adh_session";
+export const MFA_PENDING_COOKIE = "adh_mfa_pending";
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const MFA_PENDING_TTL_MS = 10 * 60 * 1000; // 10 minutes to enter a code
+
+interface MfaPendingPayload {
+  uid: string;
+  eml: string;
+  iat: number;
+  exp: number;
+  /** Same-origin path to bounce the user to after successful 2FA. */
+  next?: string;
+}
 
 interface SessionPayload {
   uid: string;
@@ -130,4 +141,82 @@ export function sessionCookieAttributes(expires: Date, secure: boolean): string 
   ];
   if (secure) parts.push("Secure");
   return parts.join("; ");
+}
+
+// ---------------------------------------------------------------------------
+// MFA pending sessions: short-lived signed cookie issued at login when the
+// user has TOTP enabled. Exchanged for a real session by /api/auth/2fa/verify.
+// ---------------------------------------------------------------------------
+
+function signMfaPending(payload: MfaPendingPayload): string {
+  const body = b64uEncode(JSON.stringify(payload));
+  const mac = createHmac("sha256", getSecret())
+    .update("mfa:" + body)
+    .digest();
+  return body + "." + b64uEncode(mac);
+}
+
+export function verifyMfaPending(raw: string | undefined): MfaPendingPayload | null {
+  if (!raw || typeof raw !== "string") return null;
+  const dot = raw.indexOf(".");
+  if (dot <= 0) return null;
+  const body = raw.slice(0, dot);
+  const sig = raw.slice(dot + 1);
+  const expected = createHmac("sha256", getSecret())
+    .update("mfa:" + body)
+    .digest();
+  let actual: Buffer;
+  try {
+    actual = b64uDecode(sig);
+  } catch {
+    return null;
+  }
+  if (actual.length !== expected.length) return null;
+  if (!timingSafeEqual(actual, expected)) return null;
+  let payload: MfaPendingPayload;
+  try {
+    payload = JSON.parse(b64uDecode(body).toString("utf8")) as MfaPendingPayload;
+  } catch {
+    return null;
+  }
+  if (!payload || typeof payload.uid !== "string" || typeof payload.exp !== "number") {
+    return null;
+  }
+  if (payload.exp < Date.now()) return null;
+  return payload;
+}
+
+export function buildMfaPending(
+  user: UserRecord,
+  next: string | undefined,
+): { cookie: string; expires: Date } {
+  const now = Date.now();
+  const safeNext = next && next.startsWith("/") && !next.startsWith("//") ? next : "/";
+  const payload: MfaPendingPayload = {
+    uid: user.id,
+    eml: user.email,
+    iat: now,
+    exp: now + MFA_PENDING_TTL_MS,
+    next: safeNext,
+  };
+  return { cookie: signMfaPending(payload), expires: new Date(payload.exp) };
+}
+
+/** Read a pending-MFA session for the /verify-2fa flow. */
+export async function getPendingMfa(req?: NextRequest): Promise<{
+  user: UserRecord;
+  payload: MfaPendingPayload;
+} | null> {
+  let raw: string | undefined;
+  if (req) {
+    raw = req.cookies.get(MFA_PENDING_COOKIE)?.value;
+  } else {
+    const jar = await cookies();
+    raw = jar.get(MFA_PENDING_COOKIE)?.value;
+  }
+  const payload = verifyMfaPending(raw);
+  if (!payload) return null;
+  const user = await getUserById(payload.uid);
+  if (!user) return null;
+  return { user, payload };
 }

@@ -4,8 +4,18 @@ import {
   isGithubOAuthConfigured,
   verifyOAuthState,
 } from "@/lib/oauth-state";
-import { getOrCreateUserByEmail, isValidEmail, normalizeEmail } from "@/lib/users-store";
-import { SESSION_COOKIE, buildSession } from "@/lib/session";
+import {
+  getOrCreateUserByEmail,
+  hasTotpEnabled,
+  isValidEmail,
+  normalizeEmail,
+} from "@/lib/users-store";
+import {
+  MFA_PENDING_COOKIE,
+  SESSION_COOKIE,
+  buildMfaPending,
+  buildSession,
+} from "@/lib/session";
 
 export const runtime = "nodejs";
 
@@ -114,8 +124,23 @@ export async function GET(req: NextRequest) {
   }
 
   const user = await getOrCreateUserByEmail(email);
-  const { cookie, expires } = buildSession(user);
   const dest = payload.nx || "/";
+  if (hasTotpEnabled(user)) {
+    const { cookie, expires } = buildMfaPending(user, dest);
+    const res = NextResponse.redirect(
+      new URL(`/verify-2fa?next=${encodeURIComponent(dest.startsWith("/") ? dest : "/")}`, req.url),
+    );
+    res.cookies.set(MFA_PENDING_COOKIE, cookie, {
+      path: "/",
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      expires,
+    });
+    res.cookies.set(OAUTH_STATE_COOKIE, "", { path: "/", maxAge: 0 });
+    return res;
+  }
+  const { cookie, expires } = buildSession(user);
   const res = NextResponse.redirect(new URL(dest, req.url));
   res.cookies.set(SESSION_COOKIE, cookie, {
     path: "/",
