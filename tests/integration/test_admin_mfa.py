@@ -85,7 +85,11 @@ def test_enroll_confirm_and_verify_flow(tmp_path, monkeypatch):
 def test_admin_mutation_blocked_without_mfa_after_enrollment(tmp_path, monkeypatch):
     c = _client(tmp_path, monkeypatch)
     admin = {"x-api-key": "adm"}
-    from adherence_common import mfa
+    from adherence_common import mfa, quota
+    # This test issues >3 API keys in the default workspace; raise the
+    # seat cap above the free-plan default so we are exercising the MFA
+    # path, not the per-workspace seat limit.
+    quota.set_plan("default", plan="enterprise")
 
     # Bootstrap: before MFA, key creation works.
     r = c.post(

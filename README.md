@@ -2,6 +2,37 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Per-workspace seat enforcement
+
+Every plan tier already advertised a `seats` number (free=3, pro=25,
+enterprise=500) but the API would happily mint unlimited keys per
+tenant. That made the plan catalog non-contractual and let one
+overloaded workspace silently outgrow what billing was modeling.
+
+Now every active API key in a workspace consumes one seat. Revoked and
+expired keys do not count. `POST /v1/admin/api-keys` consults the
+workspace's plan cap (plus any `seats_override`) before issuing and
+returns `402 Payment Required` with a structured `seat_limit_exceeded`
+body when full, including the workspace id, current usage, the cap,
+and the plan name. Every rejection is written to the admin audit log
+with `ok=false` so operators can see denials next to successful issuance.
+
+Enforcement is tenant-scoped: filling acme's seats has no effect on
+globex. The `/workspace/quota` page now renders a seats bar with
+used/limit and shows a precise warning banner when the cap is reached.
+
+### Try it
+
+```bash
+# After bootstrap, default tenant ships with the free plan (3 seats).
+# The 4th key returns 402 with structured detail:
+curl -sS -X POST http://localhost:8000/v1/admin/api-keys \
+  -H "x-api-key: $ADMIN_KEY" -H "x-mfa-code: $TOTP" \
+  -H "content-type: application/json" \
+  -d '{"name":"svc-4","role":"service"}'
+# => 402 {"detail":{"error":"seat_limit_exceeded","seats_used":3,...}}
+```
+
 ## Owner-only Admin Console (single pane of glass)
 
 Procurement scenario: a security reviewer asks "who can touch this
