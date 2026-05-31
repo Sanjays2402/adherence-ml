@@ -20,11 +20,13 @@ import {
   Sparkle,
   UploadSimple,
   Gear,
+  Rocket,
 } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
   { href: "/", label: "Overview", icon: House, hint: "What this does" },
+  { href: "/onboarding", label: "Get started", icon: Rocket, hint: "3-step first run" },
   { href: "/demo", label: "Try a sample", icon: Sparkle, hint: "3 patient personas" },
   { href: "/compare", label: "Compare", icon: Scales, hint: "Side by side triage" },
   { href: "/dashboard", label: "Performance", icon: ChartLine, hint: "AUC // Brier // ECE" },

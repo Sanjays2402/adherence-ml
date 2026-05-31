@@ -28,6 +28,20 @@ limit is reached the endpoint returns `429` with `x-quota-*` headers and an
 breakdown at [http://localhost:3000/usage](http://localhost:3000/usage).
 Every 200 response carries `x-quota-limit`, `x-quota-used`, and
 `x-quota-remaining` so clients can back off before getting throttled.
+### Get started in three steps
+
+New workspaces land on [/onboarding](http://localhost:3000/onboarding): a guided
+first-run wizard that seeds three sample patient runs, a revoked sample API
+key for the curl example, and an inactive demo webhook, then walks the
+operator through issuing a real key and saving their first scored patient.
+Progress is tracked in `ADHERENCE_DATA_DIR/onboarding.json` and survives
+restarts. Try it:
+
+```bash
+curl -sS -X POST http://localhost:3000/api/onboarding/seed | jq .
+curl -sS http://localhost:3000/api/onboarding | jq .
+```
+
 ### Install as an app
 
 The web app ships a `manifest.webmanifest`, themed icons, and a dismissible
