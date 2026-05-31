@@ -219,6 +219,64 @@ def check_and_consume(
         )
 
 
+def seat_usage(tenant_id: str) -> int:
+    """Return the number of seats currently consumed by ``tenant_id``.
+
+    A seat is one active API key (not revoked, not expired) scoped to the
+    tenant. Static env-bootstrap keys do not count; only keys persisted in
+    ``api_key_records`` are governed by the seat cap.
+
+    Kept here (instead of in ``api_keys``) so the quota subsystem owns the
+    full plan picture and seat enforcement does not import upward.
+    """
+    # Late import to avoid a cycle: api_keys imports settings, which is
+    # safe, but quota loads early during db.init_db().
+    from adherence_common.api_keys import APIKeyRecord  # noqa: WPS433
+
+    now = _now().replace(tzinfo=None)
+    with session() as db:
+        rows = db.execute(
+            select(APIKeyRecord).where(
+                APIKeyRecord.tenant_id == (tenant_id or "default"),
+                APIKeyRecord.revoked_at.is_(None),
+            )
+        ).scalars().all()
+    return sum(
+        1 for r in rows
+        if r.expires_at is None or r.expires_at > now
+    )
+
+
+class SeatLimitExceeded(Exception):
+    """Raised when issuing another API key would exceed the workspace's
+    seat cap. Carries the current usage and limit so callers can surface
+    a precise structured error.
+    """
+
+    def __init__(self, tenant_id: str, used: int, limit: int, plan: str) -> None:
+        self.tenant_id = tenant_id
+        self.used = used
+        self.limit = limit
+        self.plan = plan
+        super().__init__(
+            f"seat limit reached for workspace {tenant_id!r}: "
+            f"{used}/{limit} on plan {plan!r}"
+        )
+
+
+def enforce_seat_capacity(tenant_id: str) -> tuple[int, int, str]:
+    """Raise ``SeatLimitExceeded`` if issuing one more key would exceed
+    the workspace seat cap. Returns ``(used_after, limit, plan_name)``
+    on success so callers can surface it back to the user.
+    """
+    tid = (tenant_id or "default").strip() or "default"
+    plan, _cap, seats = get_plan(tid)
+    used = seat_usage(tid)
+    if used >= seats:
+        raise SeatLimitExceeded(tid, used=used, limit=seats, plan=plan.name)
+    return used + 1, seats, plan.name
+
+
 def snapshot(tenant_ids: Iterable[str] | None = None) -> list[dict]:
     """Return usage rows for the current period, optionally filtered."""
     when = _now()
@@ -239,11 +297,14 @@ def snapshot(tenant_ids: Iterable[str] | None = None) -> list[dict]:
             ).scalars().all()
     for r in rows:
         plan, cap, seats = get_plan(r.tenant_id)
+        seats_used = seat_usage(r.tenant_id)
         out.append({
             "tenant_id": r.tenant_id,
             "plan": plan.name,
             "limit": cap,
             "seats": seats,
+            "seats_used": seats_used,
+            "seats_remaining": max(0, seats - seats_used),
             "used": int(r.predictions),
             "remaining": max(0, cap - int(r.predictions)),
             "period": period,

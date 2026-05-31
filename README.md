@@ -431,7 +431,11 @@ Every workspace now belongs to a plan tier with a monthly prediction cap.
 Usage is counted per UTC calendar month and resets on the first. Every
 inference and forecast call charges the workspace's monthly counter and
 returns the standard rate-limit headers; overage is rejected with `429`
-and `Retry-After` pointing at the next month rollover.
+and `Retry-After` pointing at the next month rollover. Each plan also
+carries a seat cap: every active API key in a workspace consumes one
+seat, and issuing a key past the cap returns `402` with a structured
+`seat_limit_exceeded` body so operators see exactly which workspace and
+plan are at the limit.
 
 - Plans ship in code (`free`, `pro`, `enterprise`) and sales can set a
   custom monthly cap per workspace without changing the plan label.
@@ -439,6 +443,10 @@ and `Retry-After` pointing at the next month rollover.
   `X-RateLimit-Reset`, `X-Quota-Plan`, and `X-Quota-Used`.
 - Plan changes are written to the admin audit log (caller, target
   workspace, before/after, IP, request id).
+- Seat enforcement is tenant-scoped: filling acme's seat cap does not
+  block beta from issuing keys. `GET /v1/quota/me` returns
+  `seats_used` / `seats_remaining` next to monthly prediction usage, and
+  the workspace quota page surfaces the seat bar inline.
 
 Try it locally:
 
@@ -454,6 +462,12 @@ curl -i -X POST http://localhost:3000/v1/predict \
 curl -i -X PUT http://localhost:3000/api/admin/quota/acme \
   -H "content-type: application/json" \
   -d '{"plan":"pro","monthly_predictions_override":500000}'
+# Seat cap example: free plan = 3 seats, fourth key is rejected with 402
+curl -i -X POST http://localhost:8000/v1/admin/api-keys \
+  -H "X-API-Key: $ADH_ADMIN_KEY" -H "content-type: application/json" \
+  -d '{"name":"acme-4","role":"service","tenant_id":"acme"}'
+# => HTTP/1.1 402 Payment Required
+# {"detail":{"error":"seat_limit_exceeded","seats_used":3,"seats_limit":3,...}}
 ```
 
 ## SIEM audit log export (`/v1/audit`)

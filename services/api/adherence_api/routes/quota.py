@@ -41,6 +41,8 @@ class QuotaView(BaseModel):
     monthly_predictions_used: int
     monthly_predictions_remaining: int
     seats_limit: int
+    seats_used: int
+    seats_remaining: int
     plans: list[PlanInfo]
 
 
@@ -56,6 +58,8 @@ class UpdateQuota(BaseModel):
 def _view(tenant_id: str) -> QuotaView:
     plan, cap, seats = get_plan(tenant_id)
     used = current_usage(tenant_id)
+    from adherence_common.quota import seat_usage as _seat_usage
+    seats_used = _seat_usage(tenant_id)
     return QuotaView(
         tenant_id=tenant_id,
         plan=plan.name,
@@ -63,6 +67,8 @@ def _view(tenant_id: str) -> QuotaView:
         monthly_predictions_used=used,
         monthly_predictions_remaining=max(0, cap - used),
         seats_limit=seats,
+        seats_used=seats_used,
+        seats_remaining=max(0, seats - seats_used),
         plans=[PlanInfo(**p.__dict__) for p in PLANS.values()],
     )
 

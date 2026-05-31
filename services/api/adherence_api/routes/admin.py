@@ -4,6 +4,7 @@ from __future__ import annotations
 from adherence_common import api_keys as ak
 from adherence_common.admin_audit import list_admin_actions, record_admin_action
 from adherence_common.auth import mint_jwt
+from adherence_common.quota import SeatLimitExceeded, enforce_seat_capacity
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
@@ -156,6 +157,35 @@ def create_api_key(
     request: Request,
     p=Depends(require_admin_mfa),
 ) -> APIKeyCreateOut:
+    target_tenant = (body.tenant_id or "default").strip() or "default"
+    try:
+        enforce_seat_capacity(target_tenant)
+    except SeatLimitExceeded as exc:
+        record_admin_action(
+            action="api_key.create", principal=p, target=body.name,
+            details={
+                "role": body.role, "scopes": body.scopes,
+                "tenant_id": target_tenant,
+                "seats_used": exc.used, "seats_limit": exc.limit,
+                "plan": exc.plan,
+            },
+            ok=False, error="seat_limit_exceeded", request_id=_rid(request),
+        )
+        raise HTTPException(
+            status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "error": "seat_limit_exceeded",
+                "message": (
+                    f"Workspace {target_tenant!r} has used "
+                    f"{exc.used} of {exc.limit} seats on plan {exc.plan!r}. "
+                    "Revoke an existing key or upgrade the plan to issue more."
+                ),
+                "tenant_id": target_tenant,
+                "seats_used": exc.used,
+                "seats_limit": exc.limit,
+                "plan": exc.plan,
+            },
+        ) from exc
     try:
         plain, row = ak.create_key(
             name=body.name, role=body.role, scopes=body.scopes,

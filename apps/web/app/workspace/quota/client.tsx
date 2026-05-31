@@ -35,6 +35,8 @@ type QuotaView = {
   monthly_predictions_used: number;
   monthly_predictions_remaining: number;
   seats_limit: number;
+  seats_used: number;
+  seats_remaining: number;
   plans: PlanInfo[];
 };
 
@@ -174,7 +176,7 @@ export default function QuotaClient() {
                       <Lightning weight="duotone" size={12} /> plan: {data.plan}
                     </Badge>
                     <Badge>
-                      <ShieldCheck weight="duotone" size={12} /> seats: {fmt(data.seats_limit)}
+                      <ShieldCheck weight="duotone" size={12} /> seats: {fmt(data.seats_used)}/{fmt(data.seats_limit)}
                     </Badge>
                   </div>
                 </div>
@@ -210,6 +212,45 @@ export default function QuotaClient() {
                     <div className="mt-1 font-mono text-[14px]">{data.plan}</div>
                   </div>
                 </div>
+
+                <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
+                  <div className="flex items-center justify-between text-[12px]">
+                    <div className="text-[var(--color-text-muted)]">seats</div>
+                    <div className="font-mono">
+                      {fmt(data.seats_used)} / {fmt(data.seats_limit)}
+                    </div>
+                  </div>
+                  <div
+                    className="mt-2 h-2 w-full overflow-hidden rounded-full bg-[var(--color-surface-2)]"
+                    role="progressbar"
+                    aria-valuemin={0}
+                    aria-valuemax={data.seats_limit}
+                    aria-valuenow={data.seats_used}
+                  >
+                    <div
+                      className={`h-full ${barTone(pct(data.seats_used, data.seats_limit))}`}
+                      style={{
+                        width: `${pct(data.seats_used, data.seats_limit)}%`,
+                      }}
+                    />
+                  </div>
+                  <div className="mt-2 text-[11px] text-[var(--color-text-muted)]">
+                    Each active API key in this workspace consumes one seat.
+                    Revoke unused keys to free a seat. Attempting to issue a
+                    key past the cap returns HTTP 402.
+                  </div>
+                </div>
+
+                {data.seats_remaining === 0 ? (
+                  <div className="flex items-start gap-2 rounded-md border border-rose-500/40 bg-rose-500/10 p-3 text-[12px]">
+                    <Warning weight="duotone" size={14} />
+                    <div>
+                      Seat cap reached. New API key creation will be rejected
+                      with HTTP 402 until a key is revoked or the plan is
+                      upgraded.
+                    </div>
+                  </div>
+                ) : null}
 
                 {pct(
                   data.monthly_predictions_used,
