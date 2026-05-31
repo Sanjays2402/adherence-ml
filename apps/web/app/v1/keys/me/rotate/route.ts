@@ -25,7 +25,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import {
+  clientIpFromHeaders,
   extractKey,
+  ipAllowedForKey,
   isExpired,
   publicView,
   rotateKey,
@@ -60,6 +62,12 @@ export async function POST(req: NextRequest) {
   const key = await verifyKey(presented);
   if (!key || key.revoked || isExpired(key)) {
     return unauthorized("invalid, revoked, or expired api key");
+  }
+  if (!ipAllowedForKey(key, clientIpFromHeaders(req.headers))) {
+    return NextResponse.json(
+      { detail: "source ip not allowed for this api key" },
+      { status: 403 },
+    );
   }
 
   let raw: unknown;

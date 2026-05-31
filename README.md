@@ -1219,6 +1219,32 @@ curl -s -X PUT http://localhost:8000/v1/admin/api-keys/partner-prod/ip-allowlist
 The enforced list is also surfaced on `GET /v1/admin/api-keys` as the
 `ip_allowlist` field of each row.
 
+### Dashboard editor (Next.js)
+
+The same per-key pin is now editable from the dashboard at `/api-keys/<id>`.
+The Source IP allowlist card lists the current CIDRs, lets an operator add
+or remove entries, and persists them with `PATCH /api/keys/<id>`. The
+Next.js `/v1/*` routes enforce the pin on every authenticated call: predict,
+batch, runs CRUD/share/export, usage, audit + audit verify, webhooks +
+deliveries + redeliver, keys/me + rotate. A request whose source IP falls
+outside the pin returns `403 {"detail":"source ip not allowed for this api
+key"}` before any business logic runs. Empty list means "any IP" (the
+workspace-level allowlist still applies).
+
+```bash
+# Pin a key from the dashboard layer.
+curl -s -X PATCH http://localhost:3000/api/keys/<key_id> \
+  -H 'content-type: application/json' \
+  -d '{"allowed_cidrs":["10.0.0.0/8","203.0.113.42"]}'
+
+# Used from the wrong egress: 403 in one round trip.
+curl -i http://localhost:3000/v1/keys/me \
+  -H 'authorization: Bearer adh_...' \
+  -H 'x-forwarded-for: 198.51.100.7'
+# HTTP/1.1 403 Forbidden
+# {"detail":"source ip not allowed for this api key"}
+```
+
 ML risk scoring for medication adherence. Predicts which upcoming doses a user
 is likely to miss in the next 24 hours and turns those scores into ranked
 interventions.

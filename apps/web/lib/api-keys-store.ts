@@ -12,6 +12,202 @@ import path from "node:path";
 import { randomBytes, createHash } from "node:crypto";
 
 export const ALL_SCOPES = ["predict", "read", "webhooks", "audit"] as const;
+
+/**
+ * Per-key client IP allowlist. Stored as a list of CIDR strings (IPv4 or IPv6).
+ * Empty/missing list means the key works from any source IP (subject to the
+ * separate workspace-level IP allowlist enforced upstream). When set, each
+ * inbound request authenticated by this key MUST come from an IP that falls
+ * inside at least one of the listed CIDRs, otherwise the route returns 403.
+ *
+ * This is a defence-in-depth control independent of the workspace allowlist:
+ * a leaked key still cannot be used from an attacker's IP if the rightful
+ * owner has pinned the key to (for example) `10.0.0.0/8` or a single
+ * `203.0.113.42/32` egress NAT.
+ */
+export const MAX_KEY_CIDRS = 32;
+
+function parseIpv4(ip: string): number | null {
+  const parts = ip.split(".");
+  if (parts.length !== 4) return null;
+  let n = 0;
+  for (const p of parts) {
+    if (!/^\d{1,3}$/.test(p)) return null;
+    const v = Number(p);
+    if (v < 0 || v > 255) return null;
+    n = (n * 256) + v;
+  }
+  // force unsigned
+  return n >>> 0;
+}
+
+function parseIpv6(ip: string): bigint | null {
+  // strip zone id, e.g. fe80::1%eth0
+  const clean = ip.split("%")[0];
+  // reject anything that is not hex / : / .
+  if (!/^[0-9a-fA-F:.]+$/.test(clean)) return null;
+  // `:::` (or more) is never valid: `::` already represents the gap and any
+  // adjacent `:` would make an empty group on either side of it.
+  if (clean.includes(":::")) return null;
+  let head: string;
+  let tail: string;
+  if (clean.includes("::")) {
+    const [h, t] = clean.split("::");
+    if (clean.split("::").length > 2) return null;
+    head = h;
+    tail = t;
+  } else {
+    head = clean;
+    tail = "";
+  }
+  const expand = (s: string): string[] => (s === "" ? [] : s.split(":"));
+  let h = expand(head);
+  let t = expand(tail);
+  // handle embedded ipv4, e.g. ::ffff:192.0.2.1
+  const mixIn = (arr: string[]) => {
+    if (arr.length === 0) return arr;
+    const last = arr[arr.length - 1];
+    if (last.includes(".")) {
+      const v4 = parseIpv4(last);
+      if (v4 == null) return null;
+      arr.pop();
+      arr.push(((v4 >>> 16) & 0xffff).toString(16));
+      arr.push((v4 & 0xffff).toString(16));
+    }
+    return arr;
+  };
+  const hh = mixIn(h);
+  const tt = mixIn(t);
+  if (!hh || !tt) return null;
+  const missing = 8 - hh.length - tt.length;
+  if (missing < 0) return null;
+  if (missing > 0 && !clean.includes("::")) return null;
+  const groups = [...hh, ...Array(missing).fill("0"), ...tt];
+  if (groups.length !== 8) return null;
+  let acc = 0n;
+  for (const g of groups) {
+    if (g.length > 4 || !/^[0-9a-fA-F]*$/.test(g)) return null;
+    acc = (acc << 16n) | BigInt(parseInt(g || "0", 16));
+  }
+  return acc;
+}
+
+/**
+ * Parse a CIDR string into a normalized canonical form, or return null when
+ * the input is not a syntactically valid IPv4/IPv6 CIDR. A bare IP (no `/`)
+ * is treated as a host route: `/32` for v4, `/128` for v6.
+ */
+export function normalizeCidr(raw: string): string | null {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  let ipPart = trimmed;
+  let bits: number | null = null;
+  const slash = trimmed.indexOf("/");
+  if (slash >= 0) {
+    ipPart = trimmed.slice(0, slash);
+    const b = trimmed.slice(slash + 1);
+    if (!/^\d+$/.test(b)) return null;
+    bits = Number(b);
+  }
+  if (ipPart.includes(":")) {
+    const v = parseIpv6(ipPart);
+    if (v == null) return null;
+    if (bits == null) bits = 128;
+    if (bits < 0 || bits > 128) return null;
+    return `${ipPart.toLowerCase()}/${bits}`;
+  }
+  const v = parseIpv4(ipPart);
+  if (v == null) return null;
+  if (bits == null) bits = 32;
+  if (bits < 0 || bits > 32) return null;
+  return `${ipPart}/${bits}`;
+}
+
+export function normalizeAllowedCidrs(raw: unknown): string[] | null {
+  if (raw === null || raw === undefined) return null;
+  if (!Array.isArray(raw)) return null;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    const n = normalizeCidr(item);
+    if (!n) continue;
+    if (seen.has(n)) continue;
+    seen.add(n);
+    out.push(n);
+    if (out.length >= MAX_KEY_CIDRS) break;
+  }
+  // empty list (caller explicitly cleared) means "any IP allowed"; treat as null
+  return out.length === 0 ? null : out;
+}
+
+/**
+ * Return true when `ip` falls inside `cidr`. Mismatched families (v4 vs v6)
+ * never match. Malformed inputs return false.
+ */
+export function ipInCidr(ip: string, cidr: string): boolean {
+  const slash = cidr.indexOf("/");
+  if (slash < 0) return false;
+  const base = cidr.slice(0, slash);
+  const bits = Number(cidr.slice(slash + 1));
+  if (!Number.isFinite(bits) || bits < 0) return false;
+  const isV6 = ip.includes(":") || base.includes(":");
+  if (isV6) {
+    if (!ip.includes(":") || !base.includes(":")) return false;
+    if (bits > 128) return false;
+    const a = parseIpv6(ip);
+    const b = parseIpv6(base);
+    if (a == null || b == null) return false;
+    if (bits === 0) return true;
+    const shift = BigInt(128 - bits);
+    return (a >> shift) === (b >> shift);
+  }
+  if (bits > 32) return false;
+  const a = parseIpv4(ip);
+  const b = parseIpv4(base);
+  if (a == null || b == null) return false;
+  if (bits === 0) return true;
+  const shift = 32 - bits;
+  return (a >>> shift) === (b >>> shift);
+}
+
+/**
+ * Extract the best-guess client IP from request headers. Honors the standard
+ * `x-forwarded-for` chain (leftmost is the original client) and falls back
+ * to `x-real-ip`. Returns an empty string when no candidate is available.
+ */
+export function clientIpFromHeaders(headers: Headers): string {
+  const fwd = headers.get("x-forwarded-for");
+  if (fwd) {
+    const first = fwd.split(",")[0]?.trim();
+    if (first) return first;
+  }
+  const real = headers.get("x-real-ip");
+  if (real) return real.trim();
+  return "";
+}
+
+/**
+ * Decide whether a key is permitted to be used from the given client IP.
+ * - When the key has no allowed_cidrs list, returns true (any source allowed).
+ * - When the list is non-empty, the client IP must fall inside at least one
+ *   CIDR. An empty client IP (proxy didn't supply one) with a non-empty
+ *   allowlist returns false: fail closed.
+ */
+export function ipAllowedForKey(
+  rec: Pick<ApiKeyRecord, "allowed_cidrs">,
+  clientIp: string,
+): boolean {
+  const list = rec.allowed_cidrs;
+  if (!Array.isArray(list) || list.length === 0) return true;
+  if (!clientIp) return false;
+  for (const cidr of list) {
+    if (ipInCidr(clientIp, cidr)) return true;
+  }
+  return false;
+}
+
 export type KeyScope = (typeof ALL_SCOPES)[number];
 export const DEFAULT_SCOPES: KeyScope[] = ["predict", "read"];
 
@@ -53,6 +249,12 @@ export interface ApiKeyRecord {
    * just inherits the workspace plan quota).
    */
   daily_quota?: number | null;
+  /**
+   * Optional per-key client IP allowlist as a list of normalized CIDRs.
+   * When set and non-empty, the key only authenticates requests whose
+   * client IP falls inside at least one entry. See `ipAllowedForKey`.
+   */
+  allowed_cidrs?: string[] | null;
 }
 
 /** Normalize a user-supplied daily quota value into a stored field. */
@@ -107,6 +309,7 @@ export function publicView(k: ApiKeyRecord) {
     expires_at: k.expires_at ?? null,
     expired: isExpired(k),
     daily_quota: k.daily_quota ?? null,
+    allowed_cidrs: Array.isArray(k.allowed_cidrs) ? [...k.allowed_cidrs] : null,
   };
 }
 
@@ -117,7 +320,12 @@ export function publicView(k: ApiKeyRecord) {
  */
 export async function updateKey(
   id: string,
-  patch: { name?: string; scopes?: KeyScope[]; daily_quota?: number | null },
+  patch: {
+    name?: string;
+    scopes?: KeyScope[];
+    daily_quota?: number | null;
+    allowed_cidrs?: string[] | null;
+  },
 ): Promise<ApiKeyRecord | null> {
   let out: ApiKeyRecord | null = null;
   writeQueue = writeQueue.then(async () => {
@@ -133,6 +341,14 @@ export async function updateKey(
     }
     if (patch.daily_quota !== undefined) {
       k.daily_quota = normalizeDailyQuota(patch.daily_quota);
+    }
+    if (patch.allowed_cidrs !== undefined) {
+      // patch.allowed_cidrs === null clears the pin; an array is normalized
+      if (patch.allowed_cidrs === null) {
+        k.allowed_cidrs = null;
+      } else {
+        k.allowed_cidrs = normalizeAllowedCidrs(patch.allowed_cidrs);
+      }
     }
     out = { ...k };
     await writeStore(s);
@@ -204,6 +420,7 @@ export async function createKey(
   name: string,
   scopes: KeyScope[] = DEFAULT_SCOPES,
   expiresAt: number | null = null,
+  allowedCidrs: string[] | null = null,
 ): Promise<NewApiKey> {
   const trimmed = name.trim().slice(0, 80) || "untitled";
   const plaintext = "adh_" + randomBytes(24).toString("base64url");
@@ -219,6 +436,7 @@ export async function createKey(
     scopes: normalizeScopes(scopes),
     expires_at: expiresAt ?? null,
     daily_quota: null,
+    allowed_cidrs: normalizeAllowedCidrs(allowedCidrs),
   };
   writeQueue = writeQueue.then(async () => {
     const s = await readStore();

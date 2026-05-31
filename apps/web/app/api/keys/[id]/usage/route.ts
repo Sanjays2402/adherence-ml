@@ -27,6 +27,7 @@ export async function GET(
       use_count: key.use_count,
       revoked: key.revoked,
       scopes: scopesOf(key),
+      allowed_cidrs: Array.isArray(key.allowed_cidrs) ? [...key.allowed_cidrs] : null,
     },
     ...summary,
   });

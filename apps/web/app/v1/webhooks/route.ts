@@ -18,12 +18,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import {
+  clientIpFromHeaders,
   extractKey,
   hasScope,
+  ipAllowedForKey,
   scopesOf,
-  verifyKey,
   type ApiKeyRecord,
   type KeyScope,
+  verifyKey,
 } from "@/lib/api-keys-store";
 import { recordKeyUsage } from "@/lib/api-key-usage-store";
 import {
@@ -88,6 +90,24 @@ async function authenticate(
       response: NextResponse.json(
         { detail: "invalid or revoked api key" },
         { status: 401 },
+      ),
+    };
+  }
+  if (!ipAllowedForKey(key, clientIpFromHeaders(req.headers))) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { detail: "source ip not allowed for this api key" },
+        { status: 403 },
+      ),
+    };
+  }
+  if (!ipAllowedForKey(key, clientIpFromHeaders(req.headers))) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { detail: "source ip not allowed for this api key" },
+        { status: 403 },
       ),
     };
   }

@@ -20,7 +20,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { ApiError, apiFetch } from "@/lib/api";
-import { extractKey, hasScope, verifyKey } from "@/lib/api-keys-store";
+import {
+  clientIpFromHeaders,
+  extractKey,
+  hasScope,
+  ipAllowedForKey,
+  verifyKey,
+} from "@/lib/api-keys-store";
 import { parseCsv, toCsv } from "@/lib/csv";
 import { appendRun, newRunId } from "@/lib/runs-store";
 import { chargeCall, over429, rateLimitHeaders, readBudget } from "@/lib/v1-ratelimit";
@@ -91,6 +97,9 @@ export async function POST(req: NextRequest) {
   const key = await verifyKey(presented);
   if (!key) {
     return err(401, "invalid_api_key", "key is unknown or has been revoked");
+  }
+  if (!ipAllowedForKey(key, clientIpFromHeaders(req.headers))) {
+    return err(403, "ip_not_allowed", "source ip not allowed for this api key");
   }
   if (!hasScope(key, "predict")) {
     return NextResponse.json(

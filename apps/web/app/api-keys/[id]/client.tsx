@@ -1,6 +1,7 @@
 "use client";
 
 import useSWR from "swr";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   ChartBar,
@@ -9,6 +10,8 @@ import {
   Warning,
   Pulse,
   ListChecks,
+  ShieldCheck,
+  X,
 } from "@phosphor-icons/react";
 import {
   PageHeader,
@@ -33,6 +36,7 @@ type KeyMeta = {
   use_count: number;
   revoked: boolean;
   scopes: Scope[];
+  allowed_cidrs?: string[] | null;
 };
 
 type UsageEvent = {
@@ -81,13 +85,65 @@ function methodTone(_m: string): "neutral" {
 }
 
 export default function KeyDetailClient({ id }: { id: string }) {
-  const { data, error, isLoading } = useSWR<UsageResp>(
+  const { data, error, isLoading, mutate } = useSWR<UsageResp>(
     `/api/keys/${encodeURIComponent(id)}/usage?limit=100`,
     fetcher,
     { refreshInterval: 5000 },
   );
 
   const maxDaily = data ? Math.max(1, ...data.daily.map((d) => d.count)) : 1;
+
+  // --- CIDR allowlist editor state -----------------------------------------
+  const initialList = (data?.key.allowed_cidrs ?? []) as string[];
+  const [cidrs, setCidrs] = useState<string[]>(initialList);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+
+  // Re-sync editor when SWR brings in the canonical list (first load + refresh).
+  useEffect(() => {
+    if (data?.key) {
+      setCidrs((data.key.allowed_cidrs ?? []) as string[]);
+    }
+  }, [data?.key.id, data?.key.allowed_cidrs?.join(",")]);
+
+  function addDraft() {
+    const v = draft.trim();
+    if (!v) return;
+    if (cidrs.includes(v)) {
+      setDraft("");
+      return;
+    }
+    if (cidrs.length >= 32) {
+      setSaveMsg({ kind: "err", text: "max 32 entries per key" });
+      return;
+    }
+    setCidrs([...cidrs, v]);
+    setDraft("");
+    setSaveMsg(null);
+  }
+
+  async function saveCidrs(next: string[] | null) {
+    setSaving(true);
+    setSaveMsg(null);
+    try {
+      const r = await fetch(`/api/keys/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ allowed_cidrs: next }),
+      });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body?.detail || `save failed: ${r.status}`);
+      }
+      setSaveMsg({ kind: "ok", text: next === null || next.length === 0 ? "pin cleared" : "saved" });
+      await mutate();
+    } catch (e) {
+      setSaveMsg({ kind: "err", text: e instanceof Error ? e.message : "save failed" });
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <div className="mx-auto max-w-[1100px]">
@@ -156,6 +212,95 @@ export default function KeyDetailClient({ id }: { id: string }) {
                     <Badge tone="success">active</Badge>
                   )}
                 </div>
+              </div>
+            </Card>
+
+            {/* Source IP allowlist */}
+            <Card>
+              <CardHeader
+                right={<ShieldCheck weight="duotone" size={16} />}
+                title="Source IP allowlist"
+                hint="Pin this key to specific IPv4 or IPv6 CIDRs. Requests from any other source return 403. Leave empty to allow any IP (the workspace-level allowlist still applies)."
+              />
+              <div className="px-4 pb-4 space-y-3">
+                <div className="flex flex-wrap gap-1.5 min-h-[26px]">
+                  {cidrs.length === 0 ? (
+                    <span className="text-[11px] text-[var(--color-muted)]">No pin set. Key works from any IP.</span>
+                  ) : (
+                    cidrs.map((c) => (
+                      <span
+                        key={c}
+                        className="inline-flex items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 font-mono text-[11px]"
+                      >
+                        {c}
+                        <button
+                          type="button"
+                          aria-label={`remove ${c}`}
+                          onClick={() => setCidrs(cidrs.filter((x) => x !== c))}
+                          className="text-[var(--color-muted)] hover:text-[var(--color-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)] rounded"
+                        >
+                          <X weight="bold" size={11} />
+                        </button>
+                      </span>
+                    ))
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="text"
+                    inputMode="text"
+                    spellCheck={false}
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        addDraft();
+                      }
+                    }}
+                    placeholder="10.0.0.0/8 or 203.0.113.42 or 2001:db8::/32"
+                    aria-label="CIDR to add"
+                    className="flex-1 min-w-[220px] rounded border border-[var(--color-border)] bg-transparent px-2 py-1.5 font-mono text-[12px] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
+                  />
+                  <button
+                    type="button"
+                    onClick={addDraft}
+                    className="text-[12px] px-3 py-1.5 rounded border border-[var(--color-border)] hover:bg-[var(--color-surface)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
+                  >
+                    add
+                  </button>
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={() => saveCidrs(cidrs.length === 0 ? null : cidrs)}
+                    className="text-[12px] px-3 py-1.5 rounded border border-[var(--color-accent)] bg-[var(--color-accent)]/10 hover:bg-[var(--color-accent)]/20 disabled:opacity-50 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
+                  >
+                    {saving ? "saving..." : "save"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={saving || ((data.key.allowed_cidrs ?? []).length === 0 && cidrs.length === 0)}
+                    onClick={() => {
+                      setCidrs([]);
+                      void saveCidrs(null);
+                    }}
+                    className="text-[12px] px-3 py-1.5 rounded border border-[var(--color-border)] hover:bg-[var(--color-surface)] disabled:opacity-50 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
+                  >
+                    clear pin
+                  </button>
+                </div>
+                {saveMsg ? (
+                  <div
+                    role="status"
+                    className={
+                      saveMsg.kind === "ok"
+                        ? "text-[11px] text-[var(--color-success)]"
+                        : "text-[11px] text-[var(--color-danger)]"
+                    }
+                  >
+                    {saveMsg.text}
+                  </div>
+                ) : null}
               </div>
             </Card>
 

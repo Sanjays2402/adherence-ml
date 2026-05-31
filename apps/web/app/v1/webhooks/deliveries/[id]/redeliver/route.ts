@@ -12,8 +12,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import {
+  clientIpFromHeaders,
   extractKey,
   hasScope,
+  ipAllowedForKey,
   scopesOf,
   verifyKey,
 } from "@/lib/api-keys-store";
@@ -48,6 +50,12 @@ export async function POST(
     return NextResponse.json(
       { detail: "invalid or revoked api key" },
       { status: 401 },
+    );
+  }
+  if (!ipAllowedForKey(key, clientIpFromHeaders(req.headers))) {
+    return NextResponse.json(
+      { detail: "source ip not allowed for this api key" },
+      { status: 403 },
     );
   }
   if (!hasScope(key, "webhooks")) {

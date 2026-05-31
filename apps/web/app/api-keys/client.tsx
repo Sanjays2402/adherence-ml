@@ -41,6 +41,7 @@ type KeyRow = {
   expires_at: number | null;
   expired: boolean;
   daily_quota: number | null;
+  allowed_cidrs: string[] | null;
 };
 
 type ListResp = { keys: KeyRow[]; available_scopes: Scope[]; ttl_presets_days: number[] };
@@ -206,6 +207,111 @@ function QuotaCell({
   );
 }
 
+function CidrsCell({
+  k,
+  disabled,
+  onSaved,
+}: {
+  k: KeyRow;
+  disabled: boolean;
+  onSaved: () => void;
+}) {
+  const current = (k.allowed_cidrs ?? []).join(", ");
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState<string>(current);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const save = useCallback(async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const trimmed = val.trim();
+      const list = trimmed
+        ? trimmed.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean)
+        : null;
+      const res = await fetch(`/api/keys/${k.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ allowed_cidrs: list }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j?.detail ?? `update failed (${res.status})`);
+      }
+      setEditing(false);
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [k.id, val, onSaved]);
+
+  if (!editing) {
+    const list = k.allowed_cidrs ?? [];
+    return (
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => {
+          setVal(current);
+          setErr(null);
+          setEditing(true);
+        }}
+        className="text-[11px] font-mono px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-surface)] hover:border-[var(--color-accent)]/40 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)] disabled:opacity-50 disabled:cursor-not-allowed max-w-[12rem] truncate"
+        aria-label={`edit ip allowlist for ${k.name}`}
+        title={
+          list.length === 0
+            ? "No source-IP restriction. Click to pin this key to one or more CIDRs."
+            : `Pinned to ${list.length} CIDR${list.length === 1 ? "" : "s"}: ${list.join(", ")}. Click to edit.`
+        }
+      >
+        {list.length === 0 ? "any" : list.length === 1 ? list[0] : `${list.length} CIDRs`}
+      </button>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1 justify-end">
+      <input
+        type="text"
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        placeholder="any"
+        autoFocus
+        onKeyDown={(e) => {
+          if (e.key === "Enter") void save();
+          if (e.key === "Escape") setEditing(false);
+        }}
+        className="w-56 text-[11px] font-mono px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-soft)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
+        aria-label="comma-separated CIDR list, blank to allow any source IP"
+      />
+      <button
+        type="button"
+        onClick={() => void save()}
+        disabled={busy}
+        className="text-[11px] px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-surface)] hover:border-[var(--color-accent)]/40 disabled:opacity-50"
+      >
+        {busy ? "..." : "save"}
+      </button>
+      <button
+        type="button"
+        onClick={() => setEditing(false)}
+        disabled={busy}
+        className="text-[11px] px-2 py-1 rounded text-[var(--color-muted)] hover:text-[var(--color-text)] disabled:opacity-50"
+      >
+        cancel
+      </button>
+      {err ? (
+        <span className="text-[10px] text-[var(--color-high)]" role="alert">
+          {err}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 export default function KeysClient() {
   const { data, error, isLoading, mutate } = useSWR<ListResp>("/api/keys", fetcher, {
     refreshInterval: 0,
@@ -214,6 +320,7 @@ export default function KeysClient() {
   const [scopes, setScopes] = useState<Scope[]>(["predict", "read"]);
   // null = never expires; number = days until expiry
   const [ttlDays, setTtlDays] = useState<number | null>(null);
+  const [allowedCidrs, setAllowedCidrs] = useState<string>("");
   const [creating, setCreating] = useState(false);
   const [createErr, setCreateErr] = useState<string | null>(null);
   const [issued, setIssued] = useState<{ name: string; key: string; scopes?: Scope[]; rotated?: boolean } | null>(null);
@@ -232,10 +339,19 @@ export default function KeysClient() {
     }
     setCreating(true);
     try {
+      const trimmedCidrs = allowedCidrs.trim();
+      const cidrList = trimmedCidrs
+        ? trimmedCidrs.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean)
+        : null;
       const res = await fetch("/api/keys", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), scopes, ttl_days: ttlDays }),
+        body: JSON.stringify({
+          name: name.trim(),
+          scopes,
+          ttl_days: ttlDays,
+          allowed_cidrs: cidrList,
+        }),
       });
       const json = await res.json();
       if (!res.ok) {
@@ -244,13 +360,14 @@ export default function KeysClient() {
       }
       setIssued({ name: json.name, key: json.key, scopes: json.scopes });
       setName("");
+      setAllowedCidrs("");
       mutate();
     } catch (e) {
       setCreateErr(e instanceof Error ? e.message : "network error");
     } finally {
       setCreating(false);
     }
-  }, [name, scopes, ttlDays, mutate]);
+  }, [name, scopes, ttlDays, allowedCidrs, mutate]);
 
   const onRevoke = useCallback(
     async (id: string) => {
@@ -512,6 +629,31 @@ export default function KeysClient() {
           <p className="text-[11px] text-[var(--color-muted)]">
             Short-lived keys are best practice. An expired key returns 401 from every /v1 endpoint until you rotate or create a new one.
           </p>
+          <div className="flex flex-col gap-1">
+            <label
+              htmlFor="new-key-cidrs"
+              className="text-[11px] uppercase tracking-wider text-[var(--color-muted)]"
+            >
+              Source IP allowlist
+            </label>
+            <input
+              id="new-key-cidrs"
+              type="text"
+              value={allowedCidrs}
+              onChange={(e) => setAllowedCidrs(e.target.value)}
+              placeholder="any (leave blank), or 10.0.0.0/8, 203.0.113.42/32"
+              autoComplete="off"
+              spellCheck={false}
+              className="w-full text-[12px] font-mono px-3 py-2 rounded border border-[var(--color-border)] bg-[var(--color-bg-soft)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
+              aria-describedby="new-key-cidrs-help"
+            />
+            <p
+              id="new-key-cidrs-help"
+              className="text-[11px] text-[var(--color-muted)]"
+            >
+              Comma or space separated CIDRs (IPv4 or IPv6). When set, the key only authenticates requests from these networks. A bare IP becomes a /32 or /128 host route. Leave blank to allow any source IP.
+            </p>
+          </div>
           {createErr ? <ErrorBox message={createErr} /> : null}
         </div>
       </Card>
@@ -551,6 +693,7 @@ export default function KeysClient() {
                     <th className="px-4 py-2 font-medium">Expires</th>
                     <th className="px-4 py-2 font-medium text-right">Calls</th>
                     <th className="px-4 py-2 font-medium text-right">Cap/day</th>
+                    <th className="px-4 py-2 font-medium text-right">IPs</th>
                     <th className="px-4 py-2 font-medium">Status</th>
                     <th className="px-4 py-2 font-medium text-right">Actions</th>
                   </tr>
@@ -591,6 +734,13 @@ export default function KeysClient() {
                       <td className="px-4 py-2 text-right font-mono">{k.use_count}</td>
                       <td className="px-4 py-2 text-right">
                         <QuotaCell
+                          k={k}
+                          disabled={k.revoked || k.expired}
+                          onSaved={() => mutate()}
+                        />
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        <CidrsCell
                           k={k}
                           disabled={k.revoked || k.expired}
                           onSaved={() => mutate()}

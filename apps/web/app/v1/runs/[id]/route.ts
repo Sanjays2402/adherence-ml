@@ -19,7 +19,14 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { extractKey, hasScope, verifyKey, type ApiKeyRecord } from "@/lib/api-keys-store";
+import {
+  clientIpFromHeaders,
+  extractKey,
+  hasScope,
+  ipAllowedForKey,
+  type ApiKeyRecord,
+  verifyKey,
+} from "@/lib/api-keys-store";
 import { recordKeyUsage } from "@/lib/api-key-usage-store";
 import { deleteRun, getRun, updateRun } from "@/lib/runs-store";
 
@@ -62,6 +69,22 @@ async function requireKey(
       err: NextResponse.json(
         { detail: "invalid or revoked api key" },
         { status: 401 },
+      ),
+    };
+  }
+  if (!ipAllowedForKey(key, clientIpFromHeaders(req.headers))) {
+    return {
+      err: NextResponse.json(
+        { detail: "source ip not allowed for this api key" },
+        { status: 403 },
+      ),
+    };
+  }
+  if (!ipAllowedForKey(key, clientIpFromHeaders(req.headers))) {
+    return {
+      err: NextResponse.json(
+        { detail: "source ip not allowed for this api key" },
+        { status: 403 },
       ),
     };
   }

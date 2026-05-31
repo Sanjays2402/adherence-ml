@@ -12,7 +12,14 @@
  *   { "chain_valid": true, "tip_hash": "abc...", "entries": 142 }
  */
 import { NextRequest, NextResponse } from "next/server";
-import { extractKey, hasScope, scopesOf, verifyKey } from "@/lib/api-keys-store";
+import {
+  clientIpFromHeaders,
+  extractKey,
+  hasScope,
+  ipAllowedForKey,
+  scopesOf,
+  verifyKey,
+} from "@/lib/api-keys-store";
 import { recordKeyUsage } from "@/lib/api-key-usage-store";
 import { listAudit } from "@/lib/dashboard-audit";
 
@@ -33,6 +40,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(
       { detail: "invalid or revoked api key" },
       { status: 401 },
+    );
+  }
+  if (!ipAllowedForKey(key, clientIpFromHeaders(req.headers))) {
+    return NextResponse.json(
+      { detail: "source ip not allowed for this api key" },
+      { status: 403 },
     );
   }
   if (!hasScope(key, "audit")) {

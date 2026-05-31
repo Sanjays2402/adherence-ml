@@ -7,7 +7,14 @@
  *     -H "authorization: Bearer adh_..."
  */
 import { NextRequest, NextResponse } from "next/server";
-import { extractKey, hasScope, scopesOf, verifyKey } from "@/lib/api-keys-store";
+import {
+  clientIpFromHeaders,
+  extractKey,
+  hasScope,
+  ipAllowedForKey,
+  scopesOf,
+  verifyKey,
+} from "@/lib/api-keys-store";
 import { recordKeyUsage } from "@/lib/api-key-usage-store";
 import { rateLimitHeaders, readBudget } from "@/lib/v1-ratelimit";
 
@@ -26,6 +33,12 @@ export async function GET(req: NextRequest) {
   const key = await verifyKey(presented);
   if (!key) {
     return NextResponse.json({ detail: "invalid or revoked api key" }, { status: 401 });
+  }
+  if (!ipAllowedForKey(key, clientIpFromHeaders(req.headers))) {
+    return NextResponse.json(
+      { detail: "source ip not allowed for this api key" },
+      { status: 403 },
+    );
   }
   const scopes = scopesOf(key);
   if (!hasScope(key, "read")) {

@@ -18,7 +18,13 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { extractKey, hasScope, verifyKey } from "@/lib/api-keys-store";
+import {
+  clientIpFromHeaders,
+  extractKey,
+  hasScope,
+  ipAllowedForKey,
+  verifyKey,
+} from "@/lib/api-keys-store";
 import { recordKeyUsage } from "@/lib/api-key-usage-store";
 import { setRunShared } from "@/lib/runs-store";
 
@@ -41,6 +47,12 @@ export async function POST(
   const key = await verifyKey(presented);
   if (!key) {
     return NextResponse.json({ detail: "invalid or revoked api key" }, { status: 401 });
+  }
+  if (!ipAllowedForKey(key, clientIpFromHeaders(req.headers))) {
+    return NextResponse.json(
+      { detail: "source ip not allowed for this api key" },
+      { status: 403 },
+    );
   }
   if (!hasScope(key, "predict")) {
     return NextResponse.json(
