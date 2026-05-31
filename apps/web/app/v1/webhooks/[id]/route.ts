@@ -38,7 +38,7 @@ export async function DELETE(
       { status: 401 },
     );
   }
-  const key = await verifyKey(presented);
+  const key = await verifyKey(presented, { client_ip: (req.headers.get("x-forwarded-for") || "").split(",")[0].trim() || null, user_agent: req.headers.get("user-agent") });
   if (!key) {
     return NextResponse.json(
       { detail: "invalid or revoked api key" },

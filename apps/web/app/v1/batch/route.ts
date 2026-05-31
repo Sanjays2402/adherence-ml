@@ -94,7 +94,7 @@ export async function POST(req: NextRequest) {
   if (!presented) {
     return err(401, "missing_api_key", "send Authorization: Bearer <key> or x-api-key: <key>");
   }
-  const key = await verifyKey(presented);
+  const key = await verifyKey(presented, { client_ip: (req.headers.get("x-forwarded-for") || "").split(",")[0].trim() || null, user_agent: req.headers.get("user-agent") });
   if (!key) {
     return err(401, "invalid_api_key", "key is unknown or has been revoked");
   }

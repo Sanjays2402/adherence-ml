@@ -42,6 +42,8 @@ type KeyRow = {
   expired: boolean;
   daily_quota: number | null;
   allowed_cidrs: string[] | null;
+  last_used_ip?: string | null;
+  last_used_user_agent?: string | null;
 };
 
 type ListResp = { keys: KeyRow[]; available_scopes: Scope[]; ttl_presets_days: number[] };
@@ -714,7 +716,22 @@ export default function KeysClient() {
                         {fmt(k.created_at)}
                       </td>
                       <td className="px-4 py-2 font-mono text-[11px] text-[var(--color-muted)]">
-                        {fmt(k.last_used_at)}
+                        <div className="flex flex-col gap-0.5">
+                          <span>{fmt(k.last_used_at)}</span>
+                          {k.last_used_ip || k.last_used_user_agent ? (
+                            <span
+                              className="text-[10px] text-[var(--color-muted)] truncate max-w-[260px]"
+                              title={[k.last_used_ip || "", k.last_used_user_agent || ""]
+                                .filter(Boolean)
+                                .join(" • ")}
+                            >
+                              {k.last_used_ip ? <MonoChip>{k.last_used_ip}</MonoChip> : null}
+                              {k.last_used_user_agent ? (
+                                <span className="ml-1">{k.last_used_user_agent.slice(0, 48)}{k.last_used_user_agent.length > 48 ? "…" : ""}</span>
+                              ) : null}
+                            </span>
+                          ) : null}
+                        </div>
                       </td>
                       <td className="px-4 py-2 font-mono text-[11px] text-[var(--color-muted)]">
                         {fmt(k.rotated_at)}

@@ -107,9 +107,15 @@ class DoseOutcome(Base):
     One row per scheduled dose with the observed outcome. Joined against
     PredictionAudit (via user_id + dose_id) to compute online metrics such
     as AUC/Brier/calibration on live traffic.
+
+    ``tenant_id`` is set at write time from the inbound source -> tenant
+    mapping. It is required for tenant-scoped reads on /v1/metrics/online
+    so one workspace admin can never join their predictions against
+    another workspace's ground-truth outcomes.
     """
     __tablename__ = "dose_outcomes"
     id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(String(64), index=True, nullable=False, default="default")
     source = Column(String(32), nullable=False, default="medtracker")
     external_event_id = Column(String(64), unique=True, nullable=True, index=True)
     user_id = Column(String(64), index=True, nullable=False)
@@ -476,6 +482,7 @@ _TENANT_COLUMNS: tuple[tuple[str, str], ...] = (
     ("predictions", "tenant_id"),
     ("prediction_audit", "tenant_id"),
     ("api_key_records", "tenant_id"),
+    ("dose_outcomes", "tenant_id"),
 )
 
 
@@ -514,6 +521,35 @@ def _ensure_tenant_columns(engine) -> None:
                 conn.execute(text(
                     "ALTER TABLE api_key_records "
                     "ADD COLUMN rotation_count INTEGER NOT NULL DEFAULT 0"
+                ))
+        if "last_used_ip" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE api_key_records "
+                    "ADD COLUMN last_used_ip VARCHAR(64)"
+                ))
+        if "last_used_user_agent" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE api_key_records "
+                    "ADD COLUMN last_used_user_agent VARCHAR(256)"
+                ))
+    # Per-day usage row keeps the most recent source IP and User-Agent
+    # so the admin panel can render a per-day, per-key trail without
+    # cross-joining the request log table.
+    if "api_key_usage_daily" in existing_tables:
+        cols = {c["name"] for c in insp.get_columns("api_key_usage_daily")}
+        if "last_seen_ip" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE api_key_usage_daily "
+                    "ADD COLUMN last_seen_ip VARCHAR(64)"
+                ))
+        if "last_seen_user_agent" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE api_key_usage_daily "
+                    "ADD COLUMN last_seen_user_agent VARCHAR(256)"
                 ))
     # Webhook secret rotation overlap window.
     if "webhook_subscriptions" in existing_tables:
@@ -558,6 +594,23 @@ def _ensure_tenant_columns(engine) -> None:
                     "ALTER TABLE webhook_subscriptions "
                     "ADD COLUMN disabled_reason VARCHAR(255)"
                 ))
+    # Backfill dose_outcomes.tenant_id from prediction_audit on (user_id,
+    # dose_id) so existing ground-truth rows participate in tenant-scoped
+    # /v1/metrics/online the moment the upgraded code starts. Rows with
+    # no matching prediction stay on 'default' and are invisible to
+    # tenant admins other than the deployment default tenant.
+    if "dose_outcomes" in existing_tables and "prediction_audit" in existing_tables:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "UPDATE dose_outcomes "
+                "SET tenant_id = COALESCE(( "
+                "  SELECT pa.tenant_id FROM prediction_audit pa "
+                "  WHERE pa.user_id = dose_outcomes.user_id "
+                "  ORDER BY pa.created_at DESC LIMIT 1 "
+                "), tenant_id) "
+                "WHERE tenant_id = 'default'"
+            ))
+
     # Denormalised tenant_id on webhook_deliveries: backfill from the
     # owning subscription so existing rows participate in tenant-scoped
     # queries the moment the upgraded code starts running.

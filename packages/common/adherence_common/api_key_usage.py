@@ -35,6 +35,8 @@ class APIKeyUsageDaily(Base):
     last_status = Column(Integer, nullable=True)
     last_path = Column(String(256), nullable=True)
     last_seen_at = Column(String(40), nullable=True)
+    last_seen_ip = Column(String(64), nullable=True)
+    last_seen_user_agent = Column(String(256), nullable=True)
     __table_args__ = (
         UniqueConstraint("name", "day", name="uq_api_key_usage_name_day"),
     )
@@ -66,6 +68,8 @@ def record_usage(
     status_code: int | None = None,
     path: str | None = None,
     when: datetime | None = None,
+    client_ip: str | None = None,
+    user_agent: str | None = None,
 ) -> None:
     """Best-effort increment for a key's usage on the current UTC day.
 
@@ -80,6 +84,8 @@ def record_usage(
     day = ts.date()
     iso = ts.replace(microsecond=0).isoformat()
     truncated_path = (path or "")[:256] or None
+    truncated_ip = (client_ip or "").strip()[:64] or None
+    truncated_ua = (user_agent or "").strip()[:256] or None
     try:
         init_db()
         with session() as s:
@@ -92,6 +98,8 @@ def record_usage(
                         last_status=status_code,
                         last_path=truncated_path,
                         last_seen_at=iso,
+                        last_seen_ip=truncated_ip,
+                        last_seen_user_agent=truncated_ua,
                     )
                     .on_conflict_do_update(
                         index_elements=["name", "day"],
@@ -100,6 +108,8 @@ def record_usage(
                             "last_status": status_code,
                             "last_path": truncated_path,
                             "last_seen_at": iso,
+                            "last_seen_ip": truncated_ip,
+                            "last_seen_user_agent": truncated_ua,
                         },
                     )
                 )
@@ -119,12 +129,16 @@ def record_usage(
                     last_status=status_code,
                     last_path=truncated_path,
                     last_seen_at=iso,
+                    last_seen_ip=truncated_ip,
+                    last_seen_user_agent=truncated_ua,
                 ))
             else:
                 row.count = int(row.count or 0) + 1
                 row.last_status = status_code
                 row.last_path = truncated_path
                 row.last_seen_at = iso
+                row.last_seen_ip = truncated_ip
+                row.last_seen_user_agent = truncated_ua
             s.commit()
     except Exception:
         # Never fail the request because telemetry is unhappy.

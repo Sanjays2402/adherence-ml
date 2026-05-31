@@ -50,6 +50,13 @@ class APIKeyRecord(Base):
     expires_at = Column(DateTime, nullable=True, index=True)
     revoked_at = Column(DateTime, nullable=True, index=True)
     last_used_at = Column(DateTime, nullable=True)
+    # Best-effort attribution for the most recent successful resolve of
+    # this key. Lets admins answer 'where was this key just used from?'
+    # in the dashboard without trawling the request log. Both fields are
+    # truncated and never used to make security decisions; they are
+    # display-only telemetry intended for SOC2-style anomaly review.
+    last_used_ip = Column(String(64), nullable=True)
+    last_used_user_agent = Column(String(256), nullable=True)
     # Comma-separated list of CIDRs (or bare IPs). Empty/NULL means the
     # key is not restricted by source IP. Enforced by middleware on every
     # request whose credential resolves to this key.
@@ -272,6 +279,45 @@ def resolve_db_key(plain: str) -> ResolvedKey | None:
         pass
     return resolved
 
+
+def touch_last_seen(
+    record_id: int,
+    *,
+    client_ip: str | None = None,
+    user_agent: str | None = None,
+    when: datetime | None = None,
+) -> None:
+    """Best-effort write of the last source IP and User-Agent for a key.
+
+    Called from the FastAPI auth dependency once the principal has been
+    resolved. Failures are swallowed; this is display-only telemetry and
+    must never break an authenticated request. Empty / whitespace meta
+    values are no-ops so we never clobber a previously recorded address
+    with blanks (e.g. when the request arrives without an X-Forwarded-For
+    header or User-Agent).
+    """
+    if not record_id:
+        return
+    ip = (client_ip or "").strip()[:64] or None
+    ua = (user_agent or "").strip()[:256] or None
+    if ip is None and ua is None:
+        return
+    ts = when or datetime.utcnow()
+    values: dict[str, object] = {"last_used_at": ts}
+    if ip is not None:
+        values["last_used_ip"] = ip
+    if ua is not None:
+        values["last_used_user_agent"] = ua
+    try:
+        with session() as s2:
+            s2.execute(
+                update(APIKeyRecord)
+                .where(APIKeyRecord.id == record_id)
+                .values(**values)
+            )
+            s2.commit()
+    except Exception:
+        pass
 
 # ---- Per-key IP/CIDR allowlist -------------------------------------------
 

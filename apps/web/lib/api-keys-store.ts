@@ -255,6 +255,14 @@ export interface ApiKeyRecord {
    * client IP falls inside at least one entry. See `ipAllowedForKey`.
    */
   allowed_cidrs?: string[] | null;
+  /**
+   * Display-only attribution for the most recent successful verify. Lets
+   * the admin panel surface 'where was this key just used from?' without
+   * trawling request logs. Neither field is used for access control;
+   * IP enforcement is handled by `allowed_cidrs` above.
+   */
+  last_used_ip?: string | null;
+  last_used_user_agent?: string | null;
 }
 
 /** Normalize a user-supplied daily quota value into a stored field. */
@@ -310,6 +318,8 @@ export function publicView(k: ApiKeyRecord) {
     expired: isExpired(k),
     daily_quota: k.daily_quota ?? null,
     allowed_cidrs: Array.isArray(k.allowed_cidrs) ? [...k.allowed_cidrs] : null,
+    last_used_ip: k.last_used_ip ?? null,
+    last_used_user_agent: k.last_used_user_agent ?? null,
   };
 }
 
@@ -486,9 +496,13 @@ export async function revokeKey(id: string): Promise<boolean> {
 
 /**
  * Validate a presented key. Returns the matching record on success.
- * Records usage (last_used_at, use_count) as a side effect.
+ * Records usage (last_used_at, use_count, optional last_used_ip /
+ * last_used_user_agent) as a side effect.
  */
-export async function verifyKey(plaintext: string): Promise<ApiKeyRecord | null> {
+export async function verifyKey(
+  plaintext: string,
+  meta?: { client_ip?: string | null; user_agent?: string | null },
+): Promise<ApiKeyRecord | null> {
   if (!plaintext || typeof plaintext !== "string") return null;
   const h = hashKey(plaintext);
   let match: ApiKeyRecord | null = null;
@@ -499,6 +513,12 @@ export async function verifyKey(plaintext: string): Promise<ApiKeyRecord | null>
     if (isExpired(k)) return; // expired keys are inert, same as revoked
     k.last_used_at = Date.now();
     k.use_count += 1;
+    if (meta) {
+      const ip = (meta.client_ip ?? "").trim();
+      const ua = (meta.user_agent ?? "").trim();
+      if (ip) k.last_used_ip = ip.slice(0, 64);
+      if (ua) k.last_used_user_agent = ua.slice(0, 256);
+    }
     match = { ...k };
     await writeStore(s);
   });

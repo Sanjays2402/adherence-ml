@@ -124,6 +124,8 @@ class APIKeyOut(BaseModel):
     expires_at: str | None
     revoked_at: str | None
     last_used_at: str | None
+    last_used_ip: str | None = None
+    last_used_user_agent: str | None = None
     rotated_at: str | None = None
     rotation_count: int = 0
     ip_allowlist: list[str] = Field(default_factory=list)
@@ -149,6 +151,8 @@ def _key_row_to_out(row) -> APIKeyOut:
         expires_at=row.expires_at.isoformat() if row.expires_at else None,
         revoked_at=row.revoked_at.isoformat() if row.revoked_at else None,
         last_used_at=row.last_used_at.isoformat() if row.last_used_at else None,
+        last_used_ip=getattr(row, "last_used_ip", None),
+        last_used_user_agent=getattr(row, "last_used_user_agent", None),
         rotated_at=row.rotated_at.isoformat() if getattr(row, "rotated_at", None) else None,
         rotation_count=int(getattr(row, "rotation_count", 0) or 0),
         ip_allowlist=ip_allowlist,

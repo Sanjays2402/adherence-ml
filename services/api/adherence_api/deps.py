@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import Depends, Header, HTTPException, Request, status
 
 from adherence_common.auth import resolve_api_key, require_role, verify_jwt
-from adherence_common.api_keys import resolve_db_key
+from adherence_common.api_keys import resolve_db_key, touch_last_seen
 from adherence_common.api_key_usage import record_usage as _record_key_usage
 from adherence_common.errors import AuthError, PermissionError_
 from adherence_common.settings import Settings, get_settings
@@ -33,6 +33,7 @@ def _principal_from_headers(
                 "role": dbk.role,
                 "scopes": ",".join(sorted(dbk.scopes)),
                 "key_name": dbk.name,
+                "key_record_id": str(dbk.record_id),
                 "tenant": dbk.tenant_id or settings.default_tenant,
             }
         try:
@@ -67,7 +68,40 @@ def current_principal(
             path = request.url.path if request is not None else None
         except Exception:
             path = None
-        _record_key_usage(key_name, path=path)
+        # Extract client IP (honour the first hop in X-Forwarded-For when
+        # present so deployments behind a trusted proxy still see the
+        # real source) and a truncated User-Agent for display-only
+        # attribution on the admin API-keys panel. Both fields are
+        # best-effort; failures must never break an authenticated request.
+        client_ip: str | None = None
+        user_agent: str | None = None
+        try:
+            if request is not None:
+                xff = request.headers.get("x-forwarded-for")
+                if xff:
+                    client_ip = xff.split(",", 1)[0].strip() or None
+                if not client_ip and request.client is not None:
+                    client_ip = request.client.host
+                user_agent = request.headers.get("user-agent")
+        except Exception:
+            pass
+        _record_key_usage(
+            key_name,
+            path=path,
+            client_ip=client_ip,
+            user_agent=user_agent,
+        )
+        rid_raw = p.get("key_record_id")
+        try:
+            rid = int(rid_raw) if rid_raw else 0
+        except (TypeError, ValueError):
+            rid = 0
+        if rid:
+            touch_last_seen(
+                rid,
+                client_ip=client_ip,
+                user_agent=user_agent,
+            )
     return p
 
 
