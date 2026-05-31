@@ -21,6 +21,7 @@ from adherence_api.routes import admin_sessions as admin_sessions_route
 from adherence_api.routes import memberships as memberships_route
 from adherence_api.routes import session_policy as session_policy_route
 from adherence_api.routes import api_key_policy as api_key_policy_route
+from adherence_api.routes import retention_policy as retention_policy_route
 from adherence_api.routes import (
     admin,
     cohort,
@@ -165,6 +166,7 @@ def create_app() -> FastAPI:
     app.include_router(memberships_route.router)
     app.include_router(session_policy_route.router)
     app.include_router(api_key_policy_route.router)
+    app.include_router(retention_policy_route.router)
     app.include_router(quota_route.router)
     # Ensure quota + workspace tables exist before the first request.
     try:

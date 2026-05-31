@@ -275,6 +275,49 @@ curl -sS -X POST http://localhost:8000/v1/admin/api-keys \
   -d '{"name":"too-long","role":"viewer","ttl_seconds":7776000,"tenant_id":"acme"}'
 ```
 
+## Per-workspace data retention policy
+
+Procurement teams in regulated verticals routinely require that each
+customer workspace can declare its own retention ceiling for audit and
+prediction tables, independent of the deployment-wide default. A US
+clinical trial workspace may need to keep `prediction_audit` rows for 7
+years; a European demo workspace must purge them after 30 days. The
+global `retention.sweep` defaults are a deployment-wide policy and
+cannot express that.
+
+Each workspace admin can now set per-table TTLs for the tenant-scoped
+retention targets (`predictions`, `prediction_audit`, `admin_audit_log`)
+and run a tenant-scoped sweep. Every SQL DELETE filters by
+`tenant_id`, so one workspace cannot affect another's rows even if an
+admin sends a hand-crafted payload.
+
+Endpoints under `/v1/workspace/retention-policy`:
+
+* `GET    /v1/workspace/retention-policy` returns the current overrides
+  (`ttls_days: {}` means none).
+* `PUT    /v1/workspace/retention-policy` sets `ttls_days`. Admin only,
+  MFA-gated, dry-run aware. TTL range is 1 to 3650 days.
+* `DELETE /v1/workspace/retention-policy` clears all overrides.
+* `POST   /v1/workspace/retention-policy/sweep` runs a tenant-scoped
+  sweep using the saved policy (or an ad-hoc override). Pass
+  `dry_run: true` to count without deleting.
+
+Try it locally:
+
+```bash
+# Pin prediction_audit to 30 days for this workspace.
+curl -sS -X PUT http://localhost:8000/v1/workspace/retention-policy \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"ttls_days": {"prediction_audit": 30, "admin_audit_log": 365}}'
+
+# See how many rows would be deleted right now.
+curl -sS -X POST http://localhost:8000/v1/workspace/retention-policy/sweep \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"dry_run": true}'
+```
+
 ## Outbound webhook destination policy (SSRF defense)
 
 Procurement reviewers fail any SaaS that will POST to an arbitrary URL
