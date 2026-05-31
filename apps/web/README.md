@@ -26,6 +26,10 @@ curl -X POST http://localhost:3000/v1/predict \
 # list recent saved runs (requires read scope)
 curl "http://localhost:3000/v1/runs?limit=10" \
   -H "authorization: Bearer adh_YOUR_KEY"
+
+# verify a key without spending predict quota (requires read scope)
+curl http://localhost:3000/v1/keys/me \
+  -H "authorization: Bearer adh_YOUR_KEY"
 ```
 
 Missing the right scope returns `403` with `{ detail, required_scope, key_scopes }` so client libraries can surface a clear upgrade path.
