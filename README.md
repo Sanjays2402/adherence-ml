@@ -257,6 +257,35 @@ curl -L "http://localhost:3000/v1/runs/export?format=csv&kind=predict" \
   -o runs.csv
 ```
 
+**Full CRUD over the API.** Keys with the `predict` scope can now create,
+rename, retag, share, and delete individual runs without touching the
+browser. This turns `/v1/runs` into a complete contract you can wire into
+your own notebooks, ingestion jobs, or admin dashboards.
+
+```bash
+# create a run from an external job
+curl -X POST http://localhost:3000/v1/runs \
+  -H "authorization: Bearer adh_..." \
+  -H "content-type: application/json" \
+  -d '{"kind":"predict","title":"batch 42","payload":{"risk":0.31},"tags":["nightly"]}'
+
+# rename + retag
+curl -X PATCH http://localhost:3000/v1/runs/<id> \
+  -H "authorization: Bearer adh_..." \
+  -H "content-type: application/json" \
+  -d '{"title":"q3 baseline","tags":["billed","q3"]}'
+
+# mint (or revoke) a public share link
+curl -X POST http://localhost:3000/v1/runs/<id>/share \
+  -H "authorization: Bearer adh_..." \
+  -H "content-type: application/json" \
+  -d '{"enable":true}'
+
+# delete
+curl -X DELETE http://localhost:3000/v1/runs/<id> \
+  -H "authorization: Bearer adh_..."
+```
+
 
 Keys can be issued with an optional time-to-live (7, 30, 90, or 365 days,
 or `never`). Once a key passes its `expires_at`, every `/v1` endpoint
