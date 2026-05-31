@@ -153,7 +153,11 @@ def dispatch(
         # SSRF defense, re-evaluated on every dispatch so a subscription
         # whose DNS has been rebound to a private IP since creation is
         # blocked here and recorded as state='blocked'. No HTTP attempt.
-        decision = outbound_policy.evaluate(sub.url)
+        # Also re-checks the per-tenant outbound host allowlist so a
+        # tenant tightening its egress policy retroactively blocks its
+        # own previously-saved subscriptions.
+        sub_tenant = getattr(sub, "tenant_id", None) or "default"
+        decision = outbound_policy.evaluate(sub.url, tenant_id=sub_tenant)
         if not decision.allowed:
             try:
                 _ensure_table()

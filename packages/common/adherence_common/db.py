@@ -248,6 +248,10 @@ class WebhookSubscription(Base):
     secret_previous_expires_at = Column(DateTime, nullable=True)
     event_types_csv = Column(String(256), nullable=True)
     active = Column(Integer, nullable=False, default=1)
+    # Tenant that created the subscription. Dispatch re-evaluates the
+    # per-tenant outbound host allowlist against this value so a tenant
+    # narrowing its egress policy retroactively blocks its own old rows.
+    tenant_id = Column(String(64), nullable=False, default="default", index=True)
     created_by = Column(String(64), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -359,6 +363,30 @@ class TenantIpAllowlist(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     tenant_id = Column(String(64), index=True, nullable=False, default="default")
     cidr = Column(String(64), nullable=False)
+    label = Column(String(128), nullable=True)
+    created_by = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class TenantOutboundHostAllowlist(Base):
+    """Per-tenant allowlist of permitted outbound webhook destination hosts.
+
+    Mirrors :class:`TenantIpAllowlist` for the egress direction. When a
+    tenant has zero rows the per-tenant gate is OFF for that tenant
+    (the global :setting:`outbound_host_allowlist` still applies). When
+    at least one row exists, outbound webhook subscriptions owned by
+    that tenant may only point at hostnames that match a row, evaluated
+    both at subscription create/update time and on every dispatch.
+
+    Match semantics are the same as the global allowlist:
+    * ``api.example.com`` matches that host exactly.
+    * ``.example.com`` matches any subdomain of example.com but not the
+      bare apex.
+    """
+    __tablename__ = "tenant_outbound_host_allowlist"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(String(64), index=True, nullable=False, default="default")
+    host = Column(String(255), nullable=False)
     label = Column(String(128), nullable=True)
     created_by = Column(String(64), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -481,6 +509,15 @@ def _ensure_tenant_columns(engine) -> None:
                 conn.execute(text(
                     "ALTER TABLE webhook_subscriptions "
                     "ADD COLUMN secret_previous_expires_at DATETIME"
+                ))
+        # Tenant scoping for outbound subscriptions so dispatch can
+        # re-check the per-tenant host allowlist against the original
+        # creator's tenant on every send.
+        if "tenant_id" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE webhook_subscriptions "
+                    "ADD COLUMN tenant_id VARCHAR(64) NOT NULL DEFAULT 'default'"
                 ))
 
 

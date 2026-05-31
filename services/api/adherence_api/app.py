@@ -66,6 +66,9 @@ from adherence_api.routes import (
     outbound as outbound_route,
 )
 from adherence_api.routes import (
+    outbound_host_allowlist as outbound_host_allowlist_route,
+)
+from adherence_api.routes import (
     policies as policies_route,
 )
 from adherence_api.security_headers_middleware import SecurityHeadersMiddleware
@@ -157,6 +160,7 @@ def create_app() -> FastAPI:
     app.include_router(interventions_route.router)
     app.include_router(metrics_route.router)
     app.include_router(outbound_route.router)
+    app.include_router(outbound_host_allowlist_route.router)
     app.include_router(policies_route.router)
     app.include_router(mutes_route.router)
     app.include_router(gdpr_route.router)

@@ -140,8 +140,14 @@ def _ip_is_blocked(ip_str: str, allow_private: bool) -> str | None:
     return None
 
 
-def evaluate(url: str, *, settings=None) -> PolicyDecision:
-    """Evaluate a destination URL. Pure function, never raises."""
+def evaluate(url: str, *, tenant_id: str | None = None, settings=None) -> PolicyDecision:
+    """Evaluate a destination URL. Pure function, never raises.
+
+    When ``tenant_id`` is provided, the per-tenant outbound host
+    allowlist (see :mod:`adherence_common.outbound_host_allowlist`) is
+    also consulted. A tenant with zero rows leaves the per-tenant gate
+    off; a tenant with at least one row narrows the global policy.
+    """
     s = settings or get_settings()
     allow_private = bool(getattr(s, "outbound_allow_private", False))
     allow_http = bool(getattr(s, "outbound_allow_http", False))
@@ -175,6 +181,18 @@ def evaluate(url: str, *, settings=None) -> PolicyDecision:
     if allowlist and not _host_matches_allowlist(host_l, allowlist):
         return PolicyDecision(False, f"host {host_l!r} is not in outbound_host_allowlist")
 
+    # Per-tenant allowlist tightens the global gate. Import locally so
+    # this module stays usable in non-DB contexts (e.g. unit tests of
+    # the scheme/IP path).
+    if tenant_id:
+        try:
+            from adherence_common import outbound_host_allowlist as _tha
+            ok, reason = _tha.is_allowed(tenant_id, host_l)
+            if not ok:
+                return PolicyDecision(False, reason)
+        except Exception:  # pragma: no cover - never let the gate crash
+            pass
+
     # Resolve and check every address. If the literal is already an IP,
     # ``getaddrinfo`` returns it verbatim.
     ips = _resolve(host_l)
@@ -191,14 +209,16 @@ def evaluate(url: str, *, settings=None) -> PolicyDecision:
     return PolicyDecision(True, None, ips)
 
 
-def ensure_allowed(url: str, *, settings=None) -> PolicyDecision:
+def ensure_allowed(
+    url: str, *, tenant_id: str | None = None, settings=None
+) -> PolicyDecision:
     """Same as ``evaluate`` but raises ``OutboundPolicyError`` on refusal.
 
     Use this inside HTTP routes that should fail fast at subscription
     creation time. Returns the (allowed) decision on success so callers
     can record ``resolved_ips`` if they want.
     """
-    decision = evaluate(url, settings=settings)
+    decision = evaluate(url, tenant_id=tenant_id, settings=settings)
     if not decision.allowed:
         raise OutboundPolicyError(decision.reason or "destination blocked")
     return decision

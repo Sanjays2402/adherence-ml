@@ -2,6 +2,42 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Per-workspace outbound webhook host allowlist
+
+Workspace owners can now restrict outbound webhook destinations to a
+list of approved hostnames. Empty list keeps the deployment-wide
+policy in effect; one or more rows narrow the gate for that workspace
+only. Hostnames support exact match (`api.partner.com`) and a leading
+dot subdomain wildcard (`.partner.com`). Each rule is checked at both
+subscription create time and on every dispatch, so a tenant tightening
+its egress policy retroactively blocks its own existing subscriptions
+and the refusal lands in the webhook delivery log with `state=blocked`.
+Add, remove, and audit-log entries through `/v1/admin/outbound-host-allowlist`
+or the settings UI at `/settings/outbound-host-allowlist`. Cross-tenant
+isolation is verified in `tests/unit/test_outbound_host_allowlist.py`.
+
+### Try it
+
+```bash
+# List the current workspace allowlist (admin token required).
+curl -sS http://localhost:8000/v1/admin/outbound-host-allowlist \
+  -H "authorization: Bearer $ADMIN_TOKEN"
+
+# Add an approved partner hostname.
+curl -sS -X POST http://localhost:8000/v1/admin/outbound-host-allowlist \
+  -H "authorization: Bearer $ADMIN_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"host": "api.partner.com", "label": "prod partner"}'
+
+# Dry-run a destination URL against the active policy (global + tenant).
+curl -sS -X POST http://localhost:8000/v1/webhooks/outbound/policy/check \
+  -H "authorization: Bearer $ADMIN_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"url": "https://elsewhere.example/hook"}'
+```
+
+UI: <http://localhost:3000/settings/outbound-host-allowlist>.
+
 ## Break-glass logging for cross-tenant admin access
 
 Enterprise procurement reviewers (HIPAA, SOC2, ISO 27001) reject any
