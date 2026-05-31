@@ -239,6 +239,21 @@ key id, name, created date, last-used time, and total call count so charts
 and audit trails stay continuous, while the old secret stops working
 immediately. Revoked keys cannot be rotated; create a fresh one instead.
 
+**Bulk export from the API.** Keys with the `read` scope can stream the
+run log directly with `GET /v1/runs/export`, mirroring the History page
+exports (CSV, JSON, NDJSON) with the same `q`, `kind`, `tag`, `from`, and
+`to` filters. Wire it into cron, Sheets, or a BI pipeline without
+screen-scraping. Filenames carry the applied filter suffix and the
+`x-export-count` / `x-export-truncated` headers tell you exactly how many
+rows came back.
+
+```bash
+curl -L "http://localhost:3000/v1/runs/export?format=csv&kind=predict" \
+  -H "authorization: Bearer adh_..." \
+  -o runs.csv
+```
+
+
 Keys can be issued with an optional time-to-live (7, 30, 90, or 365 days,
 or `never`). Once a key passes its `expires_at`, every `/v1` endpoint
 refuses it with `401`, exactly like a revoked key, and the dashboard tags it

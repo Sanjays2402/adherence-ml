@@ -188,6 +188,10 @@ export default function KeysClient() {
   const curlMe = `curl http://localhost:3000/v1/keys/me \\
   -H "authorization: Bearer ${sampleKey}"`;
 
+  const curlExport = `curl -L 'http://localhost:3000/v1/runs/export?format=csv&kind=predict' \\
+  -H "authorization: Bearer ${sampleKey}" \\
+  -o runs.csv`;
+
   const curlBatch = `curl -X POST 'http://localhost:3000/v1/batch?format=csv' \\
   -H "authorization: Bearer ${sampleKey}" \\
   -H "content-type: text/csv" \\
@@ -519,6 +523,13 @@ export default function KeysClient() {
           </div>
           <pre className="text-[11px] font-mono p-3 rounded bg-[var(--color-surface)] border border-[var(--color-border)] overflow-x-auto whitespace-pre">
 {curlMe}
+          </pre>
+          <div className="flex items-center justify-between pt-2">
+            <span className="text-[11px] text-[var(--color-muted)]">GET /v1/runs/export (CSV, JSON, or NDJSON dump of your run history, requires read scope)</span>
+            <CopyBtn text={curlExport} label="copy curl" />
+          </div>
+          <pre className="text-[11px] font-mono p-3 rounded bg-[var(--color-surface)] border border-[var(--color-border)] overflow-x-auto whitespace-pre">
+{curlExport}
           </pre>
           <div className="flex items-center justify-between pt-2">
             <span className="text-[11px] text-[var(--color-muted)]">POST /v1/batch (CSV in, CSV or JSON out, one prediction per row counts against quota)</span>
