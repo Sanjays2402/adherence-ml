@@ -19,8 +19,31 @@ a notification queue with risk-tier policies, quiet hours, per-user mutes, and
 notification budgets. Every prediction, override, and delivery is recorded in
 an append-only audit log with CSV export.
 
+## Try it
+
+With the API on `:8000` and the web app on `:3000`, open
+[http://localhost:3000](http://localhost:3000) for the live demo landing page.
+Three preloaded patient scenarios (cardiac, psych, diabetic polypharmacy) post
+to `POST /v1/predict` and render miss probability, risk tier, latency, and
+SHAP reason codes against the calibrated ensemble.
+
+```bash
+curl -s http://localhost:8000/v1/predict \
+  -H 'content-type: application/json' \
+  -d '{
+    "user_id": "demo-cardio-001",
+    "doses": [
+      {"dose_id": "morning-bb",  "scheduled_at": "2026-06-01T08:00:00Z", "dose_class": "cardio", "dose_strength_mg": 25},
+      {"dose_id": "evening-statin", "scheduled_at": "2026-06-01T20:00:00Z", "dose_class": "cardio", "dose_strength_mg": 40}
+    ],
+    "top_k_reasons": 3
+  }' | jq .
+```
+
 ## Features
 
+- Landing demo (`/`) with three click-to-run patient scenarios, live miss
+  probability, risk tier bars, latency, and SHAP reason codes.
 - Cohort browser (`/cohort`) backed by `POST /v1/cohort/risk` with CSV export
   via `/v1/cohort/risk/export`.
 - Predict endpoint with batch variant (`POST /v1/predict`, `POST /v1/predict/batch`).

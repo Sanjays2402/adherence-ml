@@ -10,10 +10,12 @@ import {
   Pulse,
   UsersThree,
   ClipboardText,
+  House,
 } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
+  { href: "/", label: "Overview", icon: House, hint: "What this does" },
   { href: "/dashboard", label: "Performance", icon: ChartLine, hint: "AUC // Brier // ECE" },
   { href: "/cohort", label: "Cohort", icon: UsersThree, hint: "Population risk" },
   { href: "/explain", label: "Explainer", icon: Lightbulb, hint: "SHAP contributions" },
@@ -40,7 +42,10 @@ export default function Sidebar() {
       </div>
       <nav className="flex md:flex-col gap-0.5 p-2 overflow-x-auto md:overflow-x-visible scrollbar-thin">
         {NAV.map(({ href, label, icon: Icon, hint }) => {
-          const active = pathname === href || pathname.startsWith(`${href}/`);
+          const active =
+            href === "/"
+              ? pathname === "/"
+              : pathname === href || pathname.startsWith(`${href}/`);
           return (
             <Link
               key={href}
