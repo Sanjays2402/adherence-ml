@@ -38,6 +38,9 @@ class VerifiedDomainResponse(BaseModel):
     domain: str
     default_role: str
     auto_join_enabled: bool
+    status: str = Field(..., description="pending | verified")
+    verified_at: Optional[str] = None
+    txt_record: dict = Field(..., description="DNS TXT record the owner must publish to verify")
     added_by: Optional[str] = None
     added_at: str
     updated_at: str
@@ -67,6 +70,13 @@ def _to_resp(view: vd.VerifiedDomainView) -> VerifiedDomainResponse:
         domain=view.domain,
         default_role=view.default_role,
         auto_join_enabled=view.auto_join_enabled,
+        status=view.status,
+        verified_at=view.verified_at.isoformat() if view.verified_at else None,
+        txt_record={
+            "type": "TXT",
+            "name": view.txt_record_name,
+            "value": view.txt_record_value,
+        },
         added_by=view.added_by,
         added_at=view.added_at.isoformat(),
         updated_at=view.updated_at.isoformat(),
@@ -212,3 +222,123 @@ def delete_domain(
         request_id=_rid(request), tenant_id=tenant,
     )
     return _to_resp(view)
+
+
+class VerificationChallengeResponse(BaseModel):
+    domain: str
+    status: str
+    txt_record: dict
+    instructions: str
+
+
+@router.get("/{domain}/verification", response_model=VerificationChallengeResponse)
+def get_verification(
+    domain: str,
+    tenant: str = Depends(current_tenant),
+    _p=Depends(require_viewer),
+) -> VerificationChallengeResponse:
+    try:
+        d = vd.normalise_domain(domain)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    view = vd.get_domain(tenant, d)
+    if view is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "verified domain not found")
+    return VerificationChallengeResponse(
+        domain=view.domain,
+        status=view.status,
+        txt_record={
+            "type": "TXT",
+            "name": view.txt_record_name,
+            "value": view.txt_record_value,
+        },
+        instructions=(
+            f"Publish a DNS TXT record at {view.txt_record_name} with value "
+            f"{view.txt_record_value!r}, then POST /v1/workspace/verified-domains/"
+            f"{view.domain}/verify. Auto-join is disabled until verification succeeds."
+        ),
+    )
+
+
+class VerifyResponse(BaseModel):
+    ok: bool
+    domain: VerifiedDomainResponse
+
+
+@router.post("/{domain}/verify", response_model=VerifyResponse)
+def verify_domain(
+    domain: str,
+    request: Request,
+    tenant: str = Depends(current_tenant),
+    p=Depends(require_admin),
+) -> VerifyResponse:
+    try:
+        d = vd.normalise_domain(domain)
+    except ValueError as exc:
+        record_admin_action(
+            action="workspace.verified_domain.verify", principal=p, target=domain,
+            details=None, ok=False, error=str(exc),
+            request_id=_rid(request), tenant_id=tenant,
+        )
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+    if vd.get_domain(tenant, d) is None:
+        record_admin_action(
+            action="workspace.verified_domain.verify", principal=p, target=d,
+            details=None, ok=False, error="not_found",
+            request_id=_rid(request), tenant_id=tenant,
+        )
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "verified domain not found")
+
+    try:
+        view = vd.verify_domain_dns(tenant, d)
+    except vd.DnsVerificationError as exc:
+        reason = str(exc) or "dns_lookup_failed"
+        record_admin_action(
+            action="workspace.verified_domain.verify", principal=p, target=d,
+            details={"reason": reason}, ok=False, error=reason,
+            request_id=_rid(request), tenant_id=tenant,
+        )
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, reason)
+
+    record_admin_action(
+        action="workspace.verified_domain.verify", principal=p, target=d,
+        details={
+            "verified_at": view.verified_at.isoformat() if view.verified_at else None,
+            "auto_join_enabled": view.auto_join_enabled,
+        },
+        ok=True, request_id=_rid(request), tenant_id=tenant,
+    )
+    return VerifyResponse(ok=True, domain=_to_resp(view))
+
+
+class RotateTokenResponse(BaseModel):
+    ok: bool
+    domain: VerifiedDomainResponse
+
+
+@router.post("/{domain}/rotate-token", response_model=RotateTokenResponse)
+def rotate_token(
+    domain: str,
+    request: Request,
+    tenant: str = Depends(current_tenant),
+    p=Depends(require_admin),
+) -> RotateTokenResponse:
+    try:
+        d = vd.normalise_domain(domain)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    view = vd.rotate_verification_token(tenant, d)
+    if view is None:
+        record_admin_action(
+            action="workspace.verified_domain.rotate_token", principal=p, target=d,
+            details=None, ok=False, error="not_found",
+            request_id=_rid(request), tenant_id=tenant,
+        )
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "verified domain not found")
+    record_admin_action(
+        action="workspace.verified_domain.rotate_token", principal=p, target=d,
+        details={"status": view.status}, ok=True,
+        request_id=_rid(request), tenant_id=tenant,
+    )
+    return RotateTokenResponse(ok=True, domain=_to_resp(view))

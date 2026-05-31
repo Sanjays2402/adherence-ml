@@ -2,6 +2,50 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## DNS TXT verification for SSO auto-join domains
+
+Workspace owners can claim email domains for SSO auto-join (`acme.com` -> Acme workspace). Until this release a freshly claimed domain auto-joined inbound SSO sign-ins immediately, which meant any tenant could capture sign-ins for a domain they did not actually control. The API now refuses to honour a claim until the workspace owner publishes a TXT record at `_adherence-ml-verify.<domain>` carrying the per-claim secret `adherence-ml-verify=<token>`. `resolve_auto_join` only considers rows with `verified_at IS NOT NULL`, so the SSO exchange path (`POST /v1/admin/sso/exchange`) and every other caller honour the gate without per-route changes.
+
+Proven by `tests/unit/test_verified_domain_dns.py` (5 tests):
+
+- A claim with `auto_join_enabled=true` but no DNS proof never wins `resolve_auto_join`.
+- Publishing the correct TXT value flips the row to verified and unlocks auto-join end-to-end.
+- A missing TXT or mismatched token surfaces as `txt_not_found` / `token_mismatch_dns` and leaves the row pending.
+- `rotate_verification_token` mints a new secret and forces re-verification; the old TXT no longer wins.
+- Cross-tenant: workspace A's published TXT cannot verify workspace B's claim on the same domain; two verified claims on one domain refuse to pick a winner (no silent cross-tenant capture).
+
+### Try DNS verification
+
+Local API: <http://127.0.0.1:8000>.
+
+```bash
+# 1. Claim the domain. The response includes the TXT record to publish and status='pending'.
+curl -s -X POST http://127.0.0.1:8000/v1/workspace/verified-domains \
+  -H "authorization: Bearer $WORKSPACE_ADMIN_JWT" \
+  -H 'content-type: application/json' \
+  -d '{"domain":"acme.test","default_role":"viewer","auto_join_enabled":true}'
+# { ..., "status": "pending",
+#        "txt_record": { "type": "TXT",
+#                        "name": "_adherence-ml-verify.acme.test",
+#                        "value": "adherence-ml-verify=..." } }
+
+# 2. Re-fetch the challenge anytime (viewer scope is enough).
+curl -s http://127.0.0.1:8000/v1/workspace/verified-domains/acme.test/verification \
+  -H "authorization: Bearer $WORKSPACE_VIEWER_JWT"
+
+# 3. Publish the TXT record at your DNS provider, then trigger verification.
+curl -s -X POST http://127.0.0.1:8000/v1/workspace/verified-domains/acme.test/verify \
+  -H "authorization: Bearer $WORKSPACE_ADMIN_JWT"
+# 422 { "detail": "txt_not_found" }     # before you publish
+# 200 { "ok": true, "domain": { "status": "verified", ... } }
+
+# 4. If a token leaks, rotate it. Auto-join pauses until you re-verify the new value.
+curl -s -X POST http://127.0.0.1:8000/v1/workspace/verified-domains/acme.test/rotate-token \
+  -H "authorization: Bearer $WORKSPACE_ADMIN_JWT"
+```
+
+Every transition (`add`, `verify`, `rotate_token`, `remove`) writes a row to the admin audit log so SOC2 reviewers can trace exactly which principal proved control of which domain and when.
+
 ## Authenticated webhook admin console with audit-logged mutations
 
 Dashboard-side webhook management (`/api/webhooks/*`) previously accepted unauthenticated requests, which would have failed an enterprise SOC2 review on first sweep. Every endpoint that lists, creates, toggles, deletes, test-fires, replays, or exports webhook data now requires a signed dashboard session and lands a row in the tamper-evident dashboard audit log (`recordAudit`). The new `/workspace/webhooks` page is a single console where an owner can register HMAC-signed outbound endpoints, browse the full delivery log with per-attempt status codes and durations, replay any failed delivery, send a `test.ping`, and export the last 500 attempts as CSV for an external SIEM.

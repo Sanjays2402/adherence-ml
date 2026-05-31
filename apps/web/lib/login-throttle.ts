@@ -59,9 +59,27 @@ interface Store {
   buckets: Bucket[];
 }
 
+interface PolicyStore {
+  version: 1;
+  policies: Partial<Record<ThrottleScope, ThrottlePolicy>>;
+  updated_at: number | null;
+  updated_by: string | null;
+}
+
+/**
+ * Hard caps so a misconfiguration cannot disable the throttle entirely
+ * (e.g. maxAttempts=1_000_000) or pin a victim out forever.
+ */
+export const POLICY_BOUNDS = {
+  windowMs: { min: 60_000, max: 24 * 60 * 60 * 1000 },         // 1 min .. 24 h
+  maxAttempts: { min: 1, max: 50 },
+  lockoutMs: { min: 60_000, max: 24 * 60 * 60 * 1000 },
+} as const;
+
 const DATA_DIR =
   process.env.ADHERENCE_DATA_DIR ?? path.join(process.cwd(), ".data");
 const STORE_PATH = path.join(DATA_DIR, "login-throttle.json");
+const POLICY_PATH = path.join(DATA_DIR, "login-throttle-policy.json");
 
 function ensureDir() {
   if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
@@ -98,8 +116,119 @@ function classify(key: string): "email" | "ip" {
   return key.includes("@") ? "email" : "ip";
 }
 
+// In-memory cache of overrides, refreshed from disk on every read so a
+// concurrent admin update is honoured by the next throttle check without
+// requiring a process restart.
+let policyCache: PolicyStore | null = null;
+
+async function readPolicyStore(): Promise<PolicyStore> {
+  ensureDir();
+  if (!existsSync(POLICY_PATH)) {
+    return { version: 1, policies: {}, updated_at: null, updated_by: null };
+  }
+  try {
+    const raw = await fs.readFile(POLICY_PATH, "utf8");
+    const parsed = JSON.parse(raw) as PolicyStore;
+    if (!parsed || parsed.version !== 1) {
+      return { version: 1, policies: {}, updated_at: null, updated_by: null };
+    }
+    return {
+      version: 1,
+      policies: parsed.policies ?? {},
+      updated_at: parsed.updated_at ?? null,
+      updated_by: parsed.updated_by ?? null,
+    };
+  } catch {
+    return { version: 1, policies: {}, updated_at: null, updated_by: null };
+  }
+}
+
+async function writePolicyStore(store: PolicyStore): Promise<void> {
+  ensureDir();
+  const body = JSON.stringify(store, null, 2);
+  writeQueue = writeQueue.then(() => fs.writeFile(POLICY_PATH, body, "utf8"));
+  await writeQueue;
+  policyCache = store;
+}
+
+function clampPolicy(p: ThrottlePolicy): ThrottlePolicy {
+  const clamp = (n: number, lo: number, hi: number) =>
+    Math.min(hi, Math.max(lo, Math.floor(n)));
+  return {
+    windowMs: clamp(p.windowMs, POLICY_BOUNDS.windowMs.min, POLICY_BOUNDS.windowMs.max),
+    maxAttempts: clamp(p.maxAttempts, POLICY_BOUNDS.maxAttempts.min, POLICY_BOUNDS.maxAttempts.max),
+    lockoutMs: clamp(p.lockoutMs, POLICY_BOUNDS.lockoutMs.min, POLICY_BOUNDS.lockoutMs.max),
+  };
+}
+
+export interface EffectivePolicy extends ThrottlePolicy {
+  scope: ThrottleScope;
+  source: "default" | "override";
+}
+
+export interface PolicyView {
+  policies: Record<ThrottleScope, EffectivePolicy>;
+  bounds: typeof POLICY_BOUNDS;
+  updated_at: number | null;
+  updated_by: string | null;
+}
+
+/**
+ * Synchronous policy lookup. Uses the cached overrides if any have been
+ * loaded; the hot path on throttle checks calls `loadPolicies()` first
+ * so the cache is fresh on every request.
+ */
 function policyFor(scope: ThrottleScope): ThrottlePolicy {
+  const override = policyCache?.policies?.[scope];
+  if (override) return clampPolicy(override);
   return DEFAULT_POLICIES[scope];
+}
+
+/** Refresh the in-memory policy cache from disk. */
+async function loadPolicies(): Promise<PolicyStore> {
+  const s = await readPolicyStore();
+  policyCache = s;
+  return s;
+}
+
+/** Public: return the effective per-scope policy + override metadata. */
+export async function getPolicies(): Promise<PolicyView> {
+  const s = await loadPolicies();
+  const out: Record<ThrottleScope, EffectivePolicy> = {} as never;
+  (Object.keys(DEFAULT_POLICIES) as ThrottleScope[]).forEach((scope) => {
+    const override = s.policies[scope];
+    out[scope] = override
+      ? { scope, source: "override", ...clampPolicy(override) }
+      : { scope, source: "default", ...DEFAULT_POLICIES[scope] };
+  });
+  return { policies: out, bounds: POLICY_BOUNDS, updated_at: s.updated_at, updated_by: s.updated_by };
+}
+
+/**
+ * Public: replace overrides. Pass `null` for a scope to revert it to
+ * the built-in default. Values outside POLICY_BOUNDS are clamped.
+ */
+export async function setPolicies(
+  updates: Partial<Record<ThrottleScope, ThrottlePolicy | null>>,
+  actor: string | null,
+): Promise<PolicyView> {
+  const current = await loadPolicies();
+  const next: PolicyStore = {
+    version: 1,
+    policies: { ...current.policies },
+    updated_at: Date.now(),
+    updated_by: actor,
+  };
+  (Object.keys(updates) as ThrottleScope[]).forEach((scope) => {
+    const val = updates[scope];
+    if (val === null) {
+      delete next.policies[scope];
+    } else if (val) {
+      next.policies[scope] = clampPolicy(val);
+    }
+  });
+  await writePolicyStore(next);
+  return getPolicies();
 }
 
 function pruneExpired(buckets: Bucket[], now: number): Bucket[] {
@@ -128,6 +257,7 @@ export async function checkLockout(
   key: string,
 ): Promise<CheckResult> {
   const now = Date.now();
+  await loadPolicies();
   const store = await readStore();
   const id = bucketId(scope, key);
   const b = store.buckets.find((x) => bucketId(x.scope, x.key) === id);
@@ -160,6 +290,7 @@ export async function recordFailure(
   key: string,
 ): Promise<CheckResult> {
   const now = Date.now();
+  await loadPolicies();
   const pol = policyFor(scope);
   const store = await readStore();
   store.buckets = pruneExpired(store.buckets, now);
@@ -217,6 +348,7 @@ export async function listBuckets(opts?: {
   onlyLocked?: boolean;
 }): Promise<Bucket[]> {
   const now = Date.now();
+  await loadPolicies();
   const store = await readStore();
   store.buckets = pruneExpired(store.buckets, now);
   await writeStore(store);
@@ -246,6 +378,10 @@ export async function clearByAdmin(
 export async function __resetForTests(): Promise<void> {
   if (process.env.NODE_ENV !== "test" && !process.env.VITEST) return;
   await writeStore({ version: 1, buckets: [] });
+  await writePolicyStore({
+    version: 1, policies: {}, updated_at: null, updated_by: null,
+  });
+  policyCache = null;
 }
 
 export function clientIpFromRequest(req: Request): string {

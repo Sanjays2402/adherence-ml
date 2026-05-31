@@ -29,9 +29,10 @@ boundary and the helper layer.
 from __future__ import annotations
 
 import re
+import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Callable, Iterable, Optional
 
 from sqlalchemy import (
     Boolean,
@@ -74,9 +75,66 @@ class VerifiedDomain(Base):
     domain = Column(String(253), index=True, nullable=False)
     default_role = Column(String(16), nullable=False, default="viewer")
     auto_join_enabled = Column(Boolean, nullable=False, default=True)
+    # DNS TXT verification. ``verification_token`` is the random secret
+    # the workspace owner must publish at ``_adherence-ml-verify.<domain>``
+    # as ``adherence-ml-verify=<token>``. Until ``verified_at`` is set
+    # the row is *pending* and :func:`resolve_auto_join` ignores it, so
+    # an unverified claim cannot capture inbound SSO sign-ins for a
+    # domain the workspace does not actually control.
+    verification_token = Column(String(64), nullable=False, default="")
+    verified_at = Column(DateTime, nullable=True)
     added_by = Column(String(128), nullable=True)
     added_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+# ---------------------------------------------------------------------------
+# DNS verification constants & helpers
+# ---------------------------------------------------------------------------
+
+TXT_HOST_PREFIX = "_adherence-ml-verify"
+TXT_VALUE_PREFIX = "adherence-ml-verify="
+
+
+def _new_token() -> str:
+    return secrets.token_hex(16)
+
+
+class DnsVerificationError(Exception):
+    """Raised when DNS lookup or TXT match fails.
+
+    Reasons: ``txt_not_found``, ``token_mismatch_dns``, ``dns_lookup_failed``,
+    ``not_found``.
+    """
+
+
+TxtResolver = Callable[[str], Iterable[str]]
+
+
+def _default_txt_resolver(name: str) -> list[str]:
+    """Live DNS lookup; lazy import keeps dnspython a soft dependency."""
+    try:
+        import dns.resolver  # type: ignore
+    except Exception as exc:  # pragma: no cover
+        raise DnsVerificationError("dns_lookup_failed") from exc
+    try:
+        answers = dns.resolver.resolve(name, "TXT", lifetime=5.0)
+    except Exception as exc:
+        msg = exc.__class__.__name__
+        if msg in {"NXDOMAIN", "NoAnswer", "NoNameservers"}:
+            raise DnsVerificationError("txt_not_found") from exc
+        raise DnsVerificationError("dns_lookup_failed") from exc
+    out: list[str] = []
+    for rdata in answers:
+        try:
+            for chunk in rdata.strings:  # type: ignore[attr-defined]
+                if isinstance(chunk, bytes):
+                    out.append(chunk.decode("utf-8", errors="replace"))
+                else:
+                    out.append(str(chunk))
+        except Exception:
+            out.append(str(rdata))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +166,14 @@ def _domain_of(email: str) -> str:
     return email.rsplit("@", 1)[1].strip().lower()
 
 
+def dns_txt_name(domain: str) -> str:
+    return f"{TXT_HOST_PREFIX}.{normalise_domain(domain)}"
+
+
+def dns_txt_value(token: str) -> str:
+    return f"{TXT_VALUE_PREFIX}{token}"
+
+
 @dataclass(frozen=True)
 class VerifiedDomainView:
     id: int
@@ -115,9 +181,23 @@ class VerifiedDomainView:
     domain: str
     default_role: str
     auto_join_enabled: bool
+    verification_token: str
+    verified_at: Optional[datetime]
     added_by: Optional[str]
     added_at: datetime
     updated_at: datetime
+
+    @property
+    def status(self) -> str:
+        return "verified" if self.verified_at is not None else "pending"
+
+    @property
+    def txt_record_name(self) -> str:
+        return dns_txt_name(self.domain)
+
+    @property
+    def txt_record_value(self) -> str:
+        return dns_txt_value(self.verification_token)
 
 
 def _to_view(row: VerifiedDomain) -> VerifiedDomainView:
@@ -127,6 +207,8 @@ def _to_view(row: VerifiedDomain) -> VerifiedDomainView:
         domain=str(row.domain),
         default_role=str(row.default_role),
         auto_join_enabled=bool(row.auto_join_enabled),
+        verification_token=str(row.verification_token or ""),
+        verified_at=row.verified_at,
         added_by=row.added_by,
         added_at=row.added_at,
         updated_at=row.updated_at,
@@ -192,11 +274,98 @@ def add_domain(
             domain=d,
             default_role=role,
             auto_join_enabled=auto_join_enabled,
+            verification_token=_new_token(),
+            verified_at=None,
             added_by=added_by,
             added_at=now,
             updated_at=now,
         )
         db.add(row)
+        db.commit()
+        db.refresh(row)
+        return _to_view(row)
+
+
+def rotate_verification_token(
+    tenant_id: str, domain: str
+) -> Optional[VerifiedDomainView]:
+    """Mint a new TXT verification token and reset the row to pending.
+
+    Useful if a previously published TXT record leaked or the owner
+    wants to start fresh. Auto-join is paused until the new token is
+    proved via :func:`verify_domain_dns`.
+    """
+    d = normalise_domain(domain)
+    with session() as db:
+        row = db.execute(
+            select(VerifiedDomain).where(
+                VerifiedDomain.tenant_id == tenant_id,
+                VerifiedDomain.domain == d,
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            return None
+        row.verification_token = _new_token()
+        row.verified_at = None
+        row.updated_at = _now()
+        db.commit()
+        db.refresh(row)
+        return _to_view(row)
+
+
+def verify_domain_dns(
+    tenant_id: str,
+    domain: str,
+    *,
+    resolver: Optional[TxtResolver] = None,
+) -> VerifiedDomainView:
+    """Look up the TXT record at ``_adherence-ml-verify.<domain>`` and
+    flip the row to verified if ``adherence-ml-verify=<token>`` is
+    present and matches the stored token for ``(tenant, domain)``.
+
+    Raises :class:`DnsVerificationError` (reasons ``txt_not_found``,
+    ``token_mismatch_dns``, ``dns_lookup_failed``, ``not_found``) on
+    failure. Idempotent once verified.
+    """
+    d = normalise_domain(domain)
+    with session() as db:
+        row = db.execute(
+            select(VerifiedDomain).where(
+                VerifiedDomain.tenant_id == tenant_id,
+                VerifiedDomain.domain == d,
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            raise DnsVerificationError("not_found")
+        if row.verified_at is not None:
+            return _to_view(row)
+        token = str(row.verification_token or "")
+        if not token:
+            row.verification_token = _new_token()
+            db.commit()
+            db.refresh(row)
+            raise DnsVerificationError("txt_not_found")
+
+    name = dns_txt_name(d)
+    expected = dns_txt_value(token)
+    resolve = resolver or _default_txt_resolver
+    txts = list(resolve(name))
+    if not txts:
+        raise DnsVerificationError("txt_not_found")
+    if expected not in txts:
+        raise DnsVerificationError("token_mismatch_dns")
+
+    with session() as db:
+        row = db.execute(
+            select(VerifiedDomain).where(
+                VerifiedDomain.tenant_id == tenant_id,
+                VerifiedDomain.domain == d,
+            )
+        ).scalar_one_or_none()
+        if row is None:  # pragma: no cover - racing delete
+            raise DnsVerificationError("not_found")
+        row.verified_at = _now()
+        row.updated_at = _now()
         db.commit()
         db.refresh(row)
         return _to_view(row)
@@ -275,6 +444,7 @@ def resolve_auto_join(email: str) -> Optional[AutoJoinResolution]:
                 select(VerifiedDomain).where(
                     VerifiedDomain.domain == d,
                     VerifiedDomain.auto_join_enabled.is_(True),
+                    VerifiedDomain.verified_at.is_not(None),
                 )
             )
             .scalars()
