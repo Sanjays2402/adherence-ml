@@ -31,7 +31,9 @@ from adherence_api.dry_run import dry_run_response
 from adherence_api.routes.admin_mfa import require_admin_mfa
 from adherence_common.admin_audit import record_admin_action
 from adherence_common.api_key_policy import (
+    MAX_MAX_ACTIVE_KEYS,
     MAX_MAX_TTL_SECONDS,
+    MIN_MAX_ACTIVE_KEYS,
     MIN_MAX_TTL_SECONDS,
     clear_policy,
     get_policy,
@@ -62,10 +64,22 @@ class PolicyOut(BaseModel):
             "ttl_seconds must be supplied on create."
         ),
     )
+    max_active_keys: Optional[int] = Field(
+        None,
+        description=(
+            "Optional admin-configured cap on the number of "
+            "simultaneously-active API keys (not revoked, not expired) "
+            "in this workspace. None means no cap and only the plan "
+            "seat ceiling applies. When set, api_key.create is rejected "
+            "with HTTP 400 once the count reaches the cap."
+        ),
+    )
     updated_at: Optional[int] = None
     updated_by: Optional[str] = None
     min_allowed_seconds: int = MIN_MAX_TTL_SECONDS
     max_allowed_seconds: int = MAX_MAX_TTL_SECONDS
+    min_allowed_active_keys: int = MIN_MAX_ACTIVE_KEYS
+    max_allowed_active_keys: int = MAX_MAX_ACTIVE_KEYS
 
 
 class PolicyIn(BaseModel):
@@ -86,6 +100,15 @@ class PolicyIn(BaseModel):
             "those that do declare an expiry."
         ),
     )
+    max_active_keys: Optional[int] = Field(
+        None,
+        ge=MIN_MAX_ACTIVE_KEYS,
+        le=MAX_MAX_ACTIVE_KEYS,
+        description=(
+            "Optional cap on simultaneously-active keys in this workspace. "
+            "Omit or set to null to leave the cap unset (plan seats still apply)."
+        ),
+    )
 
 
 def _view(tenant_id: str) -> PolicyOut:
@@ -96,6 +119,7 @@ def _view(tenant_id: str) -> PolicyOut:
         tenant_id=pv.tenant_id,
         max_ttl_seconds=pv.max_ttl_seconds,
         require_expiry=pv.require_expiry,
+        max_active_keys=pv.max_active_keys,
         updated_at=pv.updated_at,
         updated_by=pv.updated_by,
     )
@@ -127,6 +151,7 @@ def write_policy(
             details={
                 "max_ttl_seconds": body.max_ttl_seconds,
                 "require_expiry": body.require_expiry,
+                "max_active_keys": body.max_active_keys,
                 "dry_run": True,
             },
             request_id=_rid(request),
@@ -137,6 +162,7 @@ def write_policy(
                 tenant_id=tenant,
                 max_ttl_seconds=body.max_ttl_seconds,
                 require_expiry=body.require_expiry,
+                max_active_keys=body.max_active_keys,
             )
         )
     try:
@@ -144,6 +170,7 @@ def write_policy(
             tenant,
             max_ttl_seconds=body.max_ttl_seconds,
             require_expiry=body.require_expiry,
+            max_active_keys=body.max_active_keys,
             updated_by=caller,
         )
     except ValueError as exc:
@@ -154,6 +181,7 @@ def write_policy(
             details={
                 "max_ttl_seconds": body.max_ttl_seconds,
                 "require_expiry": body.require_expiry,
+                "max_active_keys": body.max_active_keys,
             },
             ok=False,
             error=str(exc),
@@ -169,6 +197,7 @@ def write_policy(
         details={
             "max_ttl_seconds": pv.max_ttl_seconds,
             "require_expiry": pv.require_expiry,
+            "max_active_keys": pv.max_active_keys,
         },
         request_id=_rid(request),
     )
@@ -176,6 +205,7 @@ def write_policy(
         tenant_id=pv.tenant_id,
         max_ttl_seconds=pv.max_ttl_seconds,
         require_expiry=pv.require_expiry,
+        max_active_keys=pv.max_active_keys,
         updated_at=pv.updated_at,
         updated_by=pv.updated_by,
     )

@@ -24,6 +24,14 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import Boolean, Column, Integer, String, select
+
+# When set the workspace caps how many simultaneously-active API keys may
+# exist (not revoked, not expired). 0 is reserved for "no cap" but the
+# public API treats ``None``/missing as the disabled state. Floor of 1
+# keeps the workspace usable; ceiling of 10_000 is well above the largest
+# enterprise plan seat count.
+MIN_MAX_ACTIVE_KEYS = 1
+MAX_MAX_ACTIVE_KEYS = 10_000
 from sqlalchemy.exc import SQLAlchemyError
 
 from adherence_common.db import Base, session
@@ -47,6 +55,11 @@ class WorkspaceAPIKeyPolicy(Base):
     tenant_id = Column(String(64), primary_key=True)
     max_ttl_seconds = Column(Integer, nullable=False)
     require_expiry = Column(Boolean, nullable=False, default=True)
+    # Optional cap on the number of simultaneously-active API keys in
+    # this workspace. ``None`` means no cap is enforced (only plan seats
+    # apply). When set, ``enforce_active_key_count`` rejects ``api_key.create``
+    # for the tenant with HTTP 400 once the count reaches the cap.
+    max_active_keys = Column(Integer, nullable=True)
     updated_at = Column(Integer, nullable=False)
     updated_by = Column(String(128), nullable=True)
 
@@ -56,6 +69,7 @@ class PolicyView:
     tenant_id: str
     max_ttl_seconds: int
     require_expiry: bool
+    max_active_keys: Optional[int]
     updated_at: int
     updated_by: Optional[str]
 
@@ -65,10 +79,12 @@ def _now_ts() -> int:
 
 
 def _to_view(row: WorkspaceAPIKeyPolicy) -> PolicyView:
+    mak = getattr(row, "max_active_keys", None)
     return PolicyView(
         tenant_id=str(row.tenant_id),
         max_ttl_seconds=int(row.max_ttl_seconds),
         require_expiry=bool(row.require_expiry),
+        max_active_keys=(int(mak) if mak is not None else None),
         updated_at=int(row.updated_at),
         updated_by=(str(row.updated_by) if row.updated_by else None),
     )
@@ -96,6 +112,7 @@ def set_policy(
     *,
     max_ttl_seconds: int,
     require_expiry: bool = True,
+    max_active_keys: int | None = None,
     updated_by: str | None = None,
 ) -> PolicyView:
     """Insert or update the tenant policy. Returns the resulting view.
@@ -115,6 +132,17 @@ def set_policy(
             f"max_ttl_seconds must be between {MIN_MAX_TTL_SECONDS} "
             f"and {MAX_MAX_TTL_SECONDS}"
         )
+    if max_active_keys is not None:
+        if not isinstance(max_active_keys, int):
+            raise ValueError("max_active_keys must be an integer or None")
+        if (
+            max_active_keys < MIN_MAX_ACTIVE_KEYS
+            or max_active_keys > MAX_MAX_ACTIVE_KEYS
+        ):
+            raise ValueError(
+                f"max_active_keys must be between {MIN_MAX_ACTIVE_KEYS} "
+                f"and {MAX_MAX_ACTIVE_KEYS}"
+            )
     tid = str(tenant_id)[:64]
     now = _now_ts()
     with session() as s:
@@ -128,6 +156,7 @@ def set_policy(
                 tenant_id=tid,
                 max_ttl_seconds=int(max_ttl_seconds),
                 require_expiry=bool(require_expiry),
+                max_active_keys=(int(max_active_keys) if max_active_keys is not None else None),
                 updated_at=now,
                 updated_by=(str(updated_by)[:128] if updated_by else None),
             )
@@ -135,6 +164,7 @@ def set_policy(
         else:
             row.max_ttl_seconds = int(max_ttl_seconds)
             row.require_expiry = bool(require_expiry)
+            row.max_active_keys = (int(max_active_keys) if max_active_keys is not None else None)
             row.updated_at = now
             row.updated_by = (str(updated_by)[:128] if updated_by else None)
         s.commit()
@@ -226,14 +256,87 @@ def enforce_key_ttl(tenant_id: str, ttl_seconds: int | None) -> None:
         )
 
 
+class ActiveKeyLimitExceeded(ValueError):
+    """Raised by :func:`enforce_active_key_count` when the workspace has
+    already reached its admin-configured cap of simultaneously-active
+    API keys. Carries the cap and current count so route layers can
+    surface a precise structured error without re-querying.
+
+    This is distinct from :class:`adherence_common.quota.SeatLimitExceeded`,
+    which enforces the plan-level seat ceiling. The active-key cap is a
+    workspace-admin tightening that sits *below* the plan seat count, so
+    a 100-seat plan can be locked to (for example) 5 active keys in a
+    production tenant without changing billing.
+    """
+
+    def __init__(
+        self,
+        tenant_id: str,
+        *,
+        active: int,
+        max_active_keys: int,
+    ) -> None:
+        self.tenant_id = tenant_id
+        self.active = active
+        self.max_active_keys = max_active_keys
+        super().__init__(
+            f"workspace {tenant_id!r} has reached its admin-configured "
+            f"active-key cap ({active}/{max_active_keys}); revoke an "
+            f"existing key before issuing another"
+        )
+
+
+def enforce_active_key_count(tenant_id: str) -> None:
+    """Reject ``api_key.create`` when the workspace is at or above the
+    admin-configured ``max_active_keys`` cap.
+
+    No policy on file, or policy with ``max_active_keys`` unset -> no-op.
+    Defensive against backend failure: a lookup error logs and returns
+    (fail-open) to avoid wedging key creation if the policy store is
+    temporarily unavailable, matching :func:`enforce_key_ttl`.
+    """
+    try:
+        policy = get_policy(tenant_id)
+    except Exception as exc:  # pragma: no cover - defensive
+        log.warning(
+            "api_key_policy_active_count_lookup_failed",
+            tenant=tenant_id, error=str(exc),
+        )
+        return
+    if policy is None or policy.max_active_keys is None:
+        return
+    # Late import to avoid a cycle: quota imports api_keys which transits
+    # several modules that ultimately want settings; api_key_policy is
+    # imported early during init_db.
+    from adherence_common.quota import seat_usage  # noqa: WPS433
+    try:
+        active = int(seat_usage(tenant_id))
+    except Exception as exc:  # pragma: no cover - defensive
+        log.warning(
+            "api_key_policy_active_count_query_failed",
+            tenant=tenant_id, error=str(exc),
+        )
+        return
+    if active >= int(policy.max_active_keys):
+        raise ActiveKeyLimitExceeded(
+            str(tenant_id),
+            active=active,
+            max_active_keys=int(policy.max_active_keys),
+        )
+
+
 __all__ = [
     "MIN_MAX_TTL_SECONDS",
     "MAX_MAX_TTL_SECONDS",
+    "MIN_MAX_ACTIVE_KEYS",
+    "MAX_MAX_ACTIVE_KEYS",
     "WorkspaceAPIKeyPolicy",
     "PolicyView",
     "PolicyViolation",
+    "ActiveKeyLimitExceeded",
     "get_policy",
     "set_policy",
     "clear_policy",
     "enforce_key_ttl",
+    "enforce_active_key_count",
 ]

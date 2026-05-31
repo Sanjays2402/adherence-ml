@@ -578,6 +578,17 @@ def _ensure_tenant_columns(engine) -> None:
                         "), 'default')"
                     ))
 
+    # Workspace API key policy: optional admin-set cap on the number of
+    # simultaneously-active keys (added after the original release).
+    if "workspace_api_key_policy" in existing_tables:
+        cols = {c["name"] for c in insp.get_columns("workspace_api_key_policy")}
+        if "max_active_keys" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE workspace_api_key_policy "
+                    "ADD COLUMN max_active_keys INTEGER"
+                ))
+
 
 def init_db() -> None:
     # Ensure ORM models from sibling modules are imported so their tables

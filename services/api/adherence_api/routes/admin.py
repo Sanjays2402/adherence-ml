@@ -3,7 +3,12 @@ from __future__ import annotations
 
 from adherence_common import api_keys as ak
 from adherence_common.admin_audit import list_admin_actions, record_admin_action
-from adherence_common.api_key_policy import PolicyViolation, enforce_key_ttl
+from adherence_common.api_key_policy import (
+    ActiveKeyLimitExceeded,
+    PolicyViolation,
+    enforce_active_key_count,
+    enforce_key_ttl,
+)
 from adherence_common.auth import mint_jwt
 from adherence_common.quota import SeatLimitExceeded, enforce_seat_capacity
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -183,6 +188,31 @@ def create_api_key(
                 "max_ttl_seconds": exc.max_ttl_seconds,
                 "require_expiry": exc.require_expiry,
                 "requested_ttl_seconds": exc.requested_ttl_seconds,
+            },
+        ) from exc
+    try:
+        enforce_active_key_count(target_tenant)
+    except ActiveKeyLimitExceeded as exc:
+        record_admin_action(
+            action="api_key.create", principal=p, target=body.name,
+            details={
+                "role": body.role, "scopes": body.scopes,
+                "tenant_id": target_tenant,
+                "active_keys": exc.active,
+                "max_active_keys": exc.max_active_keys,
+            },
+            ok=False, error="active_key_limit_exceeded",
+            request_id=_rid(request),
+            tenant_id=target_tenant,
+        )
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "active_key_limit_exceeded",
+                "message": str(exc),
+                "tenant_id": exc.tenant_id,
+                "active_keys": exc.active,
+                "max_active_keys": exc.max_active_keys,
             },
         ) from exc
     try:
