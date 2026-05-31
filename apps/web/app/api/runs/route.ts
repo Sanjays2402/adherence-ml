@@ -7,6 +7,7 @@ import {
   type RunKind,
   type RunRecord,
 } from "@/lib/runs-store";
+import { emit } from "@/lib/webhook-dispatch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -52,6 +53,18 @@ export async function POST(req: NextRequest) {
     tags: parsed.data.tags ?? [],
   };
   await appendRun(rec);
+  // fire-and-forget webhook fanout; never blocks the response
+  void emit("run.created", {
+    id: rec.id,
+    kind: rec.kind,
+    title: rec.title,
+    summary: rec.summary,
+    user_id: rec.user_id,
+    latency_ms: rec.latency_ms,
+    tags: rec.tags,
+    created_at: rec.created_at,
+    url: `/history/${rec.id}`,
+  });
   return NextResponse.json({ id: rec.id, created_at: rec.created_at }, { status: 201 });
 }
 

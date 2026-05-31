@@ -28,6 +28,35 @@ limit is reached the endpoint returns `429` with `x-quota-*` headers and an
 breakdown at [http://localhost:3000/usage](http://localhost:3000/usage).
 Every 200 response carries `x-quota-limit`, `x-quota-used`, and
 `x-quota-remaining` so clients can back off before getting throttled.
+### Webhooks
+
+Register an HTTP endpoint and adherence.ml will POST a signed JSON envelope to
+it every time a run is recorded. Useful for piping risk scores into Slack,
+your own analytics, or a downstream nudge engine. Manage endpoints at
+[http://localhost:3000/webhooks](http://localhost:3000/webhooks). Endpoints,
+attempt history, and counters live in `apps/web/.data/webhooks.json`. The
+signing secret is shown exactly once at creation; only a SHA-256 hash is
+persisted. Failed deliveries retry with exponential backoff (4 attempts over
+~40s) and the last 500 attempts are kept in a delivery log.
+
+Signature header: `X-Adherence-Signature: t=<unix>,v1=<hex>` where
+`v1 = HMAC_SHA256(secret_hash, t + "." + raw_body)`. Receivers should reject
+requests where `|now - t| > 300s`.
+
+```bash
+# 1. register an endpoint, copy the returned `secret`
+curl -X POST http://localhost:3000/api/webhooks \
+  -H "content-type: application/json" \
+  -d '{"name":"slack relay","url":"https://example.com/hooks/adherence"}'
+
+# 2. trigger a real delivery by creating any run
+curl -X POST http://localhost:3000/api/runs \
+  -H "content-type: application/json" \
+  -d '{"kind":"demo","title":"hello","payload":{}}'
+
+# 3. tail the delivery log
+curl http://localhost:3000/api/webhooks/deliveries | jq
+```
 
 ### API keys
 

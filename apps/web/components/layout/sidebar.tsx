@@ -15,6 +15,7 @@ import {
   ClockCounterClockwise,
   Key,
   Gauge,
+  Plugs,
   House,
   Sparkle,
   UploadSimple,
@@ -36,6 +37,7 @@ const NAV = [
   { href: "/history", label: "History", icon: ClockCounterClockwise, hint: "Saved runs" },
   { href: "/api-keys", label: "API keys", icon: Key, hint: "Programmatic access" },
   { href: "/usage", label: "Usage", icon: Gauge, hint: "Quota // billing" },
+  { href: "/webhooks", label: "Webhooks", icon: Plugs, hint: "Outbound deliveries" },
 ];
 
 export default function Sidebar() {
