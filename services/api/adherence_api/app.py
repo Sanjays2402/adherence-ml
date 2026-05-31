@@ -11,7 +11,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from adherence_api.body_size_middleware import BodySizeLimitMiddleware
 from adherence_api.middleware import RequestIdMiddleware
+from adherence_api.ip_allowlist_middleware import IpAllowlistMiddleware
 from adherence_api.ratelimit_middleware import RateLimitMiddleware
+from adherence_api.routes import ip_allowlist as ip_allowlist_route
 from adherence_api.routes import (
     admin,
     cohort,
@@ -104,6 +106,16 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(RateLimitMiddleware, settings=s)
+    # IP allowlist gates tenant-bound traffic. Health/metrics/docs stay
+    # exempt so locking down a tenant never bricks operator probes.
+    app.add_middleware(
+        IpAllowlistMiddleware,
+        settings=s,
+        exempt_prefixes=(
+            "/v1/health", "/healthz", "/readyz", "/metrics",
+            "/openapi.json", "/docs", "/redoc",
+        ),
+    )
     app.add_middleware(SecurityHeadersMiddleware, settings=s)
     # Body size cap runs last (closest to the wire) so oversize requests
     # short-circuit before any other middleware does work on them.
@@ -134,5 +146,6 @@ def create_app() -> FastAPI:
     app.include_router(policies_route.router)
     app.include_router(mutes_route.router)
     app.include_router(gdpr_route.router)
+    app.include_router(ip_allowlist_route.router)
     log.info("api ready", version=__version__)
     return app

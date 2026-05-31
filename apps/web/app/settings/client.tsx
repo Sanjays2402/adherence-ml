@@ -368,6 +368,21 @@ export default function SettingsClient() {
               className="text-[var(--color-muted)] group-hover:text-[var(--color-text)] shrink-0"
             />
           </a>
+          <a
+            href="/settings/ip-allowlist"
+            className="flex items-center justify-between gap-3 px-4 py-3 border-t border-[var(--color-border)] hover:bg-[var(--color-border)]/30 transition-colors group"
+          >
+            <div className="min-w-0">
+              <div className="text-[13px]">IP allowlist</div>
+              <div className="text-[11px] text-[var(--color-muted)] mt-0.5">
+                Restrict workspace API and dashboard access to trusted IP and CIDR ranges.
+              </div>
+            </div>
+            <CaretRight
+              size={14}
+              className="text-[var(--color-muted)] group-hover:text-[var(--color-text)] shrink-0"
+            />
+          </a>
         </Card>
 
         {/* NOTIFICATIONS */}

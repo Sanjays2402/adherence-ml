@@ -6,6 +6,30 @@ interventions.
 
 ![landing](docs/screenshots/landing.png)
 
+## IP allowlist
+
+Workspace admins can pin API and dashboard access to a list of trusted IPs
+or CIDR ranges. When zero entries exist the gate is off, so first installs
+are never bricked. As soon as one row is added, every request whose client
+IP falls outside the list is rejected with HTTP 403 `ip_not_allowed` and
+the block is recorded in the admin audit log.
+
+Try it:
+
+```bash
+# UI
+open http://localhost:3000/settings/ip-allowlist
+
+# API (admin session cookie or admin JWT)
+curl -s http://localhost:8000/v1/admin/ip-allowlist | jq
+curl -s -X POST http://localhost:8000/v1/admin/ip-allowlist \
+  -H 'content-type: application/json' \
+  -d '{"cidr":"203.0.113.0/24","label":"office egress"}'
+```
+
+Health, metrics, and OpenAPI endpoints stay exempt so operator probes
+keep working even when a tenant is fully locked down.
+
 ## What it does
 
 The service ingests scheduled-dose events from a med-tracker source, builds
@@ -18,6 +42,27 @@ aggregated globally under `/v1/explain`. High-risk doses can be fanned out into
 a notification queue with risk-tier policies, quiet hours, per-user mutes, and
 notification budgets. Every prediction, override, and delivery is recorded in
 an append-only audit log with CSV export.
+
+### IP allowlist
+
+Workspace owners can restrict API and dashboard traffic to a list of
+trusted IPs and CIDR ranges from
+[/settings/ip-allowlist](http://localhost:3000/settings/ip-allowlist). Each
+entry is scoped to the caller's tenant (`tenant_ip_allowlist` table) and
+enforced by `IpAllowlistMiddleware` on every API route. Health,
+readiness, Prometheus metrics, and OpenAPI endpoints stay reachable so
+operator probes keep working even when the workspace is locked down.
+Blocked requests return HTTP 403 with `error: ip_not_allowed`. Add and
+remove operations write to the admin audit log.
+
+Try it locally with the dev admin key:
+
+```bash
+curl -s http://127.0.0.1:8000/v1/admin/ip-allowlist -H 'x-api-key: dev-admin-key'
+curl -s -X POST http://127.0.0.1:8000/v1/admin/ip-allowlist \
+  -H 'x-api-key: dev-admin-key' -H 'content-type: application/json' \
+  -d '{"cidr":"10.0.0.0/24","label":"office"}'
+```
 
 ### Weekly digest
 

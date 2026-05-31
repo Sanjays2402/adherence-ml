@@ -345,6 +345,21 @@ class ExperimentEvent(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 
+class TenantIpAllowlist(Base):
+    """Per-tenant IP / CIDR allowlist rows.
+
+    Empty list = gate off for that tenant. When at least one row exists
+    only requests whose client IP matches are accepted.
+    """
+    __tablename__ = "tenant_ip_allowlist"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(String(64), index=True, nullable=False, default="default")
+    cidr = Column(String(64), nullable=False)
+    label = Column(String(128), nullable=True)
+    created_by = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class TrainingRun(Base):
     __tablename__ = "training_runs"
     id = Column(Integer, primary_key=True, autoincrement=True)
