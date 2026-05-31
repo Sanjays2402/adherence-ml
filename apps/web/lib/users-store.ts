@@ -212,6 +212,27 @@ export async function bumpSessionGen(
   return u;
 }
 
+/**
+ * Permanently delete a user record AND every magic-link token issued to
+ * that email address. Used by the GDPR "right to erasure" path in
+ * lib/account-erase.ts. Returns true if the user existed and was removed.
+ *
+ * Intentionally narrow: this only touches users.json. The caller is
+ * responsible for purging workspace memberships, notes, etc. and for
+ * writing the audit log entry.
+ */
+export async function deleteUserRecord(userId: string): Promise<boolean> {
+  if (!userId) return false;
+  const store = await readStore();
+  const user = store.users.find((u) => u.id === userId);
+  if (!user) return false;
+  const email = user.email;
+  store.users = store.users.filter((u) => u.id !== userId);
+  store.tokens = store.tokens.filter((t) => t.email !== email);
+  await writeStore(store);
+  return true;
+}
+
 // Test hooks - exported so the smoke test can reset state.
 export async function _resetForTests(): Promise<void> {
   await writeStore({ version: 1, users: [], tokens: [] });

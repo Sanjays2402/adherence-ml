@@ -501,6 +501,146 @@ export async function removeMember(
   return true;
 }
 
+/**
+ * Plan what would happen if `userId` were erased from the system.
+ * For each workspace the user belongs to we report either:
+ *   - `leave`: the user is one of several members; their row is removed.
+ *   - `delete_workspace`: the user is the sole owner AND no other member
+ *     exists, so the entire workspace is purged.
+ *   - `blocked`: the user is the sole owner but other members would be
+ *     orphaned. The caller MUST refuse erasure (or transfer ownership)
+ *     in this case.
+ *
+ * Pure read; does not mutate state.
+ */
+export interface MembershipImpact {
+  workspace_id: string;
+  workspace_name: string;
+  role: Role;
+  action: "leave" | "delete_workspace" | "blocked";
+  reason?: string;
+  other_member_count: number;
+}
+
+export async function planUserErasure(
+  userId: string,
+): Promise<MembershipImpact[]> {
+  const store = await readStore();
+  const mine = store.members.filter((m) => m.user_id === userId);
+  return mine.map((m) => {
+    const ws = store.workspaces.find((w) => w.id === m.workspace_id);
+    const wsName = ws?.name ?? "(unknown)";
+    const others = store.members.filter(
+      (x) => x.workspace_id === m.workspace_id && x.user_id !== userId,
+    );
+    if (m.role !== "owner") {
+      return {
+        workspace_id: m.workspace_id,
+        workspace_name: wsName,
+        role: m.role,
+        action: "leave" as const,
+        other_member_count: others.length,
+      };
+    }
+    // role === owner
+    if (others.length === 0) {
+      return {
+        workspace_id: m.workspace_id,
+        workspace_name: wsName,
+        role: m.role,
+        action: "delete_workspace" as const,
+        other_member_count: 0,
+      };
+    }
+    const otherOwners = others.filter((x) => x.role === "owner");
+    if (otherOwners.length === 0) {
+      return {
+        workspace_id: m.workspace_id,
+        workspace_name: wsName,
+        role: m.role,
+        action: "blocked" as const,
+        reason:
+          "you are the sole owner of this shared workspace; transfer ownership before deleting your account",
+        other_member_count: others.length,
+      };
+    }
+    return {
+      workspace_id: m.workspace_id,
+      workspace_name: wsName,
+      role: m.role,
+      action: "leave" as const,
+      other_member_count: others.length,
+    };
+  });
+}
+
+export interface ErasureReport {
+  memberships_removed: number;
+  workspaces_deleted: string[];
+  invites_revoked: number;
+}
+
+/**
+ * Execute the erasure plan. Throws if any workspace would be left orphaned
+ * (sole owner with other members). Caller MUST first call planUserErasure
+ * and surface the blocked entries to the user.
+ */
+export async function eraseUserFromWorkspaces(
+  userId: string,
+): Promise<ErasureReport> {
+  const store = await readStore();
+  const mine = store.members.filter((m) => m.user_id === userId);
+  const wsToDelete: string[] = [];
+  for (const m of mine) {
+    if (m.role !== "owner") continue;
+    const others = store.members.filter(
+      (x) => x.workspace_id === m.workspace_id && x.user_id !== userId,
+    );
+    if (others.length === 0) {
+      wsToDelete.push(m.workspace_id);
+      continue;
+    }
+    const otherOwners = others.filter((x) => x.role === "owner");
+    if (otherOwners.length === 0) {
+      throw new Error(
+        `cannot erase: sole owner of workspace ${m.workspace_id} with ${others.length} other member(s)`,
+      );
+    }
+  }
+
+  const memBefore = store.members.length;
+  store.members = store.members.filter((m) => m.user_id !== userId);
+  const memRemoved = memBefore - store.members.length;
+
+  const wsSet = new Set(wsToDelete);
+  store.workspaces = store.workspaces.filter((w) => !wsSet.has(w.id));
+  // sweep any stragglers in those workspaces just in case
+  store.members = store.members.filter((m) => !wsSet.has(m.workspace_id));
+
+  // revoke invites the user issued OR invites pointing at their email
+  const user = await (async () => {
+    const { getUserById } = await import("./users-store");
+    return getUserById(userId);
+  })();
+  const email = user?.email ?? null;
+  let invitesRevoked = 0;
+  const now = Date.now();
+  for (const inv of store.invites) {
+    if (inv.revoked_at || inv.accepted_at) continue;
+    if (inv.invited_by === userId || (email && inv.email === email)) {
+      inv.revoked_at = now;
+      invitesRevoked += 1;
+    }
+  }
+
+  await writeStore(store);
+  return {
+    memberships_removed: memRemoved,
+    workspaces_deleted: wsToDelete,
+    invites_revoked: invitesRevoked,
+  };
+}
+
 export async function _resetForTests(): Promise<void> {
   await writeStore({ version: 1, workspaces: [], members: [], invites: [] });
 }

@@ -4,6 +4,46 @@ ML risk scoring for medication adherence. Predicts which upcoming doses a user
 is likely to miss in the next 24 hours and turns those scores into ranked
 interventions.
 
+## Right to erasure: delete your account
+
+Settings now has a dedicated GDPR Article 17 / CCPA self-service path that
+hard-deletes the signed-in user end-to-end, not just the workspace data.
+The flow:
+
+- `GET /api/auth/account` returns a preview: every workspace the user
+  belongs to, tagged `leave`, `delete_workspace`, or `blocked` (sole owner
+  of a workspace with other members).
+- `DELETE /api/auth/account` with body `{ "confirm": "DELETE MY ACCOUNT" }`
+  refuses if any membership is blocked, otherwise:
+  - tombstones every note the user authored (PII scrubbed, run history kept),
+  - removes every workspace membership and tears down any workspace they
+    owned alone,
+  - bumps `session_gen` so every outstanding cookie is rejected immediately,
+  - deletes the user record and every unconsumed magic-link token,
+  - lands one immutable entry in the hash-chained dashboard audit log
+    (`account.delete`, success / denied / failure), and
+  - clears the session cookie on the response.
+- `DELETE /api/auth/account?dry_run=true` returns the same preview shape
+  with the standard `X-Dry-Run` headers so SCIM / IT runbooks can stage the
+  call before pulling the trigger.
+
+The Settings page surfaces this as its own danger-zone card next to the
+existing workspace wipe. The cross-tenant isolation invariant is covered
+by `tests/account-erase.test.ts`: erasing alice leaves bob, his notes, and
+any workspace he co-owns untouched.
+
+Try it:
+
+    pnpm --filter @adherence/web dev
+    # sign in at http://localhost:3000/login, then in another shell:
+    curl -i http://localhost:3000/api/auth/account \
+      --cookie "adh_session=$YOUR_COOKIE"
+    # then to actually erase:
+    curl -i -X DELETE http://localhost:3000/api/auth/account \
+      --cookie "adh_session=$YOUR_COOKIE" \
+      -H 'content-type: application/json' \
+      -d '{"confirm":"DELETE MY ACCOUNT"}'
+
 ## Standard rate-limit headers on every /v1 response
 
 Every `/v1/*` endpoint now emits IETF-style rate-limit headers on success

@@ -124,3 +124,28 @@ export async function deleteNote(
   await appendLine({ ...existing, deleted: true });
   return true;
 }
+
+/**
+ * GDPR / right-to-erasure helper. Soft-deletes every note authored by
+ * `userId` AND scrubs the author_email field on the tombstones so the
+ * tombstones themselves carry no PII. Returns the number of notes
+ * tombstoned. Used by lib/account-erase.ts.
+ */
+export async function purgeNotesForUser(userId: string): Promise<number> {
+  if (!userId) return 0;
+  const all = await readAll();
+  const collapsed = collapse(all);
+  const mine = collapsed.filter((r) => r.user_id === userId);
+  let count = 0;
+  for (const n of mine) {
+    await appendLine({
+      ...n,
+      user_id: null,
+      author_email: null,
+      body: "",
+      deleted: true,
+    });
+    count += 1;
+  }
+  return count;
+}

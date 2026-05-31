@@ -14,6 +14,8 @@ import {
   ShieldWarning,
   ShieldCheck,
   CaretRight,
+  UserMinus,
+  SignOut,
 } from "@phosphor-icons/react";
 import {
   PageHeader,
@@ -144,6 +146,30 @@ export default function SettingsClient() {
     missing: string[];
   } | null>(null);
 
+  // erasing the signed-in account (GDPR / CCPA right to erasure)
+  type ErasePreview = {
+    user_id: string;
+    email: string;
+    can_erase: boolean;
+    confirm_phrase: string;
+    memberships: Array<{
+      workspace_id: string;
+      workspace_name: string;
+      role: string;
+      action: "leave" | "delete_workspace" | "blocked";
+      reason?: string;
+      other_member_count: number;
+    }>;
+    blockers: Array<{ workspace_name: string; reason?: string }>;
+  };
+  const [eraseOpen, setEraseOpen] = useState(false);
+  const [erasePreview, setErasePreview] = useState<ErasePreview | null>(null);
+  const [erasePreviewErr, setErasePreviewErr] = useState<string | null>(null);
+  const [eraseConfirm, setEraseConfirm] = useState("");
+  const [erasing, setErasing] = useState(false);
+  const [eraseErr, setEraseErr] = useState<string | null>(null);
+  const [eraseDone, setEraseDone] = useState(false);
+
   useEffect(() => {
     if (data && !draft) setDraft(data);
   }, [data, draft]);
@@ -198,6 +224,52 @@ export default function SettingsClient() {
       setExporting(false);
     }
   }, []);
+
+  const onLoadErasePreview = useCallback(async () => {
+    setEraseOpen(true);
+    setEraseConfirm("");
+    setEraseErr(null);
+    setErasePreviewErr(null);
+    setErasePreview(null);
+    try {
+      const res = await fetch("/api/auth/account", { cache: "no-store" });
+      const json = await res.json();
+      if (!res.ok) {
+        setErasePreviewErr(json?.detail ?? "failed to load preview");
+        return;
+      }
+      setErasePreview(json as ErasePreview);
+    } catch (e) {
+      setErasePreviewErr(e instanceof Error ? e.message : "network error");
+    }
+  }, []);
+
+  const onErase = useCallback(async () => {
+    if (!erasePreview) return;
+    setErasing(true);
+    setEraseErr(null);
+    try {
+      const res = await fetch("/api/auth/account", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ confirm: erasePreview.confirm_phrase }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setEraseErr(json?.detail ?? `erase failed (${res.status})`);
+        return;
+      }
+      setEraseDone(true);
+      // Cookie was cleared server-side; bounce out of the dashboard.
+      setTimeout(() => {
+        window.location.href = "/login?erased=1";
+      }, 1200);
+    } catch (e) {
+      setEraseErr(e instanceof Error ? e.message : "network error");
+    } finally {
+      setErasing(false);
+    }
+  }, [erasePreview]);
 
   const onWipe = useCallback(async () => {
     setWiping(true);
@@ -579,6 +651,175 @@ export default function SettingsClient() {
                     cancel
                   </Button>
                 </div>
+              </div>
+            )}
+          </div>
+        </Card>
+
+        {/* GDPR / CCPA: erase the signed-in account */}
+        <Card className="xl:col-span-3 border-[var(--color-danger)]/30">
+          <CardHeader
+            title="delete your account"
+            hint="Right to erasure (GDPR Art. 17 / CCPA). Removes you from every workspace and purges your user record."
+            right={
+              <UserMinus
+                weight="duotone"
+                size={16}
+                className="text-[var(--color-danger)]"
+              />
+            }
+          />
+          <div className="px-4 py-4">
+            {eraseDone ? (
+              <div className="flex items-center gap-2 text-[var(--color-low)]">
+                <CheckCircle weight="duotone" size={16} />
+                <span className="text-[13px]">
+                  Account erased. Redirecting to sign-in...
+                </span>
+              </div>
+            ) : !eraseOpen ? (
+              <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[13px] font-medium">
+                    Permanently delete your account
+                  </div>
+                  <ul className="text-[11px] text-[var(--color-muted)] mt-1 space-y-0.5 list-disc list-inside">
+                    <li>Removes your user record and every magic-link token.</li>
+                    <li>
+                      Removes you from every workspace you belong to (deletes
+                      personal workspaces where you are the only member).
+                    </li>
+                    <li>
+                      Tombstones every note you authored (run history stays).
+                    </li>
+                    <li>
+                      Revokes every outstanding session and signs you out
+                      everywhere.
+                    </li>
+                    <li>
+                      Refuses if you are the sole owner of a shared workspace;
+                      transfer ownership first.
+                    </li>
+                  </ul>
+                </div>
+                <Button variant="danger" onClick={onLoadErasePreview}>
+                  <UserMinus weight="duotone" size={14} />
+                  delete my account
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {erasePreviewErr ? (
+                  <ErrorBox message={erasePreviewErr} />
+                ) : !erasePreview ? (
+                  <Skeleton className="h-20 w-full" />
+                ) : (
+                  <>
+                    <div className="text-[12px] text-[var(--color-muted)]">
+                      Signed in as{" "}
+                      <span className="font-mono text-[var(--color-fg)]">
+                        {erasePreview.email}
+                      </span>
+                    </div>
+                    {erasePreview.memberships.length === 0 ? (
+                      <div className="text-[12px] text-[var(--color-muted)]">
+                        No workspace memberships found.
+                      </div>
+                    ) : (
+                      <div className="border border-[var(--color-border)] rounded">
+                        <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-[var(--color-muted)] border-b border-[var(--color-border)]">
+                          workspace impact
+                        </div>
+                        <ul className="divide-y divide-[var(--color-border)]">
+                          {erasePreview.memberships.map((m) => (
+                            <li
+                              key={m.workspace_id}
+                              className="px-3 py-2 flex items-start justify-between gap-3"
+                            >
+                              <div className="min-w-0">
+                                <div className="text-[12px] font-medium truncate">
+                                  {m.workspace_name}
+                                </div>
+                                <div className="text-[10px] text-[var(--color-muted)] mt-0.5">
+                                  role {m.role} · {m.other_member_count}{" "}
+                                  other member
+                                  {m.other_member_count === 1 ? "" : "s"}
+                                </div>
+                                {m.reason ? (
+                                  <div className="text-[10px] text-[var(--color-danger)] mt-1">
+                                    {m.reason}
+                                  </div>
+                                ) : null}
+                              </div>
+                              <Badge>
+                                {m.action === "delete_workspace"
+                                  ? "delete workspace"
+                                  : m.action === "blocked"
+                                  ? "blocked"
+                                  : "leave"}
+                              </Badge>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {!erasePreview.can_erase ? (
+                      <div className="flex items-start gap-2 text-[var(--color-danger)] text-[12px]">
+                        <Warning weight="duotone" size={16} className="mt-0.5" />
+                        <span>
+                          You must transfer ownership of the workspaces above
+                          before you can delete your account.
+                        </span>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex items-start gap-2 text-[var(--color-danger)] text-[12px]">
+                          <Warning weight="duotone" size={16} className="mt-0.5" />
+                          <span>
+                            This is irreversible. Type{" "}
+                            <code className="font-mono px-1 py-0.5 rounded bg-[var(--color-danger)]/10">
+                              {erasePreview.confirm_phrase}
+                            </code>{" "}
+                            to confirm.
+                          </span>
+                        </div>
+                        <Input
+                          value={eraseConfirm}
+                          onChange={(e) => setEraseConfirm(e.target.value)}
+                          placeholder={erasePreview.confirm_phrase}
+                          aria-label="confirmation phrase"
+                        />
+                      </>
+                    )}
+                    {eraseErr ? <ErrorBox message={eraseErr} /> : null}
+                    <div className="flex gap-2">
+                      <Button
+                        variant="danger"
+                        disabled={
+                          !erasePreview.can_erase ||
+                          eraseConfirm !== erasePreview.confirm_phrase ||
+                          erasing
+                        }
+                        onClick={onErase}
+                      >
+                        <SignOut weight="duotone" size={14} />
+                        {erasing ? "erasing..." : "confirm and sign out"}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        onClick={() => {
+                          setEraseOpen(false);
+                          setEraseConfirm("");
+                          setErasePreview(null);
+                          setEraseErr(null);
+                          setErasePreviewErr(null);
+                        }}
+                      >
+                        cancel
+                      </Button>
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </div>
