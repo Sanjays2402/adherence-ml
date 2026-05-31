@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import LoginClient from "./client";
 import { getSession } from "@/lib/session";
-import { isGithubOAuthConfigured } from "@/lib/oauth-state";
+import { isGithubOAuthConfigured, isGoogleOAuthConfigured } from "@/lib/oauth-state";
 import { redirect } from "next/navigation";
 
 export const metadata: Metadata = {
@@ -26,6 +26,7 @@ export default async function LoginPage({
       error={sp.error ?? null}
       next={sp.next ?? null}
       githubEnabled={isGithubOAuthConfigured()}
+      googleEnabled={isGoogleOAuthConfigured()}
     />
   );
 }

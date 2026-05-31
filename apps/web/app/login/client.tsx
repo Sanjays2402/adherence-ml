@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Envelope, GithubLogo, PaperPlaneTilt, ShieldCheck, Spinner, Warning } from "@phosphor-icons/react";
+import { Envelope, GithubLogo, GoogleLogo, PaperPlaneTilt, ShieldCheck, Spinner, Warning } from "@phosphor-icons/react";
 
 interface SendResponse {
   ok?: boolean;
@@ -15,23 +15,25 @@ const ERROR_COPY: Record<string, string> = {
   invalid_or_expired:
     "That link is invalid or has expired. Request a new one and use it within 15 minutes.",
   oauth_state:
-    "GitHub sign-in could not be verified (state mismatch or expired). Try again.",
+    "Sign-in could not be verified (state mismatch or expired). Try again.",
   oauth_exchange:
-    "GitHub rejected the sign-in handshake. Try again in a moment.",
+    "The identity provider rejected the sign-in handshake. Try again in a moment.",
   oauth_no_email:
-    "GitHub did not return a verified email. Add a verified email to your GitHub account and try again.",
+    "The identity provider did not return a verified email. Add a verified email to that account and try again.",
   oauth_unconfigured:
-    "GitHub sign-in is not configured on this server. Use the email link instead.",
+    "That sign-in option is not configured on this server. Use the email link instead.",
 };
 
 export default function LoginClient({
   error,
   next,
   githubEnabled,
+  googleEnabled,
 }: {
   error: string | null;
   next: string | null;
   githubEnabled: boolean;
+  googleEnabled: boolean;
 }) {
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
@@ -172,7 +174,7 @@ export default function LoginClient({
           New here? Use any email. We create your account on first sign in.
         </p>
 
-        {githubEnabled ? (
+        {githubEnabled || googleEnabled ? (
           <>
             <div className="my-5 flex items-center gap-3" aria-hidden="true">
               <div className="h-px flex-1 bg-[var(--color-border)]" />
@@ -181,15 +183,28 @@ export default function LoginClient({
               </span>
               <div className="h-px flex-1 bg-[var(--color-border)]" />
             </div>
-            <a
-              href={`/api/auth/github${next ? `?next=${encodeURIComponent(next)}` : ""}`}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[13px] font-medium text-[var(--color-fg)] transition-colors hover:bg-[var(--color-surface-2)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
-            >
-              <GithubLogo weight="duotone" size={16} />
-              Continue with GitHub
-            </a>
+            <div className="flex flex-col gap-2">
+              {googleEnabled ? (
+                <a
+                  href={`/api/auth/google${next ? `?next=${encodeURIComponent(next)}` : ""}`}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[13px] font-medium text-[var(--color-fg)] transition-colors hover:bg-[var(--color-surface-2)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+                >
+                  <GoogleLogo weight="duotone" size={16} />
+                  Continue with Google
+                </a>
+              ) : null}
+              {githubEnabled ? (
+                <a
+                  href={`/api/auth/github${next ? `?next=${encodeURIComponent(next)}` : ""}`}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[13px] font-medium text-[var(--color-fg)] transition-colors hover:bg-[var(--color-surface-2)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+                >
+                  <GithubLogo weight="duotone" size={16} />
+                  Continue with GitHub
+                </a>
+              ) : null}
+            </div>
             <p className="mt-2 text-[11px] text-[var(--color-subtle)]">
-              We only read your verified primary email. No repos, no writes.
+              We only read your verified email. No repos, no Drive, no writes.
             </p>
           </>
         ) : null}
