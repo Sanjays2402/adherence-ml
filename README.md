@@ -164,6 +164,32 @@ Disabling 2FA requires a current authenticator code or one of the recovery
 codes, so a stolen session cookie cannot silently turn the second factor
 off.
 
+### Force sign out every device
+
+If a laptop walks off or you suspect a session cookie has leaked, open
+[/settings/security](http://localhost:3000/settings/security) and hit **Sign
+out all other sessions**. Every cookie ever issued to your account is
+rejected on the next request, including the long-lived ones on other
+devices. Your current browser stays signed in (a fresh cookie is re-minted
+in the same response) so you do not lock yourself out mid-incident. Use the
+*also sign out this browser* link to invalidate the active tab too.
+
+Under the hood each `UserRecord` carries a `session_gen` counter; signed
+session cookies embed a `gen` claim, and `getSession` rejects cookies whose
+`gen` is below the user's current generation. Revocation is therefore
+instant across every server process without a shared cache.
+
+```bash
+# inspect the current session and last revocation timestamp
+curl -s --cookie adh_session=$COOKIE http://localhost:3000/api/auth/sessions/status | jq
+
+# revoke every outstanding session, keep this browser signed in
+curl -s -X POST --cookie adh_session=$COOKIE \
+  -H 'content-type: application/json' \
+  -d '{"keep_current":true}' \
+  http://localhost:3000/api/auth/sessions/revoke-all
+```
+
 ### Settings and your data
 
 Visit [/settings](http://localhost:3000/settings) for the workspace profile

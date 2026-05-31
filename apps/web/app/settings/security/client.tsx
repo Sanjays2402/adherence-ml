@@ -13,6 +13,7 @@ import {
   ArrowClockwise,
   ArrowLeft,
   DownloadSimple,
+  SignOut,
 } from "@phosphor-icons/react";
 import {
   Button,
@@ -211,6 +212,8 @@ export default function SecurityClient() {
         )}
       </div>
 
+      <SessionsCard />
+
       {recoveryCodes ? (
         <Card>
           <CardHeader
@@ -389,5 +392,128 @@ export default function SecurityClient() {
         </Card>
       )}
     </main>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Active sessions / force-logout-all
+// ---------------------------------------------------------------------------
+
+type SessionsStatus = {
+  user_id: string;
+  email: string;
+  issued_at: number;
+  expires_at: number;
+  cookie_generation: number;
+  current_generation: number;
+  sessions_revoked_at: number | null;
+};
+
+function SessionsCard() {
+  const { data, error, isLoading, mutate } = useSWR<SessionsStatus>(
+    "/api/auth/sessions/status",
+    fetcher,
+    { revalidateOnFocus: true },
+  );
+  const [busy, setBusy] = useState(false);
+  const [actionErr, setActionErr] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  const revokeAll = useCallback(
+    async (keepCurrent: boolean) => {
+      setActionErr(null);
+      setBusy(true);
+      try {
+        const r = await fetch("/api/auth/sessions/revoke-all", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ keep_current: keepCurrent }),
+        });
+        const body = await r.json().catch(() => null);
+        if (!r.ok) {
+          throw new Error(
+            (body && typeof body.detail === "string" && body.detail) ||
+              `revoke failed (${r.status})`,
+          );
+        }
+        if (!keepCurrent) {
+          window.location.href = "/login";
+          return;
+        }
+        setDone(true);
+        setTimeout(() => setDone(false), 3000);
+        await mutate();
+      } catch (e) {
+        setActionErr(e instanceof Error ? e.message : String(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [mutate],
+  );
+
+  return (
+    <Card>
+      <CardHeader
+        title="active sessions"
+        hint="Sign out every browser and device that ever signed in to this account. Useful after a lost laptop, leaked email, or a stolen session cookie."
+        right={<SignOut className="size-5" weight="duotone" />}
+      />
+      <div className="p-4 space-y-4">
+        {isLoading ? (
+          <Skeleton className="h-16 w-full" />
+        ) : error || !data ? (
+          <ErrorBox message="Could not load session status." />
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[12px]">
+            <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-soft)] px-3 py-2">
+              <div className="text-[11px] uppercase tracking-wider text-[var(--color-muted)]">
+                This session
+              </div>
+              <div className="mt-1">
+                Issued {fmtTime(data.issued_at)}
+              </div>
+              <div className="text-[var(--color-muted)]">
+                Expires {fmtTime(data.expires_at)}
+              </div>
+            </div>
+            <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-soft)] px-3 py-2">
+              <div className="text-[11px] uppercase tracking-wider text-[var(--color-muted)]">
+                Last force sign out
+              </div>
+              <div className="mt-1">{fmtTime(data.sessions_revoked_at)}</div>
+              <div className="text-[var(--color-muted)]">
+                Generation {data.current_generation}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {actionErr ? <ErrorBox message={actionErr} /> : null}
+        {done ? (
+          <div className="inline-flex items-center gap-2 rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-[12px] text-emerald-400">
+            <CheckCircle className="size-4" weight="duotone" /> All other sessions signed out.
+          </div>
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <Button onClick={() => revokeAll(true)} disabled={busy}>
+            <SignOut className="size-4" weight="duotone" />
+            {busy ? "Signing out" : "Sign out all other sessions"}
+          </Button>
+          <button
+            type="button"
+            onClick={() => revokeAll(false)}
+            disabled={busy}
+            className="text-[11px] underline text-[var(--color-muted)] hover:text-[var(--color-text)] disabled:opacity-50"
+          >
+            also sign out this browser
+          </button>
+        </div>
+        <p className="text-[11px] text-[var(--color-muted)]">
+          This invalidates every session cookie ever issued to your account, including any saved on other machines. API keys are not affected.
+        </p>
+      </div>
+    </Card>
   );
 }
