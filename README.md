@@ -2,6 +2,38 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## W3C Trace Context propagation (end-to-end correlation)
+
+Every request to the FastAPI service honors the W3C `traceparent`
+header. If the caller already opened a span in their APM (Datadog,
+Honeycomb, Tempo, Jaeger), the same `trace_id` flows through this
+service and shows up in:
+
+- the access log line (`trace_id`, `span_id`, `trace_inbound`)
+- the response headers (`traceparent`, `x-trace-id`, `x-request-id`)
+- any OpenTelemetry spans the SDK emits when `OTEL_EXPORTER_OTLP_ENDPOINT` is set
+
+When no upstream context is supplied, a spec-compliant `traceparent`
+is minted so dashboards always have something to grep on.
+
+### Try it
+
+Local API runs on `http://localhost:8000`.
+
+```
+curl -sS -i http://localhost:8000/healthz \
+  -H 'traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01' \
+  | grep -iE 'traceparent|x-trace-id|x-request-id'
+```
+
+Expected: `x-trace-id: 4bf92f3577b34da6a3ce929d0e0e4736` echoed back,
+matching `traceparent` on the response, plus a fresh `x-request-id`.
+Drop the header and rerun; both headers are still present and the
+`trace_id` is freshly minted.
+
+See `packages/common/adherence_common/trace_context.py` and the
+`RequestIdMiddleware` in `services/api/adherence_api/middleware.py`.
+
 ## Tamper-evident audit chain verification + signed evidence bundle
 
 The dashboard audit log (`apps/web/lib/dashboard-audit.ts`) is an append-only
