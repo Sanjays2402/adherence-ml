@@ -2,6 +2,55 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## In-place API key rotation (Python admin API)
+
+The Python admin API now supports rotating a DB-backed API key without
+dropping its identity. Identity, role, scopes, tenant, IP allowlist,
+note, and audit-relevant metadata are preserved so RBAC and tenant
+scoping continue to apply without operator intervention. The previous
+secret is invalidated atomically and the new plaintext is returned ONCE
+in the response body.
+
+Procurement scenario: a buyer's security reviewer asks "how do you
+rotate a credential we suspect was leaked, without revoking and losing
+the audit trail of which workspace it belongs to?". Answer:
+`POST /v1/admin/api-keys/{name}/rotate`. Old secret stops working
+immediately, the row keeps its tenant + scopes + IP allowlist, the
+`api_key.rotate` audit event captures actor, new prefix, rotation
+count, tenant, and request id.
+
+- New `rotate_key()` in `packages/common/adherence_common/api_keys.py`
+  with `rotated_at` and monotonically increasing `rotation_count` columns
+  (idempotent ALTER TABLE in `db.init_db()`).
+- New `POST /v1/admin/api-keys/{name}/rotate` route gated by
+  `require_admin_mfa`, supports `?dry_run=true`, surfaces the new
+  `rotated_at` and `rotation_count` on `GET /v1/admin/api-keys`.
+- Refuses to rotate revoked keys (409) or expired keys (409) unless an
+  `extend_ttl_seconds` window is supplied. Missing keys 404.
+- Every rotation writes an `api_key.rotate` admin audit entry with the
+  acting principal, target key name, new prefix, rotation count, tenant,
+  role, scopes, and resulting expiry.
+- Integration coverage in `tests/integration/test_api_key_rotation.py`
+  proves: old plaintext is invalidated, identity and tenant preserved,
+  `dry_run=true` does not mutate, revoked rotation is rejected, audit
+  event is recorded.
+
+### Try it
+
+```bash
+# Start the Python API locally (see Makefile target `api-dev`).
+make api-dev  # serves http://127.0.0.1:8000
+
+# Rotate a key in place. Old secret stops working immediately; the new
+# plaintext is in the JSON body (last chance to read it).
+curl -sS -X POST http://127.0.0.1:8000/v1/admin/api-keys/svc-ingest/rotate \
+  -H "x-api-key: $ADM_KEY" -H "content-type: application/json" -d '{}'
+
+# Dry-run preview first, no mutation.
+curl -sS -X POST "http://127.0.0.1:8000/v1/admin/api-keys/svc-ingest/rotate?dry_run=true" \
+  -H "x-api-key: $ADM_KEY" -H "content-type: application/json" -d '{}'
+```
+
 ## Authentication event audit (SOC2 / SIEM)
 
 Every authentication lifecycle event is now recorded into the same tamper

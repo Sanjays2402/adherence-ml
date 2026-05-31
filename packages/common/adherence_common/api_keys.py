@@ -54,6 +54,8 @@ class APIKeyRecord(Base):
     # key is not restricted by source IP. Enforced by middleware on every
     # request whose credential resolves to this key.
     ip_allowlist_csv = Column(String(1024), nullable=True)
+    rotated_at = Column(DateTime, nullable=True)
+    rotation_count = Column(Integer, nullable=False, default=0)
 
 
 VALID_ROLES = {"admin", "service", "viewer"}
@@ -137,6 +139,59 @@ def list_keys() -> list[APIKeyRecord]:
     init_db()
     with session() as s:
         return list(s.scalars(select(APIKeyRecord).order_by(APIKeyRecord.id.asc())))
+
+
+def rotate_key(
+    name: str,
+    *,
+    by: str | None = None,
+    extend_ttl_seconds: int | None = None,
+) -> tuple[str, APIKeyRecord]:
+    """Rotate the secret for an existing key in place.
+
+    Generates a fresh plaintext, replaces ``key_hash``/``key_prefix``,
+    bumps ``rotation_count``, and stamps ``rotated_at``. Identity, role,
+    scopes, tenant, IP allowlist, and audit-relevant metadata are
+    preserved so downstream RBAC and tenant scoping continue to apply
+    without operator intervention.
+
+    ``extend_ttl_seconds`` optionally pushes ``expires_at`` forward to
+    ``now + extend_ttl_seconds`` so a rotated key can be re-issued with
+    a fresh validity window. Pass ``None`` to leave the existing expiry
+    intact (the common case).
+
+    Raises ``LookupError`` if no such key exists, ``ValueError`` if the
+    key is revoked or expired (those must be re-created, not rotated).
+    Caller must surface the returned plaintext immediately; it is the
+    only opportunity to read it.
+    """
+    init_db()
+    now = datetime.utcnow()
+    with session() as s:
+        row = s.execute(
+            select(APIKeyRecord).where(APIKeyRecord.name == name)
+        ).scalar_one_or_none()
+        if row is None:
+            raise LookupError(f"api key {name!r} not found")
+        if row.revoked_at is not None:
+            raise ValueError("cannot rotate a revoked key")
+        if row.expires_at is not None and row.expires_at <= now and not extend_ttl_seconds:
+            raise ValueError("cannot rotate an expired key without extend_ttl_seconds")
+        plain, prefix, key_hash = generate_key()
+        row.key_prefix = prefix
+        row.key_hash = key_hash
+        row.rotated_at = now
+        row.rotation_count = int(row.rotation_count or 0) + 1
+        row.last_used_at = None
+        if extend_ttl_seconds and extend_ttl_seconds > 0:
+            row.expires_at = now + timedelta(seconds=extend_ttl_seconds)
+        if by:
+            note = (row.note or "").rstrip()
+            stamp = f"[rotated by {by} @ {now.isoformat()}]"
+            row.note = f"{note} {stamp}".strip() if note else stamp
+        s.commit()
+        s.refresh(row)
+        return plain, row
 
 
 def revoke_key(name: str, *, by: str | None = None) -> bool:

@@ -421,6 +421,18 @@ def _ensure_tenant_columns(engine) -> None:
                     "ALTER TABLE api_key_records "
                     "ADD COLUMN ip_allowlist_csv VARCHAR(1024)"
                 ))
+        if "rotated_at" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE api_key_records "
+                    "ADD COLUMN rotated_at DATETIME"
+                ))
+        if "rotation_count" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE api_key_records "
+                    "ADD COLUMN rotation_count INTEGER NOT NULL DEFAULT 0"
+                ))
 
 
 def init_db() -> None:

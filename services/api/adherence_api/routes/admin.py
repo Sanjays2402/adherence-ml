@@ -117,6 +117,8 @@ class APIKeyOut(BaseModel):
     expires_at: str | None
     revoked_at: str | None
     last_used_at: str | None
+    rotated_at: str | None = None
+    rotation_count: int = 0
     ip_allowlist: list[str] = Field(default_factory=list)
 
 
@@ -132,6 +134,8 @@ def _key_row_to_out(row) -> APIKeyOut:
         expires_at=row.expires_at.isoformat() if row.expires_at else None,
         revoked_at=row.revoked_at.isoformat() if row.revoked_at else None,
         last_used_at=row.last_used_at.isoformat() if row.last_used_at else None,
+        rotated_at=row.rotated_at.isoformat() if getattr(row, "rotated_at", None) else None,
+        rotation_count=int(getattr(row, "rotation_count", 0) or 0),
         ip_allowlist=ip_allowlist,
     )
 
@@ -220,6 +224,121 @@ def revoke_api_key(
         request_id=_rid(request),
     )
     return {"revoked": True, "name": name}
+
+
+# ---- API key rotation ----------------------------------------------------
+
+class APIKeyRotateIn(BaseModel):
+    extend_ttl_seconds: int | None = Field(
+        None, ge=60, le=60 * 60 * 24 * 365 * 5,
+        description=(
+            "Optional. If set, the rotated key's ``expires_at`` is reset to "
+            "now + extend_ttl_seconds. Omit to leave the existing expiry intact."
+        ),
+    )
+
+
+class APIKeyRotateOut(BaseModel):
+    name: str
+    role: str
+    scopes: list[str]
+    tenant_id: str
+    key: str = Field(..., description="Plaintext. Shown ONCE. Not recoverable.")
+    key_prefix: str
+    expires_at: str | None
+    rotated_at: str
+    rotation_count: int
+
+
+@router.post("/api-keys/{name}/rotate")
+def rotate_api_key(
+    name: str,
+    body: APIKeyRotateIn | None,
+    request: Request,
+    dry_run: bool = Query(
+        False,
+        description="Preview without rotating. Returns 404 if the key does not exist, 409 if revoked or expired.",
+    ),
+    p=Depends(require_admin_mfa),
+) -> dict:
+    """Rotate the secret on an existing API key in place.
+
+    Identity, role, scopes, tenant, and IP allowlist are preserved so
+    downstream RBAC and tenant scoping keep applying without operator
+    intervention. The previous secret is invalidated atomically and the
+    new plaintext is returned ONCE in the response body.
+    """
+    extend_ttl = body.extend_ttl_seconds if body else None
+    if dry_run:
+        match = next((k for k in ak.list_keys() if k.name == name), None)
+        if match is None:
+            record_admin_action(
+                action="api_key.rotate", principal=p, target=name,
+                details={"dry_run": True}, ok=False, error="api key not found",
+                request_id=_rid(request),
+            )
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="api key not found")
+        if match.revoked_at is not None:
+            record_admin_action(
+                action="api_key.rotate", principal=p, target=name,
+                details={"dry_run": True}, ok=False, error="key revoked",
+                request_id=_rid(request),
+            )
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="cannot rotate a revoked key")
+        record_admin_action(
+            action="api_key.rotate", principal=p, target=name,
+            details={
+                "dry_run": True,
+                "current_prefix": match.key_prefix,
+                "rotation_count": int(getattr(match, "rotation_count", 0) or 0),
+                "extend_ttl_seconds": extend_ttl,
+            },
+            request_id=_rid(request),
+        )
+        return dry_run_response(
+            would="rotate",
+            name=name,
+            current_prefix=match.key_prefix,
+            current_rotation_count=int(getattr(match, "rotation_count", 0) or 0),
+            extend_ttl_seconds=extend_ttl,
+        )
+    try:
+        plain, row = ak.rotate_key(
+            name, by=p.get("sub"), extend_ttl_seconds=extend_ttl,
+        )
+    except LookupError as exc:
+        record_admin_action(
+            action="api_key.rotate", principal=p, target=name,
+            ok=False, error=str(exc), request_id=_rid(request),
+        )
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="api key not found") from exc
+    except ValueError as exc:
+        record_admin_action(
+            action="api_key.rotate", principal=p, target=name,
+            ok=False, error=str(exc), request_id=_rid(request),
+        )
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    scopes = sorted(s for s in (row.scopes_csv or "").split(",") if s)
+    record_admin_action(
+        action="api_key.rotate", principal=p, target=row.name,
+        details={
+            "new_prefix": row.key_prefix,
+            "rotation_count": int(row.rotation_count or 0),
+            "tenant_id": (row.tenant_id or "default"),
+            "role": row.role,
+            "scopes": scopes,
+            "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+        },
+        request_id=_rid(request),
+    )
+    return APIKeyRotateOut(
+        name=row.name, role=row.role, scopes=scopes,
+        tenant_id=(row.tenant_id or "default"),
+        key=plain, key_prefix=row.key_prefix,
+        expires_at=row.expires_at.isoformat() if row.expires_at else None,
+        rotated_at=row.rotated_at.isoformat(),
+        rotation_count=int(row.rotation_count or 0),
+    ).model_dump()
 
 
 # ---- Model rollback -------------------------------------------------------
