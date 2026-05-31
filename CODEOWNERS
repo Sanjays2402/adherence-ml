@@ -1,0 +1,33 @@
+# Repository code owners.
+#
+# GitHub uses this file to request review from the right people when a
+# pull request touches sensitive areas. Order matters: the last matching
+# pattern wins.
+
+# Default fallback.
+*                                @Sanjays2402
+
+# Security-critical surfaces.
+SECURITY.md                      @Sanjays2402
+/.well-known/                    @Sanjays2402
+/apps/web/public/.well-known/    @Sanjays2402
+/apps/web/middleware.ts          @Sanjays2402
+/apps/web/lib/security-headers*  @Sanjays2402
+/services/api/adherence_api/deps.py                           @Sanjays2402
+/services/api/adherence_api/security_headers_middleware.py    @Sanjays2402
+/services/api/adherence_api/ip_allowlist_middleware.py        @Sanjays2402
+/services/api/adherence_api/ratelimit_middleware.py           @Sanjays2402
+/services/api/adherence_api/quota_enforce.py                  @Sanjays2402
+/packages/common/adherence_common/auth.py        @Sanjays2402
+/packages/common/adherence_common/api_keys.py    @Sanjays2402
+/packages/common/adherence_common/audit*.py      @Sanjays2402
+/packages/common/adherence_common/mfa.py         @Sanjays2402
+/packages/common/adherence_common/oidc.py        @Sanjays2402
+/packages/common/adherence_common/ip_allowlist.py @Sanjays2402
+/packages/common/adherence_common/gdpr.py        @Sanjays2402
+
+# Threat model and trust center copy.
+/docs/THREAT_MODEL.md            @Sanjays2402
+/docs/SUBPROCESSORS.md           @Sanjays2402
+/apps/web/app/trust/             @Sanjays2402
+/apps/web/app/api/trust/         @Sanjays2402

@@ -2,6 +2,66 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Trust Center, SECURITY.md, security.txt
+
+Procurement reviewers can evaluate this deployment without opening a
+ticket or signing in. Three things land together:
+
+1. **`/trust`** in the dashboard. A public, unauthenticated Trust Center
+   that lists every enterprise control (SSO, RBAC, multi-tenancy, audit
+   chain, rate limits, signed webhooks, residency, dry-run) and renders
+   live posture from this deployment via `GET /api/trust/posture`.
+   Refreshes every 60 seconds. Each control links to the in-product
+   surface that operates it.
+2. **`SECURITY.md`**, **`CODEOWNERS`**, **`docs/THREAT_MODEL.md`**, and
+   **`docs/SUBPROCESSORS.md`** at the repo root. Vulnerability
+   disclosure policy with severity tiers and response SLAs, STRIDE
+   review with concrete controls, and the current subprocessor list
+   with regions and notification cadence.
+3. **`/.well-known/security.txt`** (RFC 9116) plus a `/security.txt`
+   alias for scanners that probe the root.
+
+The posture endpoint is the only new code path: it probes
+`/livez`, `/readyz`, `/healthz`, and `/v1/audit/chain/verify` on the
+upstream API, plus deterministically asserts that the dashboard's
+buildSecurityHeaders contract still emits the OWASP baseline. Cached 60
+seconds. No customer data, no secrets.
+
+### Try it
+
+```bash
+pnpm --filter @adherence/web dev
+# dashboard: http://localhost:3000/trust
+# discovery: http://localhost:3000/.well-known/security.txt
+# alias:     http://localhost:3000/security.txt
+
+curl -s http://localhost:3000/api/trust/posture | jq
+```
+
+Sample response:
+
+```json
+{
+  "overall": "pass",
+  "checks": [
+    { "id": "liveness",         "status": "pass", "label": "API liveness probe" },
+    { "id": "readiness",        "status": "pass", "label": "API readiness probe" },
+    { "id": "health",           "status": "pass", "label": "Aggregate health" },
+    { "id": "audit-chain",      "status": "pass", "label": "Tamper-evident audit log" },
+    { "id": "security-headers", "status": "pass", "label": "Dashboard security headers" },
+    { "id": "sso",              "status": "pass", "label": "Enterprise SSO (OIDC or SAML)" }
+  ],
+  "region": "us-east-1",
+  "version": "0.1.0",
+  "generated_at": "2026-05-31T17:20:00.000Z"
+}
+```
+
+Test coverage: `apps/web/tests/trust-posture.test.ts` proves the route
+degrades gracefully when upstream is unreachable, recognises a 401 on
+the audit chain probe as evidence the route is properly guarded, and
+emits the documented cache header.
+
 ## In-place API key rotation (Python admin API)
 
 The Python admin API now supports rotating a DB-backed API key without
