@@ -53,6 +53,10 @@ export async function appendRun(rec: RunRecord): Promise<void> {
   return writeQueue;
 }
 
+export async function readAllRuns(): Promise<RunRecord[]> {
+  return readAll();
+}
+
 async function readAll(): Promise<RunRecord[]> {
   ensureDir();
   if (!existsSync(RUNS_FILE)) return [];

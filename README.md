@@ -2,6 +2,40 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Workspace data export (GDPR / CCPA)
+
+Workspace owners can download every record their workspace owns as a single
+bundle, with a dry-run preview that returns counts only.
+
+* `GET /api/workspaces/{id}/export?dry_run=1` returns the manifest (counts
+  of members, invites, verified domains, audit entries, runs, notes) without
+  reading the heavy stores. Both preview and download are written to the
+  dashboard audit log.
+* `GET /api/workspaces/{id}/export` downloads the full JSON bundle:
+  workspace record, members, invites, verified domains, public SSO config,
+  security policy, audit entries scoped to the workspace, runs and notes
+  authored by current members.
+* `GET /api/workspaces/{id}/export?format=csv` returns the runs slice as
+  RFC 4180 CSV for spreadsheet handoff.
+* Owner-only. Non-owners get `403`. Non-members get `404`. Cross-tenant
+  runs are filtered out at the query layer; see
+  `apps/web/tests/workspace-export.test.ts`.
+
+### Try it
+
+Local dev runs on `http://localhost:3000`.
+
+```bash
+cd apps/web && pnpm dev
+# UI: http://localhost:3000/workspace/export
+# Manifest preview (owner cookie required):
+curl -b cookies.txt 'http://localhost:3000/api/workspaces/<id>/export?dry_run=1'
+# Full JSON bundle:
+curl -b cookies.txt -OJ 'http://localhost:3000/api/workspaces/<id>/export'
+# Runs CSV:
+curl -b cookies.txt -OJ 'http://localhost:3000/api/workspaces/<id>/export?format=csv'
+```
+
 ## Workspace invitations and member management
 
 Enterprise buyers expect to invite teammates by email instead of minting

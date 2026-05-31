@@ -74,6 +74,14 @@ function collapse(all: NoteRecord[]): NoteRecord[] {
   return [...byId.values()].filter((r) => !r.deleted);
 }
 
+export async function listNotesByAuthors(
+  userIds: string[],
+): Promise<NoteRecord[]> {
+  const allow = new Set(userIds);
+  const all = await readAll();
+  return collapse(all).filter((n) => n.user_id !== null && allow.has(n.user_id));
+}
+
 export async function listNotesForRun(runId: string): Promise<NoteRecord[]> {
   const all = await readAll();
   const mine = all.filter((r) => r.run_id === runId);

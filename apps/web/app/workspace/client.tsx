@@ -287,6 +287,12 @@ export default function WorkspaceClient() {
             >
               <ShieldCheck weight="duotone" size={13} /> Plan and quota
             </Link>
+            <Link
+              href="/workspace/export"
+              className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[12px] hover:bg-[var(--color-surface-2)]"
+            >
+              <ShieldCheck weight="duotone" size={13} /> Data export
+            </Link>
             <form onSubmit={createWs} className="flex items-center gap-2">
             <Input
               placeholder="New workspace name"
