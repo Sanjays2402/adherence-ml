@@ -42,7 +42,7 @@ describe("session revocation: bumpSessionGen invalidates outstanding cookies", (
     const u = await users.consumeMagicToken(token);
     expect(u).not.toBeNull();
 
-    const { cookie: cookieA } = session.buildSession(u!);
+    const { cookie: cookieA } = await session.buildSession(u!);
     expect(await authenticate(cookieA)).not.toBeNull();
 
     // Bump the generation. Old cookie must be rejected immediately.
@@ -54,7 +54,7 @@ describe("session revocation: bumpSessionGen invalidates outstanding cookies", (
     expect(await authenticate(cookieA)).toBeNull();
 
     // Re-mint after the bump. New cookie carries the new gen and works.
-    const { cookie: cookieB } = session.buildSession(bumped!);
+    const { cookie: cookieB } = await session.buildSession(bumped!);
     const ok = await authenticate(cookieB);
     expect(ok).not.toBeNull();
     expect(ok!.user.id).toBe(u!.id);

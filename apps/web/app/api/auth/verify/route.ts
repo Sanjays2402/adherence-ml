@@ -6,6 +6,7 @@ import {
   SESSION_COOKIE,
   buildMfaPending,
   buildSession,
+  mfaRequiredButMissing,
 } from "@/lib/session";
 
 export const runtime = "nodejs";
@@ -25,7 +26,10 @@ export async function GET(req: NextRequest) {
   if (ssoMatch && ssoMatch.sso.enforce) {
     return NextResponse.redirect(new URL("/login?error=sso_required", req.url));
   }
-  const { cookie, expires } = buildSession(user);
+  if (await mfaRequiredButMissing(user)) {
+    return NextResponse.redirect(new URL("/login?error=mfa_enrollment_required", req.url));
+  }
+  const { cookie, expires } = await buildSession(user);
   const dest = req.nextUrl.searchParams.get("next") || "/";
   // Only allow same-origin relative redirects; ignore anything fancy.
   const safeDest = dest.startsWith("/") && !dest.startsWith("//") ? dest : "/";
@@ -103,7 +107,19 @@ export async function POST(req: NextRequest) {
       { status: 403 },
     );
   }
-  const { cookie, expires } = buildSession(user);
+  if (await mfaRequiredButMissing(user)) {
+    return NextResponse.json(
+      {
+        error: {
+          code: "mfa_enrollment_required",
+          message:
+            "Your workspace requires two-factor authentication. Enroll a TOTP authenticator before signing in.",
+        },
+      },
+      { status: 403 },
+    );
+  }
+  const { cookie, expires } = await buildSession(user);
   const dest = body.next || "/";
   const safeDest = dest.startsWith("/") && !dest.startsWith("//") ? dest : "/";
   if (hasTotpEnabled(user)) {

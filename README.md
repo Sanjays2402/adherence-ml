@@ -37,6 +37,41 @@ Try it:
     curl -s http://localhost:3000/metrics | head -20
     curl -i -H 'x-request-id: trace-abc-123' http://localhost:3000/login | grep -i x-request-id
 
+## Workspace security policy (session TTL + require MFA)
+
+Owners cap the maximum session lifetime and force every member to enroll
+TOTP from `/workspace/security`. Enforcement runs at three layers so a
+tightened policy applies immediately:
+
+- `buildSession` caps the cookie `exp` to the smallest
+  `session_max_age_minutes` across every workspace the user belongs to.
+- `getSession` re-evaluates the policy on every request and rejects
+  already-minted long-lived cookies whose `iat` is now out of range.
+- `/api/auth/verify`, `/api/auth/sso/callback`, and
+  `/api/auth/github/callback` refuse to mint a session when `require_mfa`
+  is on and the user has no TOTP factor (redirect to `?error=mfa_enrollment_required`).
+
+When a user belongs to multiple workspaces the tightest rule wins: lowest
+session cap, and `require_mfa` true if any workspace requires it. Every
+update is appended to the hash-chained dashboard audit log
+(`workspace.policy.update`) with the full before/after diff so a CISO can
+verify the timeline.
+
+Try it:
+
+    pnpm --filter @adherence/web dev
+    # UI: http://localhost:3000/workspace/security
+    # API (owner cookie required):
+    curl -i -X PUT http://localhost:3000/api/workspaces/<WS_ID>/policy \
+      -H 'content-type: application/json' \
+      -b adh_session=<your-cookie> \
+      -d '{"session_max_age_minutes":480,"require_mfa":true}'
+    # Dry-run preview without saving:
+    curl -s -X PUT 'http://localhost:3000/api/workspaces/<WS_ID>/policy?dry_run=true' \
+      -H 'content-type: application/json' \
+      -b adh_session=<your-cookie> \
+      -d '{"session_max_age_minutes":60,"require_mfa":false}'
+
 ## Single sign-on (OIDC) per workspace
 
 Workspace owners can route their members through Google Workspace, Okta,

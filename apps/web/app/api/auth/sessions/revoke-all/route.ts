@@ -56,7 +56,7 @@ export async function POST(req: Request) {
     // Re-read so buildSession sees the bumped generation.
     const fresh = await getUserById(sess.user.id);
     if (fresh) {
-      const { cookie, expires } = buildSession(fresh);
+      const { cookie, expires } = await buildSession(fresh);
       res.cookies.set(SESSION_COOKIE, cookie, sessionCookieOptions(expires));
     }
   } else {

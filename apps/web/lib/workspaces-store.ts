@@ -27,7 +27,27 @@ export interface Workspace {
    * are refused for those email domains.
    */
   sso?: WorkspaceSso | null;
+  /**
+   * Optional workspace-wide security policy. The effective policy for a
+   * given user is computed across every workspace they belong to:
+   *   - `session_max_age_minutes`: minimum across workspaces (tightest wins)
+   *   - `require_mfa`: true if ANY workspace requires it (strictest wins)
+   * Owners only can edit.
+   */
+  security_policy?: WorkspaceSecurityPolicy | null;
 }
+
+export interface WorkspaceSecurityPolicy {
+  /** Maximum session lifetime in minutes. Null means no cap (default 30d). */
+  session_max_age_minutes: number | null;
+  /** Every member must have TOTP enrolled and have passed the MFA challenge. */
+  require_mfa: boolean;
+  updated_at: number;
+  updated_by: string;
+}
+
+export const POLICY_MIN_SESSION_MINUTES = 5;
+export const POLICY_MAX_SESSION_MINUTES = 30 * 24 * 60; // 30 days
 
 export type SsoProvider = "oidc";
 
@@ -484,3 +504,101 @@ export async function removeMember(
 export async function _resetForTests(): Promise<void> {
   await writeStore({ version: 1, workspaces: [], members: [], invites: [] });
 }
+
+// ---------------------------------------------------------------------------
+// Workspace security policy (session TTL cap, MFA requirement)
+// ---------------------------------------------------------------------------
+
+export interface PublicWorkspaceSecurityPolicy {
+  session_max_age_minutes: number | null;
+  require_mfa: boolean;
+  updated_at: number;
+}
+
+export function publicPolicy(
+  p: WorkspaceSecurityPolicy | null | undefined,
+): PublicWorkspaceSecurityPolicy {
+  if (!p) {
+    return { session_max_age_minutes: null, require_mfa: false, updated_at: 0 };
+  }
+  return {
+    session_max_age_minutes: p.session_max_age_minutes,
+    require_mfa: p.require_mfa,
+    updated_at: p.updated_at,
+  };
+}
+
+export async function getWorkspacePolicy(
+  workspaceId: string,
+): Promise<WorkspaceSecurityPolicy | null> {
+  const store = await readStore();
+  const ws = store.workspaces.find((w) => w.id === workspaceId);
+  return ws?.security_policy ?? null;
+}
+
+export async function setWorkspacePolicy(
+  workspaceId: string,
+  actorUserId: string,
+  next: { session_max_age_minutes: number | null; require_mfa: boolean },
+): Promise<PublicWorkspaceSecurityPolicy> {
+  const store = await readStore();
+  const ws = store.workspaces.find((w) => w.id === workspaceId);
+  if (!ws) throw new Error("workspace not found");
+  const me = store.members.find(
+    (m) => m.workspace_id === workspaceId && m.user_id === actorUserId,
+  );
+  if (!me || me.role !== "owner") throw new Error("owner only");
+  let cap: number | null = null;
+  if (next.session_max_age_minutes !== null && next.session_max_age_minutes !== undefined) {
+    const n = Math.floor(Number(next.session_max_age_minutes));
+    if (!Number.isFinite(n) || n < POLICY_MIN_SESSION_MINUTES || n > POLICY_MAX_SESSION_MINUTES) {
+      throw new Error(
+        `session_max_age_minutes must be between ${POLICY_MIN_SESSION_MINUTES} and ${POLICY_MAX_SESSION_MINUTES}`,
+      );
+    }
+    cap = n;
+  }
+  ws.security_policy = {
+    session_max_age_minutes: cap,
+    require_mfa: Boolean(next.require_mfa),
+    updated_at: Date.now(),
+    updated_by: actorUserId,
+  };
+  await writeStore(store);
+  return publicPolicy(ws.security_policy);
+}
+
+/**
+ * Effective security policy for a user, computed across every workspace they
+ * belong to. Tightest rule wins:
+ *   - session_max_age_minutes: minimum across workspaces (null = unset)
+ *   - require_mfa: true if any workspace requires it
+ */
+export async function effectivePolicyForUser(
+  userId: string,
+): Promise<{ session_max_age_minutes: number | null; require_mfa: boolean; sources: string[] }> {
+  const store = await readStore();
+  const myWorkspaceIds = store.members
+    .filter((m) => m.user_id === userId)
+    .map((m) => m.workspace_id);
+  let cap: number | null = null;
+  let mfa = false;
+  const sources: string[] = [];
+  for (const ws of store.workspaces) {
+    if (!myWorkspaceIds.includes(ws.id)) continue;
+    const p = ws.security_policy;
+    if (!p) continue;
+    if (p.session_max_age_minutes !== null) {
+      if (cap === null || p.session_max_age_minutes < cap) {
+        cap = p.session_max_age_minutes;
+      }
+      sources.push(ws.id);
+    }
+    if (p.require_mfa) {
+      mfa = true;
+      if (!sources.includes(ws.id)) sources.push(ws.id);
+    }
+  }
+  return { session_max_age_minutes: cap, require_mfa: mfa, sources };
+}
+

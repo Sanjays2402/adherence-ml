@@ -16,6 +16,22 @@ import {
   currentSessionGen,
   type UserRecord,
 } from "./users-store";
+import { effectivePolicyForUser } from "./workspaces-store";
+
+/**
+ * True when any workspace the user belongs to requires MFA and the user has
+ * not yet enrolled a TOTP factor. Login flows that bypass the MFA challenge
+ * (i.e. user has no TOTP) must refuse to mint a session in this case.
+ */
+export async function mfaRequiredButMissing(user: UserRecord): Promise<boolean> {
+  try {
+    const pol = await effectivePolicyForUser(user.id);
+    if (!pol.require_mfa) return false;
+    return !(user.totp_enabled && user.totp_secret);
+  } catch {
+    return false;
+  }
+}
 
 export const SESSION_COOKIE = "adh_session";
 export const MFA_PENDING_COOKIE = "adh_mfa_pending";
@@ -104,16 +120,27 @@ export function verifySession(raw: string | undefined): SessionPayload | null {
   return payload;
 }
 
-export function buildSession(user: UserRecord): {
+export async function buildSession(user: UserRecord): Promise<{
   cookie: string;
   expires: Date;
-} {
+}> {
   const now = Date.now();
+  // Workspace security policy may cap session lifetime below the default.
+  let ttl = SESSION_TTL_MS;
+  try {
+    const pol = await effectivePolicyForUser(user.id);
+    if (pol.session_max_age_minutes !== null) {
+      const capMs = pol.session_max_age_minutes * 60 * 1000;
+      if (capMs < ttl) ttl = capMs;
+    }
+  } catch {
+    // policy store unavailable: fall back to default TTL rather than block login.
+  }
   const payload: SessionPayload = {
     uid: user.id,
     eml: user.email,
     iat: now,
-    exp: now + SESSION_TTL_MS,
+    exp: now + ttl,
     gen: currentSessionGen(user),
   };
   return { cookie: signSession(payload), expires: new Date(payload.exp) };
@@ -156,6 +183,17 @@ export async function getSession(req?: NextRequest): Promise<SessionContext | nu
   // so legacy cookies keep working until the user explicitly revokes.
   const cookieGen = typeof payload.gen === "number" ? payload.gen : 1;
   if (cookieGen < currentSessionGen(user)) return null;
+  // Re-evaluate workspace security policy on every request so tightening the
+  // session_max_age_minutes invalidates already-minted long-lived cookies.
+  try {
+    const pol = await effectivePolicyForUser(user.id);
+    if (pol.session_max_age_minutes !== null) {
+      const ageMs = Date.now() - payload.iat;
+      if (ageMs > pol.session_max_age_minutes * 60 * 1000) return null;
+    }
+  } catch {
+    // ignore policy lookup failure
+  }
   return { user, payload };
 }
 

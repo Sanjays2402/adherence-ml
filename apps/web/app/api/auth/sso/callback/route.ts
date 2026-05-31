@@ -12,6 +12,7 @@ import {
   SESSION_COOKIE,
   buildMfaPending,
   buildSession,
+  mfaRequiredButMissing,
 } from "@/lib/session";
 
 export const runtime = "nodejs";
@@ -132,7 +133,14 @@ export async function GET(req: NextRequest) {
     });
     return burn(res);
   }
-  const { cookie, expires } = buildSession(user);
+  if (await mfaRequiredButMissing(user)) {
+    return burn(
+      NextResponse.redirect(
+        new URL("/login?error=mfa_enrollment_required", req.url),
+      ),
+    );
+  }
+  const { cookie, expires } = await buildSession(user);
   const res = NextResponse.redirect(new URL(dest, req.url));
   res.cookies.set(SESSION_COOKIE, cookie, {
     path: "/",

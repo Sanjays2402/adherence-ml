@@ -63,14 +63,14 @@ describe("users-store: magic link flow", () => {
 });
 
 describe("session: sign / verify", () => {
-  it("round-trips a valid session", () => {
+  it("round-trips a valid session", async () => {
     const fakeUser = {
       id: "u_test123",
       email: "carol@example.com",
       created_at: Date.now(),
       last_login_at: Date.now(),
     };
-    const { cookie, expires } = session.buildSession(fakeUser);
+    const { cookie, expires } = await session.buildSession(fakeUser);
     expect(expires.getTime()).toBeGreaterThan(Date.now() + 24 * 3600 * 1000);
 
     const payload = session.verifySession(cookie);

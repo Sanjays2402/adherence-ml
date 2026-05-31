@@ -75,7 +75,7 @@ export async function POST(req: NextRequest) {
   }
   // Re-read user to get an authoritative recovery_code_hashes count after consumption.
   const fresh = (await getUserById(user.id)) ?? user;
-  const { cookie, expires } = buildSession(fresh);
+  const { cookie, expires } = await buildSession(fresh);
   const nextDest =
     pending.payload.next && pending.payload.next.startsWith("/") && !pending.payload.next.startsWith("//")
       ? pending.payload.next
