@@ -4,6 +4,47 @@ ML risk scoring for medication adherence. Predicts which upcoming doses a user
 is likely to miss in the next 24 hours and turns those scores into ranked
 interventions.
 
+## SIEM audit log export (`/v1/audit`)
+
+The dashboard's hash-chained audit log (settings changes, key rotations,
+role changes, data exports, account erasure, webhook redeliveries) is now
+readable via a public, key-authenticated endpoint so customers can ship it
+straight into Splunk, Datadog, Elastic, or Panther.
+
+- New `audit` scope on API keys. Mint a dedicated read-only SIEM key from
+  Settings, API keys, with only the `audit` scope checked. Existing
+  `predict` / `read` / `webhooks` keys do not gain audit access.
+- `GET /v1/audit?format=ndjson&limit=500` streams entries with the standard
+  `X-RateLimit-*` headers plus `X-Audit-Tip-Hash` and `X-Audit-Chain-Valid`
+  so a SIEM rule can alert on tampering without parsing the body. Supported
+  formats: `json` (default), `ndjson`, `jsonl`, `csv`. Supported filters:
+  `action`, `actor`, `outcome`, `since` (ISO-8601 or epoch ms).
+- `GET /v1/audit/verify` recomputes the SHA-256 chain across the whole log
+  and returns `{ chain_valid, tip_hash, entries, checked_at }` for a daily
+  SOC2 probe.
+- The read does not write to the audit log itself (read access is not a
+  compliance event) and does not consume predict quota.
+
+Try it locally:
+
+```bash
+pnpm --filter @adherence/web dev
+# 1. Open http://localhost:3000/api-keys and create a key with only
+#    the `audit` scope checked. Copy the plaintext.
+# 2. Pull entries as NDJSON for your SIEM:
+curl -i 'http://localhost:3000/v1/audit?format=ndjson&limit=200' \
+  -H "authorization: Bearer $ADH_AUDIT_KEY"
+# 3. Daily tamper probe:
+curl http://localhost:3000/v1/audit/verify \
+  -H "authorization: Bearer $ADH_AUDIT_KEY"
+```
+
+Run the isolation and tamper-detection tests:
+
+```bash
+pnpm --filter @adherence/web exec vitest run tests/v1-audit.test.ts
+```
+
 ## Workspace role management (owner-only, audited)
 
 Workspace owners can promote, demote, or remove any member from the dashboard

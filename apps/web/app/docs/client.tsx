@@ -38,6 +38,7 @@ const SCOPE_TONE: Record<ApiScope, "success" | "warn" | "neutral"> = {
   predict: "success",
   read: "neutral",
   webhooks: "warn",
+  audit: "warn",
 };
 
 const METHOD_TONE: Record<ApiEndpoint["method"], string> = {
@@ -52,6 +53,7 @@ const GROUP_ICON = {
   runs: ClockCounterClockwise,
   webhooks: Plugs,
   keys: Key,
+  audit: ShieldCheck,
 } as const;
 
 const STORAGE_KEY = "adh-docs-key";

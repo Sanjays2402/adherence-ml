@@ -11,7 +11,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { randomBytes, createHash } from "node:crypto";
 
-export const ALL_SCOPES = ["predict", "read", "webhooks"] as const;
+export const ALL_SCOPES = ["predict", "read", "webhooks", "audit"] as const;
 export type KeyScope = (typeof ALL_SCOPES)[number];
 export const DEFAULT_SCOPES: KeyScope[] = ["predict", "read"];
 

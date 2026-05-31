@@ -6,7 +6,7 @@
  * to a real route file on disk, so this list cannot rot silently.
  */
 
-export type ApiScope = "predict" | "read" | "webhooks";
+export type ApiScope = "predict" | "read" | "webhooks" | "audit";
 
 export type ApiEndpoint = {
   id: string;
@@ -14,7 +14,7 @@ export type ApiEndpoint = {
   path: string;
   routeFile: string;
   scope: ApiScope;
-  group: "predict" | "runs" | "webhooks" | "keys";
+  group: "predict" | "runs" | "webhooks" | "keys" | "audit";
   summary: string;
   curl: string;
   liveTestable: boolean;
@@ -213,12 +213,37 @@ export const ENDPOINTS: ApiEndpoint[] = [
   -H "authorization: Bearer ${KEY}"`,
     liveTestable: true,
   },
+  {
+    id: "audit-list",
+    method: "GET",
+    path: "/v1/audit",
+    routeFile: "app/v1/audit/route.ts",
+    scope: "audit",
+    group: "audit",
+    summary: "Stream the hash-chained dashboard audit log for SIEM ingestion. Filter by action, actor, outcome, or since. Format: json (default), ndjson, jsonl, csv. Headers expose X-Audit-Tip-Hash and X-Audit-Chain-Valid.",
+    curl: `curl -i "${HOST}/v1/audit?format=ndjson&limit=200" \\
+  -H "authorization: Bearer ${KEY}"`,
+    liveTestable: true,
+  },
+  {
+    id: "audit-verify",
+    method: "GET",
+    path: "/v1/audit/verify",
+    routeFile: "app/v1/audit/verify/route.ts",
+    scope: "audit",
+    group: "audit",
+    summary: "Recompute the audit hash chain and return the tip hash plus a boolean. Use this for a daily SIEM probe to detect log tampering.",
+    curl: `curl ${HOST}/v1/audit/verify \\
+  -H "authorization: Bearer ${KEY}"`,
+    liveTestable: true,
+  },
 ];
 
 export const GROUPS: { id: ApiEndpoint["group"]; label: string; blurb: string }[] = [
   { id: "predict", label: "Predict", blurb: "Score doses, one request or batched." },
   { id: "runs", label: "Runs", blurb: "Read, export, and share saved runs." },
   { id: "webhooks", label: "Webhooks", blurb: "Manage outbound endpoints and tail deliveries." },
+  { id: "audit", label: "Audit", blurb: "Pull the hash-chained dashboard audit log into your SIEM." },
   { id: "keys", label: "Keys", blurb: "Introspect the calling key." },
 ];
 

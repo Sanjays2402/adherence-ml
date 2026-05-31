@@ -22,7 +22,7 @@ import {
   Stat,
 } from "@/components/ui/primitives";
 
-type Scope = "predict" | "read" | "webhooks";
+type Scope = "predict" | "read" | "webhooks" | "audit";
 
 type KeyMeta = {
   id: string;
