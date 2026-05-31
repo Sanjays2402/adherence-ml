@@ -2693,7 +2693,25 @@ uv run cyclonedx-py environment --output-format JSON --output-file sbom.cdx.json
 
 **Multi-tenant scoping.** Every PII-bearing write stamps a `tenant_id` (default `"default"`) from the calling principal so audit, predictions, and intervention deliveries can be filtered without cross-tenant leakage. Tenants land on the principal three ways: DB-issued API keys carry `tenant_id` set at creation time via `POST /v1/admin/api-keys` (`{"name": ..., "role": ..., "tenant_id": "acme"}`) and surface again on `GET /v1/admin/api-keys`; JWTs minted via `POST /v1/admin/token` accept a `tenant` field that becomes the `tenant` claim and is read back on every request; legacy env-mapped keys in `ADHERENCE_API_KEYS` fall through to `ADHERENCE_DEFAULT_TENANT`. The audit reader `GET /v1/audit/list` and exporter `GET /v1/audit/export.csv` default to the caller's tenant and accept `?tenant=<id>` only when the caller is admin role; admins may pass `?tenant=*` for a cross-tenant compliance read. Non-admin callers asking for a tenant other than their own get HTTP 403 with an explicit `tenant mismatch` detail. Tenant id is included in the tamper-evident audit hash chain so swapping a row's tenant after the fact breaks `GET /v1/audit/verify`. New columns are added in place by `init_db()` via an idempotent inspector-driven `ALTER TABLE` so existing deployments converge without a separate alembic step; pre-existing rows get the `default` tenant.
 
+**Workspace session policy UI.** The per-tenant session max-age cap shipped at `/v1/workspace/session-policy` now has a dashboard surface at `/settings/session-policy`. Admins see the current cap (or a `global` badge when no override is set), the last change timestamp, and the operator who made it. The form composes minutes/hours/days into seconds, validates client-side against the server's `min_allowed_seconds` / `max_allowed_seconds` envelope, and refuses to submit out-of-range values before a round trip. A `dry run` button posts `?dry_run=true` and renders the would-be payload without writing, so a compliance reviewer can preview the change. A `clear cap` button falls back to the global default after a confirm. The Next.js proxy at `apps/web/app/api/workspace/session-policy/route.ts` forwards `x-request-id` for log stitching and `X-MFA-Code` for admin MFA challenges, surfaces upstream `401` with a clear `Admin MFA required` hint, and bubbles structured upstream error bodies verbatim. Validation lives in zod against the same `[5 minutes, 30 days]` envelope the FastAPI route enforces, so a malformed payload is rejected at the proxy with `{detail, issues}` and never reaches the API. Coverage in `apps/web/tests/workspace-session-policy-route.test.ts` proves invalid JSON, below-floor and above-ceiling values, MFA + dry-run forwarding, and verbatim error bubbling.
+
+### Try it
+
+```
+cd apps/web && pnpm dev
+# then open
+open http://localhost:3000/settings/session-policy
+# read the policy via the proxy
+curl -s http://localhost:3000/api/workspace/session-policy | jq
+# set an 8-hour cap (admin MFA forwarded when needed)
+curl -s -X PUT http://localhost:3000/api/workspace/session-policy \
+  -H 'content-type: application/json' \
+  -H 'x-mfa-code: 123456' \
+  -d '{"max_age_seconds": 28800}' | jq
+```
+
 ## License
 
 MIT. See `LICENSE`.
+
 
