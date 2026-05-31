@@ -6,6 +6,9 @@ import { NextRequest } from "next/server";
 
 const tmp = mkdtempSync(path.join(os.tmpdir(), "adh-wh-export-"));
 process.env.ADHERENCE_DATA_DIR = tmp;
+// Export is session-gated; opt into the dev bypass for this isolated
+// suite so we exercise the format + filter behaviour, not the auth path.
+process.env.ADHERENCE_DASHBOARD_OPEN = "1";
 
 // Import after env is set so the file-backed store points at the tmp dir.
 const store = await import("../lib/webhooks-store");

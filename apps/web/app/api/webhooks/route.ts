@@ -5,6 +5,7 @@ import {
   listEndpoints,
   isValidUrl,
 } from "@/lib/webhooks-store";
+import { auditAction, requireDashboardAuth } from "@/lib/dashboard-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,7 +20,14 @@ const PostSchema = z.object({
   events: z.array(z.enum(["run.created", "test.ping"])).optional(),
 });
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  // Webhook URLs and secret prefixes are sensitive: they reveal what
+  // partner systems this workspace integrates with and provide
+  // targeting data for SSRF probes. Gate on session.
+  const auth = await requireDashboardAuth(req, {
+    action: "webhook.endpoints.list",
+  });
+  if (!auth.ok) return auth.response;
   const endpoints = await listEndpoints();
   const now = Date.now();
   // never leak the hash
@@ -53,6 +61,10 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireDashboardAuth(req, {
+    action: "webhook.endpoint.create",
+  });
+  if (!auth.ok) return auth.response;
   let json: unknown;
   try {
     json = await req.json();
@@ -64,6 +76,11 @@ export async function POST(req: NextRequest) {
   }
   const parsed = PostSchema.safeParse(json);
   if (!parsed.success) {
+    await auditAction(req, auth.ctx, {
+      action: "webhook.endpoint.create",
+      outcome: "denied",
+      metadata: { reason: "validation_failed" },
+    });
     return NextResponse.json(
       { error: "validation_failed", detail: parsed.error.flatten() },
       { status: 422 },
@@ -71,6 +88,15 @@ export async function POST(req: NextRequest) {
   }
   try {
     const created = await createEndpoint(parsed.data);
+    await auditAction(req, auth.ctx, {
+      action: "webhook.endpoint.create",
+      target: `webhook_endpoint:${created.record.id}`,
+      metadata: {
+        name: created.record.name,
+        url: created.record.url,
+        events: created.record.events,
+      },
+    });
     return NextResponse.json(
       {
         id: created.record.id,
@@ -78,15 +104,20 @@ export async function POST(req: NextRequest) {
         url: created.record.url,
         events: created.record.events,
         secret_prefix: created.record.secret_prefix,
-        // surfaced exactly once; the dashboard tells users to copy it now
-        secret: created.secret,
         active: created.record.active,
         created_at: created.record.created_at,
+        // returned exactly once
+        secret: created.secret,
       },
       { status: 201 },
     );
   } catch (e) {
     const msg = e instanceof Error ? e.message : "create_failed";
+    await auditAction(req, auth.ctx, {
+      action: "webhook.endpoint.create",
+      outcome: "denied",
+      metadata: { reason: msg },
+    });
     if (msg.startsWith("ssrf_blocked:")) {
       return NextResponse.json(
         {

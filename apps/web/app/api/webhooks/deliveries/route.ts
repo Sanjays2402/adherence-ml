@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listDeliveries, type DeliveryStatusFilter } from "@/lib/webhooks-store";
+import { requireDashboardAuth } from "@/lib/dashboard-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -7,6 +8,10 @@ export const dynamic = "force-dynamic";
 const STATUSES: readonly DeliveryStatusFilter[] = ["all", "ok", "failed", "pending"];
 
 export async function GET(req: NextRequest) {
+  const auth = await requireDashboardAuth(req, {
+    action: "webhook.deliveries.list",
+  });
+  if (!auth.ok) return auth.response;
   const sp = req.nextUrl.searchParams;
   const endpoint_id = sp.get("endpoint_id") ?? undefined;
   const limit = Number(sp.get("limit") ?? 50);

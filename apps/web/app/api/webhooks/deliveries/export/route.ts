@@ -5,6 +5,7 @@ import {
   type DeliveryStatusFilter,
   type WebhookDelivery,
 } from "@/lib/webhooks-store";
+import { requireDashboardAuth } from "@/lib/dashboard-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -68,6 +69,10 @@ function tsStamp(): string {
 }
 
 export async function GET(req: NextRequest) {
+  const auth = await requireDashboardAuth(req, {
+    action: "webhook.deliveries.export",
+  });
+  if (!auth.ok) return auth.response;
   const sp = req.nextUrl.searchParams;
   const fmtRaw = (sp.get("format") ?? "csv").toLowerCase();
   if (!FORMATS.includes(fmtRaw as Format)) {

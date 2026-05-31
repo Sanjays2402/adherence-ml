@@ -2,6 +2,30 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Authenticated webhook admin console with audit-logged mutations
+
+Dashboard-side webhook management (`/api/webhooks/*`) previously accepted unauthenticated requests, which would have failed an enterprise SOC2 review on first sweep. Every endpoint that lists, creates, toggles, deletes, test-fires, replays, or exports webhook data now requires a signed dashboard session and lands a row in the tamper-evident dashboard audit log (`recordAudit`). The new `/workspace/webhooks` page is a single console where an owner can register HMAC-signed outbound endpoints, browse the full delivery log with per-attempt status codes and durations, replay any failed delivery, send a `test.ping`, and export the last 500 attempts as CSV for an external SIEM.
+
+Proven by `apps/web/tests/webhook-routes-auth.test.ts` (10 tests):
+
+- Every mutating route (create, patch, delete, test-fire, replay) returns 401 without a session.
+- The denied create attempt writes a `webhook.endpoint.create` audit row with `outcome=denied` and `reason=no_session`, the exact signal a security review will grep for.
+- Read endpoints (list endpoints, list deliveries, get delivery, export) all gate on session so webhook URLs and secret prefixes cannot be enumerated unauthenticated.
+- The documented `ADHERENCE_DASHBOARD_OPEN=1` dev bypass still lets local development through, with the bypass flag flowing into audit metadata.
+
+### Try it
+
+Dashboard: <http://127.0.0.1:3000/workspace/webhooks>. Sign in at `/dashboard`, click **new endpoint**, copy the one-time signing secret, then click **test** to fire a `test.ping` and watch the delivery land in the table below.
+
+```bash
+# Unauthenticated POST is now rejected with 401.
+curl -sS -i -X POST http://127.0.0.1:3000/api/webhooks \
+  -H 'content-type: application/json' \
+  -d '{"name":"prod","url":"https://example.com/hook"}'
+# HTTP/1.1 401 Unauthorized
+# { "error": "unauthenticated", "detail": "...sign in..." }
+```
+
 ## Webhook signing-secret rotation with grace window
 
 Enterprise security teams require zero-downtime rotation of outbound HMAC signing secrets so a leaked or aging key can be replaced without dropping deliveries. The dashboard now lets a workspace owner rotate an outbound webhook secret with a configurable grace window (5 minutes to 7 days, default 24 hours). During the window we co-sign every delivery with the new secret as `X-Adherence-Signature` and the prior secret as `X-Adherence-Signature-Secondary`, letting receivers verify against either. The prior secret auto-expires (and is purged from disk on next read) and can also be killed immediately from the dashboard. Rotation honours `?dry_run=true` and the new plaintext is returned exactly once, mirroring the create-endpoint contract.
