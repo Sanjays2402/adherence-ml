@@ -21,6 +21,7 @@ import { z } from "zod";
 
 import { ApiError, apiFetch } from "@/lib/api";
 import { extractKey, hasScope, verifyKey } from "@/lib/api-keys-store";
+import { recordKeyUsage, usedTodayForKey } from "@/lib/api-key-usage-store";
 import { parseCsv, toCsv } from "@/lib/csv";
 import { appendRun, newRunId } from "@/lib/runs-store";
 import { FREE_DAILY_QUOTA, recordUsage, usedToday } from "@/lib/usage-store";
@@ -195,6 +196,35 @@ export async function POST(req: NextRequest) {
   const used = await usedToday();
   const quota = await planDailyQuota().catch(() => FREE_DAILY_QUOTA);
   const cost = parsedRows.length;
+
+  // Per-key cap, enforced before the workspace plan quota. Same semantics
+  // as /v1/predict: a partner key with daily_quota=N can never exceed N
+  // calls/day even if the workspace plan has more headroom.
+  const perKeyLimit = typeof key.daily_quota === "number" && key.daily_quota > 0
+    ? key.daily_quota
+    : null;
+  const perKeyUsed = perKeyLimit !== null ? await usedTodayForKey(key.id) : 0;
+  if (perKeyLimit !== null && perKeyUsed + cost > perKeyLimit) {
+    return NextResponse.json(
+      {
+        error: "key_quota_exceeded",
+        detail: "this batch would exceed the per-key daily quota",
+        key_daily_quota: perKeyLimit,
+        key_used_today: perKeyUsed,
+        batch_cost: cost,
+        key_remaining: Math.max(0, perKeyLimit - perKeyUsed),
+      },
+      {
+        status: 429,
+        headers: {
+          "x-ratelimit-limit": String(perKeyLimit),
+          "x-ratelimit-remaining": String(Math.max(0, perKeyLimit - perKeyUsed)),
+          "x-ratelimit-scope": "api_key",
+          "retry-after": "3600",
+        },
+      },
+    );
+  }
   if (used + cost > quota) {
     return NextResponse.json(
       {
@@ -336,6 +366,13 @@ export async function POST(req: NextRequest) {
     "x-batch-users": String(byUser.size),
     "x-latency-ms": String(latency),
   };
+  if (perKeyLimit !== null) {
+    quotaHeaders["x-ratelimit-limit"] = String(perKeyLimit);
+    quotaHeaders["x-ratelimit-remaining"] = String(
+      Math.max(0, perKeyLimit - perKeyUsed - cost),
+    );
+    quotaHeaders["x-ratelimit-scope"] = "api_key";
+  }
 
   if (format === "csv") {
     const csv = toCsv(

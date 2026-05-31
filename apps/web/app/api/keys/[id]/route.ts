@@ -1,9 +1,51 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listKeys, revokeKey, publicView } from "@/lib/api-keys-store";
+import { z } from "zod";
+import {
+  ALL_SCOPES,
+  listKeys,
+  publicView,
+  revokeKey,
+  updateKey,
+} from "@/lib/api-keys-store";
 import { dryRunBody, isDryRun, withDryRunHeaders } from "@/lib/dry-run";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+const PatchSchema = z.object({
+  name: z.string().min(1).max(80).optional(),
+  scopes: z.array(z.enum(ALL_SCOPES)).optional(),
+  // null clears the per-key cap, positive int sets it. Capped server-side.
+  daily_quota: z.number().int().min(1).max(10_000_000).nullable().optional(),
+});
+
+export async function PATCH(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  const { id } = await ctx.params;
+  let raw: unknown;
+  try {
+    raw = await req.json();
+  } catch {
+    return NextResponse.json({ detail: "invalid json" }, { status: 400 });
+  }
+  const parsed = PatchSchema.safeParse(raw);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { detail: "invalid request", issues: parsed.error.issues },
+      { status: 400 },
+    );
+  }
+  const updated = await updateKey(id, parsed.data);
+  if (!updated) {
+    return NextResponse.json(
+      { detail: "not found or revoked" },
+      { status: 404 },
+    );
+  }
+  return NextResponse.json(publicView(updated));
+}
 
 export async function DELETE(
   req: NextRequest,

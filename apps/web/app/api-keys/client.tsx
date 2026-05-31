@@ -40,6 +40,7 @@ type KeyRow = {
   scopes: Scope[];
   expires_at: number | null;
   expired: boolean;
+  daily_quota: number | null;
 };
 
 type ListResp = { keys: KeyRow[]; available_scopes: Scope[]; ttl_presets_days: number[] };
@@ -87,6 +88,121 @@ function CopyBtn({ text, label = "copy" }: { text: string; label?: string }) {
       {done ? <Check weight="bold" size={12} /> : <Copy weight="duotone" size={12} />}
       {done ? "copied" : label}
     </button>
+  );
+}
+
+function QuotaCell({
+  k,
+  disabled,
+  onSaved,
+}: {
+  k: KeyRow;
+  disabled: boolean;
+  onSaved: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState<string>(
+    k.daily_quota == null ? "" : String(k.daily_quota),
+  );
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const save = useCallback(async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const trimmed = val.trim();
+      let daily_quota: number | null = null;
+      if (trimmed) {
+        const n = Math.floor(Number(trimmed));
+        if (!Number.isFinite(n) || n <= 0) {
+          throw new Error("enter a positive whole number, or leave blank for no cap");
+        }
+        daily_quota = n;
+      }
+      const res = await fetch(`/api/keys/${k.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ daily_quota }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j?.detail ?? `update failed (${res.status})`);
+      }
+      setEditing(false);
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [k.id, val, onSaved]);
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => {
+          setVal(k.daily_quota == null ? "" : String(k.daily_quota));
+          setErr(null);
+          setEditing(true);
+        }}
+        className="text-[11px] font-mono px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-surface)] hover:border-[var(--color-accent)]/40 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)] disabled:opacity-50 disabled:cursor-not-allowed"
+        aria-label={`edit daily cap for ${k.name}`}
+        title={
+          k.daily_quota == null
+            ? "No per-key cap. Click to set one."
+            : `Per-key cap: ${k.daily_quota} calls/day. Click to edit.`
+        }
+      >
+        {k.daily_quota == null ? "none" : k.daily_quota.toLocaleString()}
+      </button>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1 justify-end">
+      <input
+        type="number"
+        min={1}
+        step={1}
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        placeholder="none"
+        autoFocus
+        onKeyDown={(e) => {
+          if (e.key === "Enter") void save();
+          if (e.key === "Escape") setEditing(false);
+        }}
+        className="w-20 text-[11px] font-mono px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-soft)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
+        aria-label="daily quota in calls per day, blank for none"
+      />
+      <button
+        type="button"
+        onClick={() => void save()}
+        disabled={busy}
+        className="text-[11px] px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-surface)] hover:border-[var(--color-accent)]/40 disabled:opacity-50"
+      >
+        {busy ? "..." : "save"}
+      </button>
+      <button
+        type="button"
+        onClick={() => setEditing(false)}
+        disabled={busy}
+        className="text-[11px] px-2 py-1 rounded text-[var(--color-muted)] hover:text-[var(--color-text)] disabled:opacity-50"
+      >
+        cancel
+      </button>
+      {err ? (
+        <span
+          className="text-[10px] text-[var(--color-high)]"
+          role="alert"
+        >
+          {err}
+        </span>
+      ) : null}
+    </span>
   );
 }
 
@@ -433,6 +549,7 @@ export default function KeysClient() {
                     <th className="px-4 py-2 font-medium">Rotated</th>
                     <th className="px-4 py-2 font-medium">Expires</th>
                     <th className="px-4 py-2 font-medium text-right">Calls</th>
+                    <th className="px-4 py-2 font-medium text-right">Cap/day</th>
                     <th className="px-4 py-2 font-medium">Status</th>
                     <th className="px-4 py-2 font-medium text-right">Actions</th>
                   </tr>
@@ -471,6 +588,13 @@ export default function KeysClient() {
                         )}
                       </td>
                       <td className="px-4 py-2 text-right font-mono">{k.use_count}</td>
+                      <td className="px-4 py-2 text-right">
+                        <QuotaCell
+                          k={k}
+                          disabled={k.revoked || k.expired}
+                          onSaved={() => mutate()}
+                        />
+                      </td>
                       <td className="px-4 py-2">
                         {k.revoked ? (
                           <Badge tone="danger">revoked</Badge>

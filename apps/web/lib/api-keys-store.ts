@@ -46,6 +46,22 @@ export interface ApiKeyRecord {
    * refuses the key with the same semantics as `revoked`.
    */
   expires_at?: number | null;
+  /**
+   * Optional per-key daily request cap. When set to a positive integer, the
+   * key is rate-limited to this many calls per UTC day in addition to the
+   * workspace plan quota. `null` or omitted means no per-key cap (the key
+   * just inherits the workspace plan quota).
+   */
+  daily_quota?: number | null;
+}
+
+/** Normalize a user-supplied daily quota value into a stored field. */
+export function normalizeDailyQuota(raw: unknown): number | null {
+  if (raw === null || raw === undefined || raw === "") return null;
+  const n = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  // cap at 10M/day to avoid silly values
+  return Math.min(Math.floor(n), 10_000_000);
 }
 
 /** True when the key carries a non-null `expires_at` that has already passed. */
@@ -90,7 +106,39 @@ export function publicView(k: ApiKeyRecord) {
     scopes: scopesOf(k),
     expires_at: k.expires_at ?? null,
     expired: isExpired(k),
+    daily_quota: k.daily_quota ?? null,
   };
+}
+
+/**
+ * Update mutable fields on an existing key (name, scopes, daily_quota).
+ * Returns the updated record, or null if not found / revoked.
+ * Only fields explicitly provided in `patch` are touched.
+ */
+export async function updateKey(
+  id: string,
+  patch: { name?: string; scopes?: KeyScope[]; daily_quota?: number | null },
+): Promise<ApiKeyRecord | null> {
+  let out: ApiKeyRecord | null = null;
+  writeQueue = writeQueue.then(async () => {
+    const s = await readStore();
+    const k = s.keys.find((k) => k.id === id);
+    if (!k || k.revoked) return;
+    if (typeof patch.name === "string") {
+      const trimmed = patch.name.trim().slice(0, 80);
+      if (trimmed) k.name = trimmed;
+    }
+    if (Array.isArray(patch.scopes)) {
+      k.scopes = normalizeScopes(patch.scopes);
+    }
+    if (patch.daily_quota !== undefined) {
+      k.daily_quota = normalizeDailyQuota(patch.daily_quota);
+    }
+    out = { ...k };
+    await writeStore(s);
+  });
+  await writeQueue;
+  return out;
 }
 
 export function hasScope(rec: Pick<ApiKeyRecord, "scopes">, scope: KeyScope): boolean {
@@ -170,6 +218,7 @@ export async function createKey(
     revoked: false,
     scopes: normalizeScopes(scopes),
     expires_at: expiresAt ?? null,
+    daily_quota: null,
   };
   writeQueue = writeQueue.then(async () => {
     const s = await readStore();

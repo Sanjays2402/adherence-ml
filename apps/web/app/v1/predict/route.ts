@@ -14,7 +14,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { ApiError, apiFetch } from "@/lib/api";
 import { extractKey, hasScope, verifyKey } from "@/lib/api-keys-store";
-import { recordKeyUsage } from "@/lib/api-key-usage-store";
+import { recordKeyUsage, usedTodayForKey } from "@/lib/api-key-usage-store";
 import { appendRun, newRunId } from "@/lib/runs-store";
 import { FREE_DAILY_QUOTA, recordUsage, usedToday } from "@/lib/usage-store";
 import { dailyQuota as planDailyQuota } from "@/lib/plan-store";
@@ -63,6 +63,33 @@ export async function POST(req: NextRequest) {
   // raises the ceiling for /v1/predict.
   const used = await usedToday();
   const quota = await planDailyQuota().catch(() => FREE_DAILY_QUOTA);
+
+  // Per-key daily cap, if the key has one. Independent of and stricter than
+  // the workspace plan quota. Lets admins hand a partner a key that can
+  // only burn N calls/day no matter how much plan headroom exists.
+  const perKeyLimit = typeof key.daily_quota === "number" && key.daily_quota > 0
+    ? key.daily_quota
+    : null;
+  const perKeyUsed = perKeyLimit !== null ? await usedTodayForKey(key.id) : 0;
+  if (perKeyLimit !== null && perKeyUsed >= perKeyLimit) {
+    return NextResponse.json(
+      {
+        detail: "per-key daily quota exceeded",
+        key_daily_quota: perKeyLimit,
+        key_used_today: perKeyUsed,
+        scope: "api_key",
+      },
+      {
+        status: 429,
+        headers: {
+          "x-ratelimit-limit": String(perKeyLimit),
+          "x-ratelimit-remaining": "0",
+          "x-ratelimit-scope": "api_key",
+          "retry-after": "3600",
+        },
+      },
+    );
+  }
   if (used >= quota) {
     return NextResponse.json(
       {
@@ -151,14 +178,19 @@ export async function POST(req: NextRequest) {
       status: 200,
       latency_ms: latency,
     }).catch(() => {});
-    return NextResponse.json(data, {
-      headers: {
-        "x-latency-ms": String(latency),
-        "x-quota-limit": String(quota),
-        "x-quota-used": String(used + 1),
-        "x-quota-remaining": String(remaining),
-      },
-    });
+    const headers: Record<string, string> = {
+      "x-latency-ms": String(latency),
+      "x-quota-limit": String(quota),
+      "x-quota-used": String(used + 1),
+      "x-quota-remaining": String(remaining),
+    };
+    if (perKeyLimit !== null) {
+      const keyRemaining = Math.max(0, perKeyLimit - perKeyUsed - 1);
+      headers["x-ratelimit-limit"] = String(perKeyLimit);
+      headers["x-ratelimit-remaining"] = String(keyRemaining);
+      headers["x-ratelimit-scope"] = "api_key";
+    }
+    return NextResponse.json(data, { headers });
   } catch (err) {
     const status = err instanceof ApiError ? err.status : 502;
     void recordKeyUsage({

@@ -496,6 +496,29 @@ curl -X POST http://localhost:3000/api/keys \
   -d '{"name":"ci-bot","scopes":["predict"],"ttl_days":30}'
 ```
 
+Each key also supports an optional per-key daily quota that is independent
+of the workspace plan. Set `Cap/day` on the API keys table (or `PATCH
+/api/keys/<id>` with `{"daily_quota": N}`) and the key is hard-limited to
+`N` calls per UTC day across `/v1/predict` and `/v1/batch`, even when the
+plan still has headroom. Capped responses include standard rate-limit
+headers so HTTP clients can back off without parsing JSON:
+
+```
+HTTP/1.1 429 Too Many Requests
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 0
+X-RateLimit-Scope: api_key
+Retry-After: 3600
+```
+
+Set `daily_quota` back to `null` to remove the cap:
+
+```bash
+curl -X PATCH http://localhost:3000/api/keys/KEY_ID \
+  -H "content-type: application/json" \
+  -d '{"daily_quota": 100}'
+```
+
 ```bash
 curl -X POST http://localhost:3000/v1/predict \
   -H "authorization: Bearer adh_YOUR_KEY" \

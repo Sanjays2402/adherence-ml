@@ -135,3 +135,17 @@ export async function summarizeKeyUsage(
 export async function _resetUsageForTests(): Promise<void> {
   if (existsSync(STORE_PATH)) await fs.unlink(STORE_PATH);
 }
+
+/**
+ * Count how many calls a given key has made today (UTC day boundary).
+ * Used to enforce per-key daily quotas in /v1/predict and /v1/batch.
+ */
+export async function usedTodayForKey(keyId: string): Promise<number> {
+  const all = await readAll();
+  const today = dayKey(Date.now());
+  let n = 0;
+  for (const e of all) {
+    if (e.key_id === keyId && dayKey(e.ts) === today) n += 1;
+  }
+  return n;
+}
