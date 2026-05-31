@@ -30,7 +30,11 @@ history to `POST /v1/predict` and renders per-dose miss probability, risk
 tier, a recharts risk distribution, SHAP-derived reason codes, and observed
 call latency against the calibrated ensemble. The landing page at
 [http://localhost:3000](http://localhost:3000) still offers an inline
-three-card preview.
+three-card preview, and
+[http://localhost:3000/predict](http://localhost:3000/predict) lets you hand
+build a dose schedule, see a recharts miss-probability bar chart with risk
+thresholds, the round-trip latency in milliseconds, and keeps your last eight
+runs on-device for one-click restore.
 
 ```bash
 curl -s http://localhost:8000/v1/predict \

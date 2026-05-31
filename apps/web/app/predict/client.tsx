@@ -1,12 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Lightning,
   Plus,
   Trash,
   Spinner,
   CheckCircle,
+  Timer,
+  ClockCounterClockwise,
+  ArrowCounterClockwise,
 } from "@phosphor-icons/react";
 import {
   PageHeader,
@@ -21,10 +24,7 @@ import {
 } from "@/components/ui/primitives";
 import type { PredictResponse, DoseClass } from "@/lib/types";
 import { fmtPct, fmtTime, cn } from "@/lib/utils";
-
-const CLASSES: DoseClass[] = [
-  "cardio", "neuro", "endocrine", "psych", "antibiotic", "supplement", "other",
-];
+import { RiskBarChart } from "@/components/charts/risk-bars";
 
 interface Row {
   dose_id: string;
@@ -32,6 +32,59 @@ interface Row {
   dose_class: DoseClass;
   dose_strength_mg: number;
 }
+
+interface HistoryEntry {
+  id: string;
+  ts: number;
+  user_id: string;
+  top_k: number;
+  rows: Row[];
+  result: PredictResponse;
+  latency_ms: number;
+}
+
+const HISTORY_KEY = "adherence:predict:history:v1";
+const HISTORY_MAX = 8;
+
+function loadHistory(): HistoryEntry[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(HISTORY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.slice(0, HISTORY_MAX) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(entries: HistoryEntry[]) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(HISTORY_KEY, JSON.stringify(entries.slice(0, HISTORY_MAX)));
+  } catch {
+    // quota or disabled storage; ignore
+  }
+}
+
+function avgMiss(p: PredictResponse): number {
+  if (p.predictions.length === 0) return 0;
+  return p.predictions.reduce((s, x) => s + x.miss_probability, 0) / p.predictions.length;
+}
+
+function relTime(ts: number): string {
+  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+}
+
+const CLASSES: DoseClass[] = [
+  "cardio", "neuro", "endocrine", "psych", "antibiotic", "supplement", "other",
+];
 
 function nowPlus(hours: number) {
   const d = new Date(Date.now() + hours * 3600_000);
@@ -53,6 +106,12 @@ export default function PredictClient() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<PredictResponse | null>(null);
+  const [latencyMs, setLatencyMs] = useState<number | null>(null);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+
+  useEffect(() => {
+    setHistory(loadHistory());
+  }, []);
 
   function update(i: number, patch: Partial<Row>) {
     setRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
@@ -74,11 +133,27 @@ export default function PredictClient() {
     setRows((rs) => rs.filter((_, idx) => idx !== i));
   }
 
+  function restoreEntry(e: HistoryEntry) {
+    setUserId(e.user_id);
+    setTopK(e.top_k);
+    setRows(e.rows.map((r) => ({ ...r })));
+    setResult(e.result);
+    setLatencyMs(e.latency_ms);
+    setError(null);
+  }
+
+  function clearHistory() {
+    setHistory([]);
+    saveHistory([]);
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitting(true);
     setError(null);
     setResult(null);
+    setLatencyMs(null);
+    const t0 = (typeof performance !== "undefined" ? performance.now() : Date.now());
     try {
       const payload = {
         user_id: userId.trim(),
@@ -96,10 +171,29 @@ export default function PredictClient() {
         body: JSON.stringify(payload),
       });
       const data = await res.json();
+      const elapsed = Math.round(
+        (typeof performance !== "undefined" ? performance.now() : Date.now()) - t0,
+      );
       if (!res.ok) {
         throw new Error(typeof data?.detail === "string" ? data.detail : `request failed (${res.status})`);
       }
-      setResult(data as PredictResponse);
+      const typed = data as PredictResponse;
+      setResult(typed);
+      setLatencyMs(elapsed);
+      const entry: HistoryEntry = {
+        id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+        ts: Date.now(),
+        user_id: userId.trim(),
+        top_k: topK,
+        rows: rows.map((r) => ({ ...r })),
+        result: typed,
+        latency_ms: elapsed,
+      };
+      setHistory((prev) => {
+        const next = [entry, ...prev].slice(0, HISTORY_MAX);
+        saveHistory(next);
+        return next;
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -212,8 +306,29 @@ export default function PredictClient() {
           <CardHeader
             title="Response"
             hint={result ? `model ${result.model_version}` : "Submit the form to see scored doses."}
-            right={result ? <Badge tone="success"><CheckCircle weight="duotone" size={10} /> ok</Badge> : null}
+            right={
+              result ? (
+                <div className="flex items-center gap-2">
+                  {latencyMs !== null ? (
+                    <Badge tone="neutral">
+                      <Timer weight="duotone" size={10} /> {latencyMs} ms
+                    </Badge>
+                  ) : null}
+                  <Badge tone="success">
+                    <CheckCircle weight="duotone" size={10} /> ok
+                  </Badge>
+                </div>
+              ) : null
+            }
           />
+          {result && result.predictions.length > 0 ? (
+            <div className="px-4 pt-3 pb-1 border-b border-[var(--color-border)]">
+              <div className="text-[10px] font-mono uppercase tracking-[0.16em] text-[var(--color-muted)] mb-1">
+                miss probability by dose
+              </div>
+              <RiskBarChart predictions={result.predictions} />
+            </div>
+          ) : null}
           {error ? (
             <div className="p-4"><ErrorBox message={error} /></div>
           ) : !result ? (
@@ -273,6 +388,88 @@ export default function PredictClient() {
           )}
         </Card>
       </div>
+
+      {history.length > 0 ? (
+        <div className="px-6 pb-6">
+          <Card>
+            <CardHeader
+              title="Recent runs"
+              hint={`Last ${history.length} prediction${history.length === 1 ? "" : "s"} on this device. Click a card to restore.`}
+              right={
+                <Button type="button" variant="ghost" onClick={clearHistory}>
+                  <ArrowCounterClockwise weight="duotone" size={12} /> Clear
+                </Button>
+              }
+            />
+            <div className="p-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              {history.map((h) => {
+                const avg = avgMiss(h.result);
+                const tier = avg >= 0.7 ? "danger" : avg >= 0.4 ? "warn" : "success";
+                const colorVar =
+                  tier === "danger"
+                    ? "var(--color-danger)"
+                    : tier === "warn"
+                    ? "var(--color-warn)"
+                    : "var(--color-success)";
+                return (
+                  <button
+                    key={h.id}
+                    type="button"
+                    onClick={() => restoreEntry(h)}
+                    className={cn(
+                      "text-left rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]/40 px-3 py-2",
+                      "hover:border-[var(--color-accent)] hover:bg-[var(--color-bg)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] transition-colors",
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-mono uppercase tracking-wider text-[var(--color-muted)] inline-flex items-center gap-1">
+                        <ClockCounterClockwise weight="duotone" size={10} />
+                        {relTime(h.ts)}
+                      </span>
+                      <Badge tone={tier}>{fmtPct(avg)}</Badge>
+                    </div>
+                    <div className="mt-1 text-xs font-mono truncate text-[var(--color-fg)]/80">
+                      {h.user_id}
+                    </div>
+                    <div className="mt-2 flex items-end gap-[2px] h-7">
+                      {h.result.predictions.slice(0, 12).map((p, i) => {
+                        const h_pct = Math.max(6, Math.round(p.miss_probability * 100));
+                        const pColor =
+                          p.risk_tier === "high"
+                            ? "var(--color-danger)"
+                            : p.risk_tier === "medium"
+                            ? "var(--color-warn)"
+                            : "var(--color-success)";
+                        return (
+                          <span
+                            key={i}
+                            className="flex-1 rounded-sm"
+                            style={{
+                              height: `${h_pct}%`,
+                              background: pColor,
+                              opacity: 0.85,
+                            }}
+                            aria-hidden
+                          />
+                        );
+                      })}
+                    </div>
+                    <div className="mt-1 flex items-center justify-between text-[10px] text-[var(--color-muted)] tabular-nums">
+                      <span>{h.result.predictions.length} doses</span>
+                      <span>{h.latency_ms} ms</span>
+                    </div>
+                    <div
+                      className="mt-2 h-[2px] w-full rounded-full"
+                      style={{ background: colorVar, opacity: 0.5 }}
+                      aria-hidden
+                    />
+                  </button>
+                );
+              })}
+            </div>
+          </Card>
+        </div>
+      ) : null}
     </>
   );
 }
