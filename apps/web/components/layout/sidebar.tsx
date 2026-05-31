@@ -14,6 +14,7 @@ import {
   ClipboardText,
   House,
   Sparkle,
+  UploadSimple,
 } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 
@@ -27,6 +28,7 @@ const NAV = [
   { href: "/explain", label: "Explainer", icon: Lightbulb, hint: "SHAP contributions" },
   { href: "/interventions", label: "Interventions", icon: Bell, hint: "Delivery queue" },
   { href: "/predict", label: "Predict", icon: Lightning, hint: "Inline scoring" },
+  { href: "/batch", label: "Batch", icon: UploadSimple, hint: "Score a CSV upload" },
   { href: "/audit", label: "Audit", icon: ClipboardText, hint: "Call log" },
 ];
 

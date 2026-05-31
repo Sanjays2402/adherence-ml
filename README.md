@@ -86,6 +86,33 @@ curl -s 'http://localhost:8000/v1/forecast/user?model_name=default' \
   }' | jq .
 ```
 
+## Batch scoring
+
+Upload a CSV of scheduled doses at
+[http://localhost:3000/batch](http://localhost:3000/batch) to score up to 500
+doses across 50 users in one request. Drop the file, preview the parsed rows,
+run, then download the predictions as CSV or JSON. The page rejects oversize
+uploads, flags missing columns, and surfaces row-level validation errors
+before calling the model. Required columns: `user_id, dose_id, scheduled_at,
+dose_class, dose_strength_mg`.
+
+The same endpoint is callable directly. Pipe a CSV file in and add
+`?format=csv` to get a CSV download back:
+
+```bash
+curl -sS -X POST 'http://localhost:3000/api/batch?format=csv' \
+  -H 'content-type: text/csv' \
+  --data-binary @doses.csv
+```
+
+Or post JSON for a structured response with per-user counts and a summary:
+
+```bash
+curl -sS -X POST http://localhost:3000/api/batch \
+  -H 'content-type: application/json' \
+  -d '{"csv":"user_id,dose_id,scheduled_at,dose_class,dose_strength_mg\nu1,d1,2025-06-01T08:00:00Z,cardio,10\n"}'
+```
+
 ## Features
 
 - Landing demo (`/`) with three click-to-run patient scenarios, live miss
