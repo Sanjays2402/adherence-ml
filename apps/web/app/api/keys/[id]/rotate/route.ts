@@ -12,7 +12,7 @@ export async function POST(
   const issued = await rotateKey(id);
   if (!issued) {
     return NextResponse.json(
-      { detail: "key not found or already revoked" },
+      { detail: "key not found, revoked, or expired" },
       { status: 404 },
     );
   }

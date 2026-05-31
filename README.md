@@ -201,6 +201,20 @@ key id, name, created date, last-used time, and total call count so charts
 and audit trails stay continuous, while the old secret stops working
 immediately. Revoked keys cannot be rotated; create a fresh one instead.
 
+Keys can be issued with an optional time-to-live (7, 30, 90, or 365 days,
+or `never`). Once a key passes its `expires_at`, every `/v1` endpoint
+refuses it with `401`, exactly like a revoked key, and the dashboard tags it
+with an `expired` badge plus a relative countdown (`in 6d`, `2d ago`, ...).
+The `/v1/keys/me` introspection endpoint surfaces `expires_at` so you can
+wire your own renewal alerting. Set the TTL on the create form, or pass
+`ttl_days` to `POST /api/keys`:
+
+```bash
+curl -X POST http://localhost:3000/api/keys \
+  -H "content-type: application/json" \
+  -d '{"name":"ci-bot","scopes":["predict"],"ttl_days":30}'
+```
+
 ```bash
 curl -X POST http://localhost:3000/v1/predict \
   -H "authorization: Bearer adh_YOUR_KEY" \

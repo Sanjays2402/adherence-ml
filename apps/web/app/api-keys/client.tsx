@@ -38,9 +38,11 @@ type KeyRow = {
   revoked: boolean;
   rotated_at: number | null;
   scopes: Scope[];
+  expires_at: number | null;
+  expired: boolean;
 };
 
-type ListResp = { keys: KeyRow[]; available_scopes: Scope[] };
+type ListResp = { keys: KeyRow[]; available_scopes: Scope[]; ttl_presets_days: number[] };
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -48,6 +50,21 @@ function fmt(ms: number | null): string {
   if (!ms) return "never";
   const d = new Date(ms);
   return d.toISOString().replace("T", " ").slice(0, 16) + "Z";
+}
+
+function relativeFromNow(ms: number | null): string {
+  if (!ms) return "never";
+  const diff = ms - Date.now();
+  const abs = Math.abs(diff);
+  const day = 24 * 60 * 60 * 1000;
+  const hour = 60 * 60 * 1000;
+  if (abs < hour) return diff >= 0 ? "<1h" : "expired";
+  if (abs < day) {
+    const h = Math.round(abs / hour);
+    return diff >= 0 ? `in ${h}h` : `${h}h ago`;
+  }
+  const d = Math.round(abs / day);
+  return diff >= 0 ? `in ${d}d` : `${d}d ago`;
 }
 
 function CopyBtn({ text, label = "copy" }: { text: string; label?: string }) {
@@ -79,6 +96,8 @@ export default function KeysClient() {
   });
   const [name, setName] = useState("");
   const [scopes, setScopes] = useState<Scope[]>(["predict", "read"]);
+  // null = never expires; number = days until expiry
+  const [ttlDays, setTtlDays] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
   const [createErr, setCreateErr] = useState<string | null>(null);
   const [issued, setIssued] = useState<{ name: string; key: string; scopes?: Scope[]; rotated?: boolean } | null>(null);
@@ -100,7 +119,7 @@ export default function KeysClient() {
       const res = await fetch("/api/keys", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), scopes }),
+        body: JSON.stringify({ name: name.trim(), scopes, ttl_days: ttlDays }),
       });
       const json = await res.json();
       if (!res.ok) {
@@ -115,7 +134,7 @@ export default function KeysClient() {
     } finally {
       setCreating(false);
     }
-  }, [name, scopes, mutate]);
+  }, [name, scopes, ttlDays, mutate]);
 
   const onRevoke = useCallback(
     async (id: string) => {
@@ -289,6 +308,52 @@ export default function KeysClient() {
               );
             })}
           </fieldset>
+          <fieldset className="flex flex-wrap items-center gap-3 text-[12px]">
+            <legend className="sr-only">expires</legend>
+            <span className="text-[11px] uppercase tracking-wider text-[var(--color-muted)]">expires</span>
+            {(data?.ttl_presets_days ?? [7, 30, 90, 365]).map((days) => {
+              const checked = ttlDays === days;
+              return (
+                <label
+                  key={days}
+                  className={`inline-flex items-center gap-2 px-2 py-1 rounded border cursor-pointer select-none ${
+                    checked
+                      ? "border-[var(--color-accent)]/60 bg-[var(--color-surface)]"
+                      : "border-[var(--color-border)]"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="ttl"
+                    className="accent-[var(--color-accent)]"
+                    checked={checked}
+                    onChange={() => setTtlDays(days)}
+                  />
+                  <span className="font-mono">{days}d</span>
+                </label>
+              );
+            })}
+            <label
+              className={`inline-flex items-center gap-2 px-2 py-1 rounded border cursor-pointer select-none ${
+                ttlDays === null
+                  ? "border-[var(--color-accent)]/60 bg-[var(--color-surface)]"
+                  : "border-[var(--color-border)]"
+              }`}
+              title="Key never expires. Rotate or revoke manually."
+            >
+              <input
+                type="radio"
+                name="ttl"
+                className="accent-[var(--color-accent)]"
+                checked={ttlDays === null}
+                onChange={() => setTtlDays(null)}
+              />
+              <span className="font-mono">never</span>
+            </label>
+          </fieldset>
+          <p className="text-[11px] text-[var(--color-muted)]">
+            Short-lived keys are best practice. An expired key returns 401 from every /v1 endpoint until you rotate or create a new one.
+          </p>
           {createErr ? <ErrorBox message={createErr} /> : null}
         </div>
       </Card>
@@ -325,6 +390,7 @@ export default function KeysClient() {
                     <th className="px-4 py-2 font-medium">Created</th>
                     <th className="px-4 py-2 font-medium">Last used</th>
                     <th className="px-4 py-2 font-medium">Rotated</th>
+                    <th className="px-4 py-2 font-medium">Expires</th>
                     <th className="px-4 py-2 font-medium text-right">Calls</th>
                     <th className="px-4 py-2 font-medium">Status</th>
                     <th className="px-4 py-2 font-medium text-right">Actions</th>
@@ -351,16 +417,30 @@ export default function KeysClient() {
                       <td className="px-4 py-2 font-mono text-[11px] text-[var(--color-muted)]">
                         {fmt(k.rotated_at)}
                       </td>
+                      <td
+                        className="px-4 py-2 font-mono text-[11px] text-[var(--color-muted)]"
+                        title={k.expires_at ? fmt(k.expires_at) : "this key has no expiry"}
+                      >
+                        {k.expires_at == null ? (
+                          <span>never</span>
+                        ) : k.expired ? (
+                          <Badge tone="danger">expired</Badge>
+                        ) : (
+                          <span>{relativeFromNow(k.expires_at)}</span>
+                        )}
+                      </td>
                       <td className="px-4 py-2 text-right font-mono">{k.use_count}</td>
                       <td className="px-4 py-2">
                         {k.revoked ? (
                           <Badge tone="danger">revoked</Badge>
+                        ) : k.expired ? (
+                          <Badge tone="danger">expired</Badge>
                         ) : (
                           <Badge tone="success">active</Badge>
                         )}
                       </td>
                       <td className="px-4 py-2 text-right">
-                        {!k.revoked ? (
+                        {!k.revoked && !k.expired ? (
                           <div className="inline-flex items-center gap-1 justify-end">
                             <button
                               type="button"

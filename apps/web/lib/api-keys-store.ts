@@ -40,11 +40,57 @@ export interface ApiKeyRecord {
   revoked: boolean;
   rotated_at?: number | null;
   scopes?: KeyScope[];
+  /**
+   * Absolute expiry timestamp in epoch milliseconds. `null` or omitted means
+   * the key never expires. Once `Date.now()` passes this value, `verifyKey`
+   * refuses the key with the same semantics as `revoked`.
+   */
+  expires_at?: number | null;
+}
+
+/** True when the key carries a non-null `expires_at` that has already passed. */
+export function isExpired(
+  rec: Pick<ApiKeyRecord, "expires_at">,
+  now: number = Date.now(),
+): boolean {
+  return typeof rec.expires_at === "number" && rec.expires_at > 0 && rec.expires_at <= now;
+}
+
+/**
+ * Convert a TTL in days into an absolute `expires_at` epoch-ms value.
+ * `null`, `0`, negatives, or non-finite inputs map to `null` (never expires).
+ * Capped at 10 years to avoid accidental Number.MAX_VALUE rows.
+ */
+export function ttlToExpiresAt(
+  days: number | null | undefined,
+  now: number = Date.now(),
+): number | null {
+  if (days === null || days === undefined) return null;
+  if (!Number.isFinite(days) || days <= 0) return null;
+  const capped = Math.min(Math.floor(days), 3650);
+  return now + capped * 24 * 60 * 60 * 1000;
 }
 
 /** Effective scopes for a record, with safe defaults for legacy rows. */
 export function scopesOf(rec: Pick<ApiKeyRecord, "scopes">): KeyScope[] {
   return rec.scopes && rec.scopes.length > 0 ? rec.scopes : [...DEFAULT_SCOPES];
+}
+
+/** Public-safe view of a key for UI/API responses (never includes the hash). */
+export function publicView(k: ApiKeyRecord) {
+  return {
+    id: k.id,
+    name: k.name,
+    prefix: k.prefix,
+    created_at: k.created_at,
+    last_used_at: k.last_used_at,
+    use_count: k.use_count,
+    revoked: k.revoked,
+    rotated_at: k.rotated_at ?? null,
+    scopes: scopesOf(k),
+    expires_at: k.expires_at ?? null,
+    expired: isExpired(k),
+  };
 }
 
 export function hasScope(rec: Pick<ApiKeyRecord, "scopes">, scope: KeyScope): boolean {
@@ -109,6 +155,7 @@ export async function listKeys(): Promise<ApiKeyRecord[]> {
 export async function createKey(
   name: string,
   scopes: KeyScope[] = DEFAULT_SCOPES,
+  expiresAt: number | null = null,
 ): Promise<NewApiKey> {
   const trimmed = name.trim().slice(0, 80) || "untitled";
   const plaintext = "adh_" + randomBytes(24).toString("base64url");
@@ -122,6 +169,7 @@ export async function createKey(
     use_count: 0,
     revoked: false,
     scopes: normalizeScopes(scopes),
+    expires_at: expiresAt ?? null,
   };
   writeQueue = writeQueue.then(async () => {
     const s = await readStore();
@@ -143,7 +191,7 @@ export async function rotateKey(id: string): Promise<NewApiKey | null> {
   writeQueue = writeQueue.then(async () => {
     const s = await readStore();
     const k = s.keys.find((k) => k.id === id);
-    if (!k || k.revoked) return;
+    if (!k || k.revoked || isExpired(k)) return;
     const plaintext = "adh_" + randomBytes(24).toString("base64url");
     k.prefix = plaintext.slice(0, 12);
     k.hash = hashKey(plaintext);
@@ -181,6 +229,7 @@ export async function verifyKey(plaintext: string): Promise<ApiKeyRecord | null>
     const s = await readStore();
     const k = s.keys.find((k) => k.hash === h && !k.revoked);
     if (!k) return;
+    if (isExpired(k)) return; // expired keys are inert, same as revoked
     k.last_used_at = Date.now();
     k.use_count += 1;
     match = { ...k };

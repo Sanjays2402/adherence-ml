@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractKey, hasScope, scopesOf, verifyKey } from "@/lib/api-keys-store";
 
+
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -44,5 +45,6 @@ export async function GET(req: NextRequest) {
     last_used_at: key.last_used_at,
     use_count: key.use_count,
     rotated_at: key.rotated_at ?? null,
+    expires_at: key.expires_at ?? null,
   });
 }
