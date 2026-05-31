@@ -8,11 +8,15 @@ let dir: string;
 beforeEach(() => {
   dir = mkdtempSync(path.join(tmpdir(), "ws-domains-"));
   process.env.ADHERENCE_DATA_DIR = dir;
+  // Existing tests cover the operator-bypass code path explicitly so the
+  // DNS-required default does not change behaviour for them.
+  process.env.ADHERENCE_DOMAIN_DNS_ALLOW_BYPASS = "1";
 });
 
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
   delete process.env.ADHERENCE_DATA_DIR;
+  delete process.env.ADHERENCE_DOMAIN_DNS_ALLOW_BYPASS;
 });
 
 describe("workspaces-store: verified domains + auto-join", () => {

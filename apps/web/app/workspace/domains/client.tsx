@@ -124,7 +124,16 @@ export default function DomainsClient() {
       );
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
-        throw new Error(j.detail ?? `request failed (${r.status})`);
+        const code = typeof j.detail === "string" ? j.detail : "";
+        const friendly =
+          code === "txt_not_found"
+            ? `No TXT record at _adherence-ml-verify.${domain}. Publish it at your DNS provider, wait for propagation, then try again.`
+            : code === "token_mismatch_dns"
+            ? `Found a TXT record at _adherence-ml-verify.${domain}, but the value does not match the issued token. Replace it with the value shown above.`
+            : code === "dns_lookup_failed"
+            ? `DNS lookup failed for _adherence-ml-verify.${domain}. Check that the domain resolves and try again in a minute.`
+            : code || `request failed (${r.status})`;
+        throw new Error(friendly);
       }
       await domSwr.mutate();
     } catch (e2) {
@@ -293,10 +302,9 @@ export default function DomainsClient() {
                           disabled={busy}
                           onClick={() => patch(d.domain, {
                             action: "verify",
-                            presented_token: d.verification_record.value.split("=")[1],
                           })}
                         >
-                          <CheckCircle weight="duotone" size={13} /> Verify ownership
+                          <CheckCircle weight="duotone" size={13} /> Check DNS and verify
                         </Button>
                       ) : (
                         <>

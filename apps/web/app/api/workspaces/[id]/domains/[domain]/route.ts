@@ -88,7 +88,9 @@ export async function PATCH(
     const status =
       result === "forbidden" ? 403 :
       result === "not_found" ? 404 :
-      result === "already_verified_elsewhere" ? 409 : 400;
+      result === "already_verified_elsewhere" ? 409 :
+      result === "txt_not_found" || result === "token_mismatch_dns" || result === "dns_lookup_failed" ? 422 :
+      400;
     await recordAudit({
       action: `workspace.domain.${action}`,
       target: `${id}:${d}`,

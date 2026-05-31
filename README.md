@@ -276,6 +276,16 @@ the verified domain is provisioned into the workspace at the role the
 owner picked (`editor` or `viewer`). No invite emails, no shared
 secrets, no second portal.
 
+Verification is a real DNS lookup. The dashboard server resolves the
+TXT records at `_adherence-ml-verify.<domain>` via Node's stub resolver
+(`lib/dns-verify.ts`) and only flips the claim to `verified` when one
+of those records matches the issued token. Failure modes surface as
+specific HTTP 422 errors (`txt_not_found`, `token_mismatch_dns`,
+`dns_lookup_failed`) so owners can see exactly what to fix at their DNS
+provider. The legacy operator-trust path is still available for local
+dev and tests when `ADHERENCE_DOMAIN_DNS_ALLOW_BYPASS=1` is set; in any
+other environment, a real TXT record is required.
+
 Guarantees enforced in `lib/workspaces-store.ts` and audited via
 `recordAudit`:
 - Public providers (`gmail.com`, `outlook.com`, etc.) cannot be claimed.
@@ -285,8 +295,9 @@ Guarantees enforced in `lib/workspaces-store.ts` and audited via
 - Only the workspace `owner` can claim, verify, toggle, or unclaim a
   domain; every mutation is logged with actor, IP, target, and outcome.
 - `?dry_run=true` is honored on every claim/update/unclaim route.
-- Cross-tenant isolation is covered by
-  `apps/web/tests/workspace-domains.test.ts` (4 vitest cases).
+- Cross-tenant isolation and the real-DNS verification path are covered
+  by `apps/web/tests/workspace-domains.test.ts` and
+  `apps/web/tests/workspace-domains-dns.test.ts` (10 vitest cases).
 
 ### Try it
 

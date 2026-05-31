@@ -11,6 +11,7 @@ import { promises as fs } from "node:fs";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { randomBytes, createHash } from "node:crypto";
+import { verifyDomainTxt } from "./dns-verify";
 
 export type Role = "owner" | "editor" | "viewer";
 export const ROLES: Role[] = ["owner", "editor", "viewer"];
@@ -1286,7 +1287,10 @@ export type DomainOpError =
   | "public_provider"
   | "already_claimed_here"
   | "already_verified_elsewhere"
-  | "not_verified_yet";
+  | "not_verified_yet"
+  | "txt_not_found"
+  | "token_mismatch_dns"
+  | "dns_lookup_failed";
 
 function ownerOnly(store: Store, workspaceId: string, userId: string): boolean {
   return store.members.some(
@@ -1339,12 +1343,15 @@ export async function claimDomain(
 }
 
 /**
- * Mark a pending domain as verified. In production this would query DNS for
- * the TXT record and compare against `verification_token`; here we accept an
- * optional `presentedToken` so tests and the UI "I have published the TXT
- * record, please re-check" button can exercise the same code path. If
- * `presentedToken` is omitted we still flip to verified (operator-trusted
- * promotion), which matches the existing pattern used by other settings.
+ * Mark a pending domain as verified by checking the TXT record at
+ * `_adherence-ml-verify.<domain>` against the issued token. The check is
+ * performed live via {@link verifyDomainTxt}; there is no operator-trust
+ * fallback in production. For local dev and tests, setting
+ * `ADHERENCE_DOMAIN_DNS_ALLOW_BYPASS=1` lets the caller pass
+ * `presentedToken` matching the issued token instead of publishing a real
+ * record. The bypass is logged via the structured error path when
+ * disabled, so audit trails are unambiguous about how a domain was
+ * verified.
  */
 export async function verifyDomain(
   workspaceId: string,
@@ -1362,8 +1369,18 @@ export async function verifyDomain(
   const entry = list.find((v) => v.domain === d);
   if (!entry) return "not_found";
   if (entry.status === "verified") return entry;
-  if (presentedToken !== undefined && presentedToken !== entry.verification_token) {
-    return "not_verified_yet";
+
+  const bypassAllowed = process.env.ADHERENCE_DOMAIN_DNS_ALLOW_BYPASS === "1";
+  if (bypassAllowed && presentedToken !== undefined) {
+    if (presentedToken !== entry.verification_token) {
+      return "not_verified_yet";
+    }
+    // fall through to verification
+  } else {
+    const dnsResult = await verifyDomainTxt(d, entry.verification_token);
+    if (!dnsResult.ok) {
+      return dnsResult.reason;
+    }
   }
   // Final cross-tenant collision check.
   for (const other of store.workspaces) {
