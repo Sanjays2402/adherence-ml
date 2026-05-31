@@ -16,6 +16,7 @@ behalf of a user only if the API key carries the ``gdpr:read`` or
 from __future__ import annotations
 
 from adherence_common import gdpr as gdpr_mod
+from adherence_common import legal_hold as legal_hold_mod
 from adherence_common.admin_audit import record_admin_action
 from adherence_common.logging import get_logger
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -112,6 +113,45 @@ def erase_user_data(
             detail="requires admin role or gdpr:erase scope",
         )
     rid = getattr(request.state, "request_id", None)
+    # Legal hold gate: a workspace under an active preservation order
+    # cannot delete user data, regardless of caller. Dry-run previews
+    # remain available so legal/IT can still inventory what would be
+    # deleted once the hold is released.
+    caller_tenant = str(p.get("tenant") or "default")
+    if not dry_run and legal_hold_mod.is_on_hold(caller_tenant):
+        hold = legal_hold_mod.active_hold_summary(caller_tenant)
+        record_admin_action(
+            action="gdpr.erase", principal=p, target=user_id,
+            details={
+                "dry_run": False,
+                "blocked_by": "legal_hold",
+                "hold_id": (hold.id if hold else None),
+            },
+            ok=False, error="legal_hold_active", request_id=rid,
+        )
+        log.warning(
+            "gdpr_erase_blocked_by_legal_hold",
+            user_id=user_id,
+            tenant=caller_tenant,
+            caller=p.get("sub"),
+            hold_id=(hold.id if hold else None),
+            request_id=rid,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_423_LOCKED,
+            detail={
+                "code": "legal_hold_active",
+                "message": (
+                    "workspace is under an active legal hold; GDPR "
+                    "erasure is blocked until the hold is released. "
+                    "use dry_run=true to preview what would be deleted."
+                ),
+                "hold_id": (hold.id if hold else None),
+                "placed_at": (hold.placed_at if hold else None),
+                "placed_by": (hold.placed_by if hold else None),
+                "ticket_ref": (hold.ticket_ref if hold else None),
+            },
+        )
     if dry_run:
         try:
             preview = gdpr_mod.export_user(user_id)

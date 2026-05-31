@@ -36,6 +36,63 @@ curl -sS -X POST http://localhost:8000/v1/webhooks/outbound/subscriptions/clinic
 
 Local API: <http://localhost:8000>. Dashboard: <http://localhost:3000>.
 
+## Per-workspace legal hold (litigation / preservation order)
+
+Enterprise legal teams need a way to freeze deletions when a matter,
+audit, or regulator request lands. While at least one legal hold is
+active on a workspace, every delete path in the API refuses to run
+and returns `423 Locked` with `code: legal_hold_active`:
+
+* `DELETE /v1/users/{user_id}/data` (GDPR right to erasure)
+* `POST   /v1/admin/retention-policy/sweep` (scheduled retention sweep,
+  except dry-runs which remain available for previewing scope)
+
+Reads, exports, predictions, audit, and webhooks are untouched. Only
+hard-deletes are blocked, which is the entire legal point of a
+preservation order. Holds are placed and released by workspace admins
+with a verified MFA challenge, recorded immutably in `legal_holds`,
+and surfaced in the admin audit log. Cross-tenant isolation is
+verified in `tests/unit/test_legal_hold.py` so a hold on tenant A
+cannot be released from tenant B's scope and never affects tenant B's
+deletes.
+
+### Try it
+
+Local API runs on `http://localhost:8000`. The dashboard at
+`http://localhost:3000/settings/legal-hold` is the same surface.
+
+```bash
+# Place a hold (admin + MFA required).
+curl -sS -X POST http://localhost:8000/v1/admin/legal-holds \
+  -H "authorization: Bearer $ADMIN_TOKEN" \
+  -H "x-mfa-code: $TOTP" \
+  -H "content-type: application/json" \
+  -d '{
+    "label": "SUP-4218",
+    "ticket_ref": "JIRA-LEGAL-77",
+    "reason": "preservation order for matter SUP-4218 per signed counsel runbook"
+  }'
+
+# List active and historical holds for this workspace.
+curl -sS http://localhost:8000/v1/admin/legal-holds \
+  -H "authorization: Bearer $ADMIN_TOKEN"
+
+# A GDPR erase attempt while a hold is active is refused.
+curl -sS -i -X DELETE http://localhost:8000/v1/users/user-1/data \
+  -H "authorization: Bearer $ADMIN_TOKEN"
+# HTTP/1.1 423 Locked
+# {"detail":{"code":"legal_hold_active", ...}}
+
+# Release the hold (admin + MFA required).
+curl -sS -X POST http://localhost:8000/v1/admin/legal-holds/1/release \
+  -H "authorization: Bearer $ADMIN_TOKEN" \
+  -H "x-mfa-code: $TOTP" \
+  -H "content-type: application/json" \
+  -d '{"release_reason": "matter SUP-4218 closed per counsel"}'
+```
+
+UI: <http://localhost:3000/settings/legal-hold>.
+
 ## Per-workspace outbound webhook host allowlist
 
 Workspace owners can now restrict outbound webhook destinations to a

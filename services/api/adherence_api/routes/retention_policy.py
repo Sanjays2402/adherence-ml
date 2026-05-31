@@ -32,6 +32,7 @@ from pydantic import BaseModel, Field, field_validator
 from adherence_api.deps import current_tenant, require_admin, require_viewer
 from adherence_api.dry_run import dry_run_response
 from adherence_api.routes.admin_mfa import require_admin_mfa
+from adherence_common import legal_hold as legal_hold_mod
 from adherence_common.admin_audit import record_admin_action
 from adherence_common.retention_policy import (
     ALLOWED_TABLES,
@@ -241,6 +242,38 @@ def run_sweep(
     """Tenant-scoped retention sweep. Deletes only rows belonging to
     the caller's workspace; cannot leak across tenants.
     """
+    if not body.dry_run and legal_hold_mod.is_on_hold(tenant):
+        hold = legal_hold_mod.active_hold_summary(tenant)
+        record_admin_action(
+            action="workspace.retention_policy.sweep",
+            principal=p,
+            target=tenant,
+            details={
+                "ttls_days": body.ttls_days,
+                "tables": body.tables,
+                "dry_run": body.dry_run,
+                "blocked_by": "legal_hold",
+                "hold_id": (hold.id if hold else None),
+            },
+            ok=False,
+            error="legal_hold_active",
+            request_id=_rid(request),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_423_LOCKED,
+            detail={
+                "code": "legal_hold_active",
+                "message": (
+                    "this workspace is under an active legal hold; "
+                    "retention sweep is blocked. release the hold or "
+                    "use dry_run=true to preview without deleting."
+                ),
+                "hold_id": (hold.id if hold else None),
+                "placed_at": (hold.placed_at if hold else None),
+                "placed_by": (hold.placed_by if hold else None),
+                "ticket_ref": (hold.ticket_ref if hold else None),
+            },
+        )
     try:
         rows = sweep_for_tenant(
             tenant,
