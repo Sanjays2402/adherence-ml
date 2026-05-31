@@ -2,6 +2,48 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Per-tenant SIEM audit drain
+
+Enterprise security teams require that audit events flow to their own
+SIEM (Splunk HEC, Datadog Logs intake, in-house syslog forwarder) so
+they can correlate vendor activity with the rest of their detection
+stack. Each tenant configures one drain (`url` + HMAC `secret`); every
+audit row written by `adherence_common.audit.record` is shipped in a
+best-effort background thread with an `X-Adherence-Signature: sha256=<hex>`
+header computed over the raw JSON body. Failures are retried with
+exponential backoff and recorded to `tenant_siem_delivery`, queryable
+and replayable from the admin console. Every read and mutation is
+bound to the caller's own tenant id, so admins from one tenant cannot
+see, replay, or delete another tenant's drain or delivery rows.
+
+### Try it
+
+```bash
+# Configure the drain (admin role, scope admin:network)
+curl -s -X PUT http://localhost:8000/v1/admin/siem \
+  -H "x-api-key: $ADHERENCE_ADMIN_KEY" \
+  -H "content-type: application/json" \
+  -d '{"url":"https://siem.example.com/hec","secret":"a-long-shared-secret","enabled":true}' | jq
+
+# Fire a signed test event (verifies receiver + secret)
+curl -s -X POST http://localhost:8000/v1/admin/siem/test \
+  -H "x-api-key: $ADHERENCE_ADMIN_KEY" \
+  -H "content-type: application/json" \
+  -d '{"message":"hello from adherence-ml"}' | jq
+
+# Inspect delivery log
+curl -s http://localhost:8000/v1/admin/siem/deliveries \
+  -H "x-api-key: $ADHERENCE_ADMIN_KEY" | jq
+
+# Replay a failed delivery
+curl -s -X POST http://localhost:8000/v1/admin/siem/deliveries/42/replay \
+  -H "x-api-key: $ADHERENCE_ADMIN_KEY" | jq
+```
+
+Receivers should verify the signature before accepting:
+`hmac.new(secret, body, sha256).hexdigest()` must equal the hex after
+`sha256=` in `X-Adherence-Signature`.
+
 ## Fine-grained API key scope enforcement
 
 API keys carry a comma-separated scope allowlist (e.g.

@@ -16,6 +16,7 @@ from adherence_api.ratelimit_middleware import RateLimitMiddleware
 from adherence_api.scope_enforce_middleware import ScopeEnforceMiddleware
 from adherence_api.routes import auth_scopes as auth_scopes_route
 from adherence_api.routes import ip_allowlist as ip_allowlist_route
+from adherence_api.routes import siem as siem_route
 from adherence_api.routes import quota as quota_route
 from adherence_api.routes import sso as sso_route
 from adherence_api.routes import admin_mfa as admin_mfa_route
@@ -187,6 +188,7 @@ def create_app() -> FastAPI:
     app.include_router(legal_hold_route.router)
     app.include_router(quota_route.router)
     app.include_router(auth_scopes_route.router)
+    app.include_router(siem_route.router)
     # Ensure quota + workspace tables exist before the first request.
     try:
         from adherence_common.db import init_db

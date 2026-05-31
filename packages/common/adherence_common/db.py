@@ -591,6 +591,7 @@ def init_db() -> None:
     from adherence_common import break_glass as _bg  # noqa: F401
     from adherence_common import legal_hold as _lh  # noqa: F401
     from adherence_common import pii_policy as _pii  # noqa: F401
+    from adherence_common import siem as _siem  # noqa: F401
     engine = _engine()
     Base.metadata.create_all(engine)
     try:

@@ -100,6 +100,7 @@ _CATALOG: tuple[ScopeRule, ...] = (
     ScopeRule("*", "/v1/admin/outbound-allowlist", "admin:network","Manage outbound host allowlist"),
     ScopeRule("*", "/v1/admin/quota",           "admin:billing",   "Manage seat quota / billing"),
     ScopeRule("GET","/v1/admin/audit",          "admin:audit",     "Read audit log"),
+    ScopeRule("*", "/v1/admin/siem",           "admin:network",   "Manage SIEM audit drain"),
     ScopeRule("*", "/v1/admin/policies",        "admin:policy",    "Manage risk-tier policies"),
     ScopeRule("POST","/v1/admin/token",         "admin:keys",      "Mint short-lived JWT"),
     ScopeRule("GET","/v1/admin/models",         "models:read",     "List registered models"),

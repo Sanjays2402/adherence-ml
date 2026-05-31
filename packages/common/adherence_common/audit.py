@@ -130,7 +130,42 @@ def record(
             except Exception as exc:  # never fail the audit write on chain issues
                 log.warning("audit_chain_failed", error=str(exc), request_id=request_id)
             s.commit()
-            return
+            audit_id_for_siem = int(row.id) if row.id is not None else None
+            tenant_for_siem = (tenant_id or "default")
+        # SIEM drain: best-effort fan-out after the audit row is durable.
+        # Never raises; failures are recorded to tenant_siem_delivery so the
+        # tenant's admin console can see exactly what happened.
+        try:
+            from adherence_common.siem import dispatch_async as _siem_dispatch
+            _siem_dispatch(
+                tenant_id=tenant_for_siem,
+                event_type="audit.prediction",
+                audit_id=audit_id_for_siem,
+                request_id=request_id,
+                event={
+                    "event": "audit.prediction",
+                    "audit_id": audit_id_for_siem,
+                    "request_id": request_id,
+                    "route": route,
+                    "tenant_id": tenant_for_siem,
+                    "user_id": user_id,
+                    "caller": caller,
+                    "caller_role": caller_role,
+                    "model_name": model_name,
+                    "model_version": str(model_version),
+                    "n_doses": n_doses,
+                    "mean_miss_prob": stats["mean"],
+                    "max_miss_prob": stats["max"],
+                    "high_risk_count": stats["high"],
+                    "latency_ms": latency_ms,
+                    "ok": bool(ok),
+                    "error": error,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                },
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            log.warning("siem_dispatch_skipped", error=str(exc), request_id=request_id)
+        return
     except (SQLAlchemyError, Exception):
         pass
     log.warning("audit_write_failed", request_id=request_id, route=route)
