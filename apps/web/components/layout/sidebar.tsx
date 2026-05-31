@@ -8,6 +8,7 @@ import {
   Bell,
   Lightning,
   Pulse,
+  ShieldStar,
   UsersThree,
   Scales,
   CalendarBlank,
@@ -57,6 +58,7 @@ const NAV = [
   { href: "/digest", label: "Weekly digest", icon: EnvelopeSimple, hint: "Email preview // send" },
   { href: "/workspace", label: "Workspace", icon: UsersFour, hint: "Members // invites" },
   { href: "/workspace/sso", label: "SSO", icon: Key, hint: "OIDC // enforce per workspace" },
+  { href: "/admin", label: "Admin", icon: ShieldStar, hint: "Owner console // one pane" },
   { href: "/settings", label: "Settings", icon: Gear, hint: "Profile // data // wipe" },
 ];
 

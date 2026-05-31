@@ -2,6 +2,37 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Owner-only Admin Console (single pane of glass)
+
+Procurement scenario: a security reviewer asks "who can touch this
+workspace right now, what credentials are active, and what did they do?"
+The owner now answers with one screen instead of clicking through six.
+
+`/admin` aggregates, for every workspace the caller owns:
+
+- Members and pending invites (role, joined date)
+- Active sessions across all members (IP, UA, last seen, expiry)
+- API keys (prefix, scopes, last-used, revoked state)
+- Last 25 dashboard-audit entries with hash-chain status
+- Today's quota usage and 30-day total
+- Workspace policy snapshot: SSO, enforce-SSO, session TTL, retention,
+  data residency, IP allowlist
+
+Access is gated by the `owner` role on the selected workspace. Non-owners
+get `403` and a `denied` entry is written to the tamper-evident dashboard
+audit log (`admin.console.view`, outcome=`denied`). Cross-tenant lookups
+return `404` so the existence of other workspaces is never leaked.
+
+- New route: `apps/web/app/api/admin/overview/route.ts`
+  (owner-only, calls existing tenant-scoped stores; no new tables).
+- New page: `apps/web/app/admin/page.tsx` +
+  `apps/web/app/admin/client.tsx` (Phosphor duotone, shadcn-style
+  primitives, loading/error/empty states, responsive at 375px and 1440px).
+- New nav entry in the sidebar (`Admin // Owner console`).
+- New test: `apps/web/app/api/admin/overview/__tests__/route.test.ts`
+  proves anonymous=401, editor=403 with denied audit entry, cross-tenant
+  owner=404, and owner sees a complete payload.
+
 ## Trust Center, SECURITY.md, security.txt
 
 Procurement reviewers can evaluate this deployment without opening a
@@ -30,6 +61,16 @@ seconds. No customer data, no secrets.
 ### Try it
 
 ```bash
+cd apps/web
+pnpm dev
+# open http://localhost:3000/admin
+
+# Or hit the API directly with your session cookie:
+curl -H "Cookie: adh_session=..." \
+  "http://localhost:3000/api/admin/overview?workspace_id=ws_xxx"
+```
+
+
 pnpm --filter @adherence/web dev
 # dashboard: http://localhost:3000/trust
 # discovery: http://localhost:3000/.well-known/security.txt
