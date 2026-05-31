@@ -1,7 +1,13 @@
 /**
  * Server-side API client. Reads ADHERENCE_API_BASE + ADHERENCE_API_KEY
  * from the Node env so the key never reaches the browser.
+ *
+ * Forwards `x-request-id` upstream when the caller passes the incoming
+ * Request (or its headers) via `init.headers`, so dashboard log lines
+ * stitch to FastAPI log lines for the same trace.
  */
+import { recordUpstream } from "@/lib/metrics";
+
 const BASE = process.env.ADHERENCE_API_BASE ?? "http://localhost:7421";
 const KEY = process.env.ADHERENCE_API_KEY ?? "";
 
@@ -25,11 +31,19 @@ export async function apiFetch<T = unknown>(
   if (init.body && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
-  const res = await fetch(url, {
-    ...init,
-    headers,
-    cache: "no-store",
-  });
+  const t0 = Date.now();
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...init,
+      headers,
+      cache: "no-store",
+    });
+  } catch (err) {
+    recordUpstream("error", Date.now() - t0);
+    throw err;
+  }
+  recordUpstream(res.ok ? "ok" : "error", Date.now() - t0);
   const text = await res.text();
   let body: unknown = text;
   if (text && res.headers.get("content-type")?.includes("application/json")) {

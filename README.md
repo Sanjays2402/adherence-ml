@@ -6,6 +6,37 @@ interventions.
 
 ![landing](docs/screenshots/landing.png)
 
+## Observability for the dashboard (health, metrics, request IDs)
+
+The Next.js dashboard now ships the same three probes the FastAPI service
+already exposed, so a procurement reviewer can wire both processes into
+the same Kubernetes + Prometheus + log-aggregator stack without a custom
+integration.
+
+- `GET /healthz` returns 200 with process metadata (version, node, uptime).
+  Cheap. Hit it from your liveness probe.
+- `GET /readyz` returns 200 only when the upstream FastAPI API answers
+  `/livez` within 1.5 s; otherwise 503 so the load balancer drains the
+  pod. Use it for `readinessProbe`.
+- `GET /metrics` exposes Prometheus text exposition with build info,
+  process uptime, RSS memory, and upstream call counters plus latency
+  histograms (`dashboard_upstream_request_duration_ms_bucket{outcome,le}`).
+  Scope this with a network policy in production; there is no auth.
+- Every request gets a stable `x-request-id` (the caller's id is kept if
+  it matches `[A-Za-z0-9_-]{6,128}`, otherwise a fresh 24-char id is
+  minted). The header is echoed on the response and one structured JSON
+  access log line is emitted to stdout per request, ready for any log
+  shipper.
+- `lib/api.ts` records every upstream call into the same metrics store
+  so the histogram reflects real dashboard traffic.
+
+Try it:
+
+    pnpm --filter @adherence/web dev
+    curl -i http://localhost:3000/healthz
+    curl -s http://localhost:3000/metrics | head -20
+    curl -i -H 'x-request-id: trace-abc-123' http://localhost:3000/login | grep -i x-request-id
+
 ## Single sign-on (OIDC) per workspace
 
 Workspace owners can route their members through Google Workspace, Okta,
