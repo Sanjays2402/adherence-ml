@@ -2,6 +2,40 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Outbound webhook circuit breaker
+
+A dead receiver should not burn retries forever. Every outbound
+`WebhookSubscription` now tracks `consecutive_failures`; a successful
+2xx delivery resets it to zero, and once it crosses
+`ADHERENCE_OUTBOUND_CIRCUIT_BREAKER_THRESHOLD` (default 10) the
+subscription is auto-disabled: `disabled_at` is stamped,
+`disabled_reason` records the trip, dispatch skips it on every
+subsequent event, and `POST /v1/webhooks/outbound/deliveries/{id}/replay`
+refuses with 404 until an admin clears the breaker. Re-enable with
+`POST /v1/webhooks/outbound/subscriptions/{name}/reset-breaker`
+(supports `?dry_run=true` to preview). Tenant scoping is preserved on
+every path: an admin can only reset a subscription owned by their own
+workspace. Behavior is verified in
+`tests/integration/test_webhook_circuit_breaker.py`.
+
+### Try it
+
+```bash
+# Inspect breaker state on your subscriptions.
+curl -sS http://localhost:8000/v1/webhooks/outbound/subscriptions \
+  -H "x-api-key: $ADMIN_KEY" | jq '.[] | {name, consecutive_failures, disabled_at, disabled_reason}'
+
+# Preview the reset without mutating anything.
+curl -sS -X POST "http://localhost:8000/v1/webhooks/outbound/subscriptions/clinic-prod/reset-breaker?dry_run=true" \
+  -H "x-api-key: $ADMIN_KEY"
+
+# Clear the breaker so dispatch resumes.
+curl -sS -X POST http://localhost:8000/v1/webhooks/outbound/subscriptions/clinic-prod/reset-breaker \
+  -H "x-api-key: $ADMIN_KEY"
+```
+
+Local API: <http://localhost:8000>. Dashboard: <http://localhost:3000>.
+
 ## Per-workspace outbound webhook host allowlist
 
 Workspace owners can now restrict outbound webhook destinations to a

@@ -54,6 +54,9 @@ class SubscriptionOut(BaseModel):
     updated_at: str
     secret_previous_active: bool = False
     secret_previous_expires_at: str | None = None
+    consecutive_failures: int = 0
+    disabled_at: str | None = None
+    disabled_reason: str | None = None
 
 
 def _previous_active(row: WebhookSubscription) -> bool:
@@ -66,6 +69,7 @@ def _previous_active(row: WebhookSubscription) -> bool:
 
 def _row_to_out(row: WebhookSubscription) -> SubscriptionOut:
     exp = getattr(row, "secret_previous_expires_at", None)
+    disabled_at = getattr(row, "disabled_at", None)
     return SubscriptionOut(
         id=row.id, name=row.name, url=row.url,
         event_types=[t for t in (row.event_types_csv or "").split(",") if t],
@@ -76,6 +80,9 @@ def _row_to_out(row: WebhookSubscription) -> SubscriptionOut:
         updated_at=row.updated_at.isoformat(),
         secret_previous_active=_previous_active(row),
         secret_previous_expires_at=exp.isoformat() if exp else None,
+        consecutive_failures=int(getattr(row, "consecutive_failures", 0) or 0),
+        disabled_at=disabled_at.isoformat() if disabled_at else None,
+        disabled_reason=getattr(row, "disabled_reason", None),
     )
 
 
@@ -298,6 +305,83 @@ def delete_subscription(
     if res.rowcount == 0:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="subscription not found")
     return {"deleted": True, "name": name}
+
+
+class ResetBreakerOut(BaseModel):
+    name: str
+    reset: bool
+    previous_consecutive_failures: int
+    was_disabled: bool
+
+
+@router.post(
+    "/subscriptions/{name}/reset-breaker",
+    response_model=ResetBreakerOut,
+)
+def reset_breaker(
+    name: str,
+    request: Request,
+    dry_run: bool = Query(
+        False,
+        description="Preview the reset without mutating the subscription.",
+    ),
+    p=Depends(require_admin),
+) -> ResetBreakerOut:
+    """Clear the circuit-breaker state on an outbound subscription.
+
+    Zeroes ``consecutive_failures`` and (if the breaker had tripped)
+    clears ``disabled_at`` / ``disabled_reason`` so dispatch resumes
+    sending to this URL. The audit trail is preserved in WebhookDelivery.
+    """
+    init_db()
+    caller = _caller_id(request, p)
+    tenant_id = str(p.get("tenant") or "default")
+    with session() as s:
+        row = s.execute(
+            select(WebhookSubscription).where(
+                WebhookSubscription.name == name,
+                WebhookSubscription.tenant_id == tenant_id,
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, detail="subscription not found",
+            )
+        prev_failures = int(getattr(row, "consecutive_failures", 0) or 0)
+        was_disabled = getattr(row, "disabled_at", None) is not None
+        if dry_run:
+            return ResetBreakerOut(
+                name=row.name,
+                reset=False,
+                previous_consecutive_failures=prev_failures,
+                was_disabled=was_disabled,
+            )
+        row.consecutive_failures = 0
+        row.disabled_at = None
+        row.disabled_reason = None
+        row.updated_at = datetime.utcnow()
+        s.commit()
+    try:
+        from adherence_common.admin_audit import record_admin_action
+        record_admin_action(
+            action="webhook.circuit_breaker.reset",
+            principal=p if isinstance(p, dict) else None,
+            target=f"webhook_subscription:{name}",
+            details={
+                "actor": caller,
+                "previous_consecutive_failures": prev_failures,
+                "was_disabled": was_disabled,
+            },
+            request_id=getattr(request.state, "request_id", None),
+        )
+    except Exception:
+        pass
+    return ResetBreakerOut(
+        name=name,
+        reset=True,
+        previous_consecutive_failures=prev_failures,
+        was_disabled=was_disabled,
+    )
 
 
 class DeliveryOut(BaseModel):

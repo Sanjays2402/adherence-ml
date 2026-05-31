@@ -109,7 +109,23 @@ def list_targets(event_type: str) -> list[WebhookSubscription]:
     except SQLAlchemyError as exc:  # pragma: no cover
         log.warning("webhook_list_failed", error=str(exc))
         return []
-    return [s for s in subs if _matches(s, event_type)]
+    # Skip circuit-broken subscriptions: ``disabled_at`` is stamped by the
+    # breaker once consecutive_failures crosses the threshold. Operators
+    # re-enable via /v1/webhooks/outbound/subscriptions/{name}/reset-breaker.
+    return [
+        sb for sb in subs
+        if _matches(sb, event_type)
+        and getattr(sb, "disabled_at", None) is None
+    ]
+
+
+def _breaker_threshold() -> int:
+    """Read the circuit-breaker threshold from settings. 0 disables it."""
+    try:
+        from adherence_common.settings import get_settings
+        return int(getattr(get_settings(), "outbound_circuit_breaker_threshold", 0) or 0)
+    except Exception:  # pragma: no cover - settings always present in prod
+        return 0
 
 
 def _post(
@@ -216,6 +232,7 @@ def dispatch(
                 break
         try:
             _ensure_table()
+            threshold = _breaker_threshold()
             with session() as s:
                 row = WebhookDelivery(
                     subscription_id=sub.id,
@@ -228,6 +245,35 @@ def dispatch(
                     state=state,
                 )
                 s.add(row)
+                # Update the circuit-breaker counter on the subscription.
+                # Reset on success, increment on failure, auto-disable on
+                # crossing the configured threshold so a dead receiver
+                # stops burning retries (and operator pager budget).
+                live = s.get(WebhookSubscription, sub.id)
+                if live is not None:
+                    if state == "success":
+                        if (live.consecutive_failures or 0) != 0:
+                            live.consecutive_failures = 0
+                            live.updated_at = datetime.utcnow()
+                    else:
+                        live.consecutive_failures = (live.consecutive_failures or 0) + 1
+                        live.updated_at = datetime.utcnow()
+                        if (
+                            threshold > 0
+                            and live.consecutive_failures >= threshold
+                            and live.disabled_at is None
+                        ):
+                            live.disabled_at = datetime.utcnow()
+                            live.disabled_reason = (
+                                f"circuit_breaker: {live.consecutive_failures} "
+                                f"consecutive failures (threshold {threshold})"
+                            )
+                            log.warning(
+                                "outbound_webhook_circuit_breaker_tripped",
+                                subscription_id=sub.id, url=sub.url,
+                                consecutive_failures=live.consecutive_failures,
+                                threshold=threshold,
+                            )
                 s.commit()
                 s.refresh(row)
                 out_ids.append(row.id)
@@ -245,6 +291,9 @@ def replay(delivery_id: int, *, _client: httpx.Client | None = None) -> int | No
             return None
         sub = s.get(WebhookSubscription, prev.subscription_id)
         if sub is None or not sub.active:
+            return None
+        # Refuse replay if the breaker has tripped. Operator must reset first.
+        if getattr(sub, "disabled_at", None) is not None:
             return None
         event_type = prev.event_type
         payload = prev.payload_json

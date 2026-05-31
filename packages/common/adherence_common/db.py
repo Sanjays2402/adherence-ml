@@ -248,6 +248,12 @@ class WebhookSubscription(Base):
     secret_previous_expires_at = Column(DateTime, nullable=True)
     event_types_csv = Column(String(256), nullable=True)
     active = Column(Integer, nullable=False, default=1)
+    # Circuit breaker: track consecutive failed deliveries and auto-disable
+    # a subscription once the count crosses a threshold so a dead receiver
+    # does not burn retries forever. Reset to 0 on any successful 2xx.
+    consecutive_failures = Column(Integer, nullable=False, default=0)
+    disabled_at = Column(DateTime, nullable=True)
+    disabled_reason = Column(String(255), nullable=True)
     # Tenant that created the subscription. Dispatch re-evaluates the
     # per-tenant outbound host allowlist against this value so a tenant
     # narrowing its egress policy retroactively blocks its own old rows.
@@ -518,6 +524,25 @@ def _ensure_tenant_columns(engine) -> None:
                 conn.execute(text(
                     "ALTER TABLE webhook_subscriptions "
                     "ADD COLUMN tenant_id VARCHAR(64) NOT NULL DEFAULT 'default'"
+                ))
+        # Circuit-breaker columns for outbound webhook subscriptions.
+        if "consecutive_failures" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE webhook_subscriptions "
+                    "ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0"
+                ))
+        if "disabled_at" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE webhook_subscriptions "
+                    "ADD COLUMN disabled_at DATETIME"
+                ))
+        if "disabled_reason" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE webhook_subscriptions "
+                    "ADD COLUMN disabled_reason VARCHAR(255)"
                 ))
 
 

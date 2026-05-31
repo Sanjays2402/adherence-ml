@@ -112,6 +112,10 @@ class Settings(BaseSettings):
     # disables hostname allowlisting (IP-class checks still apply).
     # Entries: ``hooks.example.com`` (exact) or ``.example.com`` (suffix).
     outbound_host_allowlist: str = ""
+    # Outbound webhook circuit breaker: auto-disable a subscription after
+    # this many consecutive failed deliveries. 0 disables the breaker.
+    # A successful 2xx resets the counter back to 0.
+    outbound_circuit_breaker_threshold: int = 10
 
     # Sentry error tracking. Empty DSN disables shipping. Other knobs are still
     # parsed so they can be set ahead of enabling Sentry without restart churn.
