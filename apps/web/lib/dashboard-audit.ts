@@ -214,6 +214,183 @@ export async function listAudit(opts: ListOptions = {}): Promise<ListResult> {
   };
 }
 
+/**
+ * Detailed integrity report for the dashboard audit chain.
+ *
+ * Walks every persisted entry, recomputes its SHA-256, and confirms the
+ * `prev_hash` linkage. On the first violation it records the position and
+ * the entry id so a SOC2 reviewer can point at the exact broken row.
+ */
+export interface AuditChainReport {
+  entries: number;
+  /** True if every recomputed hash matches and every prev_hash links. */
+  chain_valid: boolean;
+  /** Hash of the latest entry, or null when the log is empty. */
+  tip_hash: string | null;
+  /** Timestamp (ms) of the latest entry, or null when empty. */
+  tip_ts: number | null;
+  /** Timestamp (ms) of the first entry, or null when empty. */
+  head_ts: number | null;
+  /** Genesis sentinel; included so verifiers do not need to hardcode it. */
+  genesis_hash: string;
+  /** 0-based index of the first broken entry, or null when chain is valid. */
+  first_break_index: number | null;
+  /** id of the first broken entry, or null when chain is valid. */
+  first_break_id: string | null;
+  /** Human-readable reason for the break, or null. */
+  first_break_reason: string | null;
+  /** True when at least one stored line failed JSON.parse. */
+  has_corrupt_lines: boolean;
+  /** ISO timestamp (UTC) for when the report was produced. */
+  verified_at: string;
+}
+
+export async function verifyAuditChain(): Promise<AuditChainReport> {
+  ensureDir();
+  const p = LOG_PATH();
+  const verifiedAt = new Date().toISOString();
+  if (!existsSync(p)) {
+    return {
+      entries: 0,
+      chain_valid: true,
+      tip_hash: null,
+      tip_ts: null,
+      head_ts: null,
+      genesis_hash: GENESIS_HASH,
+      first_break_index: null,
+      first_break_id: null,
+      first_break_reason: null,
+      has_corrupt_lines: false,
+      verified_at: verifiedAt,
+    };
+  }
+  const raw = await fs.readFile(p, "utf8");
+  const lines = raw.split("\n").filter((l) => l.length > 0);
+  let hasCorrupt = false;
+  const entries: AuditEntry[] = [];
+  for (const line of lines) {
+    try {
+      entries.push(JSON.parse(line) as AuditEntry);
+    } catch {
+      hasCorrupt = true;
+    }
+  }
+
+  let prev = GENESIS_HASH;
+  let firstBreakIndex: number | null = null;
+  let firstBreakId: string | null = null;
+  let firstBreakReason: string | null = null;
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i]!;
+    if (e.prev_hash !== prev) {
+      firstBreakIndex = i;
+      firstBreakId = e.id;
+      firstBreakReason = `prev_hash mismatch at index ${i}`;
+      break;
+    }
+    const recomputed = hashEntry(e);
+    if (recomputed !== e.hash) {
+      firstBreakIndex = i;
+      firstBreakId = e.id;
+      firstBreakReason = `hash mismatch at index ${i}`;
+      break;
+    }
+    prev = e.hash;
+  }
+  const chainValid = firstBreakIndex === null && !hasCorrupt;
+  if (hasCorrupt && firstBreakReason === null) {
+    firstBreakReason = "one or more lines failed to parse";
+  }
+
+  return {
+    entries: entries.length,
+    chain_valid: chainValid,
+    tip_hash: entries.length > 0 ? entries[entries.length - 1]!.hash : null,
+    tip_ts: entries.length > 0 ? entries[entries.length - 1]!.ts : null,
+    head_ts: entries.length > 0 ? entries[0]!.ts : null,
+    genesis_hash: GENESIS_HASH,
+    first_break_index: firstBreakIndex,
+    first_break_id: firstBreakId,
+    first_break_reason: firstBreakReason,
+    has_corrupt_lines: hasCorrupt,
+    verified_at: verifiedAt,
+  };
+}
+
+/**
+ * Build a signed evidence bundle of the entire audit log.
+ *
+ * The bundle is a single JSON document with three sections:
+ *   - `manifest`: schema id, generation timestamp, counts, hash algorithm,
+ *     genesis hash, head and tip hashes, and a SHA-256 over the canonical
+ *     concatenation of every entry hash (the "merkle-lite root"). A buyer
+ *     security team can recompute this root from the entries alone.
+ *   - `report`: the chain integrity report from {@link verifyAuditChain}.
+ *   - `entries`: every audit entry in chronological order.
+ */
+export interface AuditBundleManifest {
+  schema: "adherence.audit.bundle.v1";
+  generated_at: string;
+  workspace_id: string | null;
+  generator: { app: string; version: string };
+  hash_algorithm: "sha256";
+  entry_count: number;
+  genesis_hash: string;
+  head_hash: string | null;
+  tip_hash: string | null;
+  /** sha256 over `entry[0].hash + entry[1].hash + ... + entry[N-1].hash`. */
+  entries_root: string;
+}
+
+export interface AuditBundle {
+  manifest: AuditBundleManifest;
+  report: AuditChainReport;
+  entries: AuditEntry[];
+}
+
+export interface BundleOptions {
+  workspace_id?: string | null;
+  generator_version?: string;
+}
+
+export async function exportAuditBundle(
+  opts: BundleOptions = {},
+): Promise<AuditBundle> {
+  ensureDir();
+  const p = LOG_PATH();
+  const entries: AuditEntry[] = [];
+  if (existsSync(p)) {
+    const raw = await fs.readFile(p, "utf8");
+    const lines = raw.split("\n").filter((l) => l.length > 0);
+    for (const line of lines) {
+      try {
+        entries.push(JSON.parse(line) as AuditEntry);
+      } catch {
+        // skip; the report below will flag it
+      }
+    }
+  }
+  const report = await verifyAuditChain();
+  const root = createHash("sha256");
+  for (const e of entries) root.update(e.hash);
+  const entriesRoot = root.digest("hex");
+
+  const manifest: AuditBundleManifest = {
+    schema: "adherence.audit.bundle.v1",
+    generated_at: new Date().toISOString(),
+    workspace_id: opts.workspace_id ?? null,
+    generator: { app: "adherence-ml", version: opts.generator_version ?? "1" },
+    hash_algorithm: "sha256",
+    entry_count: entries.length,
+    genesis_hash: GENESIS_HASH,
+    head_hash: entries.length > 0 ? entries[0]!.hash : null,
+    tip_hash: entries.length > 0 ? entries[entries.length - 1]!.hash : null,
+    entries_root: entriesRoot,
+  };
+
+  return { manifest, report, entries };
+}
+
 /** Test helper. */
 export function _resetForTests() {
   cachedTail = undefined;

@@ -1,5 +1,6 @@
 import AuditClient from "./client";
 import DashboardAuditPanel from "./dashboard-panel";
+import AuditIntegrityPanel from "./integrity-panel";
 import { api, ApiError } from "@/lib/api";
 import type { AuditListResponse, AuditStatsResponse } from "@/lib/types";
 
@@ -26,6 +27,7 @@ export default async function AuditPage() {
   return (
     <div className="space-y-6">
       <AuditClient initialStats={stats} initialList={list} />
+      <AuditIntegrityPanel />
       <DashboardAuditPanel />
     </div>
   );

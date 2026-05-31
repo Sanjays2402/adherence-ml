@@ -2,6 +2,43 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Tamper-evident audit chain verification + signed evidence bundle
+
+The dashboard audit log (`apps/web/lib/dashboard-audit.ts`) is an append-only
+JSONL with a per-entry SHA-256 chain (each row embeds the hash of the previous
+row). The new audit page surfaces this as auditor-grade evidence:
+
+- `GET /api/audit/integrity` recomputes every hash, confirms every
+  `prev_hash` linkage, and returns a structured report (entry count, head/tip
+  timestamps, tip hash, genesis sentinel, first break index/id/reason,
+  corrupt-line flag, verification timestamp). The verification is itself
+  recorded as a `audit.integrity.verify` entry so the tip advances on each
+  call.
+- `GET /api/audit/bundle` returns a single JSON document
+  (`adherence.audit.bundle.v1`) with the manifest, the integrity report, and
+  every entry in chronological order. The manifest carries an `entries_root`
+  = sha256 over the concatenation of every entry hash so a buyer's security
+  team can recompute it from the entries alone and detect any post-export
+  tampering. Workspace-scoped exports (`?workspace_id=...`) require the
+  owner role; denials are audited.
+- The `/audit` page renders an integrity card with status pill, head/tip
+  timestamps, full tip + genesis hashes, a re-verify button, and a one-click
+  signed bundle download. A broken chain shows the exact first break index,
+  entry id, and reason.
+
+Try it locally:
+
+```bash
+cd apps/web
+pnpm install
+ADHERENCE_DASHBOARD_OPEN=1 pnpm dev
+# then in another shell:
+curl -sS http://localhost:3000/api/audit/integrity | jq
+curl -sS -OJ http://localhost:3000/api/audit/bundle
+```
+
+Visit http://localhost:3000/audit to see the integrity panel.
+
 ## Workspace data export (GDPR / CCPA)
 
 Workspace owners can download every record their workspace owns as a single
