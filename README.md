@@ -200,6 +200,16 @@ curl -X POST http://localhost:3000/v1/predict \
   }'
 ```
 
+Need to confirm a key works without burning predict quota? `GET /v1/keys/me`
+is a read-only introspection endpoint that returns the key id, name, prefix,
+scopes, created/last-used timestamps, and total call count. It requires the
+`read` scope and never echoes the plaintext or its hash.
+
+```bash
+curl http://localhost:3000/v1/keys/me \
+  -H "authorization: Bearer adh_YOUR_KEY"
+```
+
 ### Run history
 
 Every scored prediction, cohort sweep, and forecast call made through the web

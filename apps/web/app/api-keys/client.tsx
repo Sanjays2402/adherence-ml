@@ -163,6 +163,9 @@ export default function KeysClient() {
   const curlRuns = `curl http://localhost:3000/v1/runs?limit=10 \\
   -H "authorization: Bearer ${sampleKey}"`;
 
+  const curlMe = `curl http://localhost:3000/v1/keys/me \\
+  -H "authorization: Bearer ${sampleKey}"`;
+
   const curl = `curl -X POST http://localhost:3000/v1/predict \\
   -H "authorization: Bearer ${sampleKey}" \\
   -H "content-type: application/json" \\
@@ -405,6 +408,13 @@ export default function KeysClient() {
           </div>
           <pre className="text-[11px] font-mono p-3 rounded bg-[var(--color-surface)] border border-[var(--color-border)] overflow-x-auto whitespace-pre">
 {curlRuns}
+          </pre>
+          <div className="flex items-center justify-between pt-2">
+            <span className="text-[11px] text-[var(--color-muted)]">GET /v1/keys/me (verify a key, requires read scope, does not spend predict quota)</span>
+            <CopyBtn text={curlMe} label="copy curl" />
+          </div>
+          <pre className="text-[11px] font-mono p-3 rounded bg-[var(--color-surface)] border border-[var(--color-border)] overflow-x-auto whitespace-pre">
+{curlMe}
           </pre>
           <p className="text-[11px] text-[var(--color-muted)]">
             Successful calls also appear in your <a href="/history" className="underline">history</a>.
