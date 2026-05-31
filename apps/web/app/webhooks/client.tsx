@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import { Fragment } from "react";
 import useSWR from "swr";
 import {
   Plugs as WebhookIcon,
@@ -16,6 +17,8 @@ import {
   ShieldCheck,
   Warning,
   ArrowClockwise,
+  CaretRight,
+  ArrowCounterClockwise,
 } from "@phosphor-icons/react";
 import {
   PageHeader,
@@ -29,6 +32,7 @@ import {
   Badge,
   MonoChip,
 } from "@/components/ui/primitives";
+import { cn } from "@/lib/utils";
 
 type Endpoint = {
   id: string;
@@ -105,13 +109,19 @@ export default function WebhooksClient() {
     fetcher,
     { refreshInterval: 0 },
   );
+  const [statusFilter, setStatusFilter] = useState<"all" | "ok" | "failed" | "pending">("all");
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [redeliveringId, setRedeliveringId] = useState<string | null>(null);
+  const [redeliverErr, setRedeliverErr] = useState<string | null>(null);
   const {
     data: delivData,
     mutate: mutateDeliveries,
     isLoading: delivLoading,
-  } = useSWR<DeliveriesResp>("/api/webhooks/deliveries?limit=25", fetcher, {
-    refreshInterval: 5_000,
-  });
+  } = useSWR<DeliveriesResp>(
+    `/api/webhooks/deliveries?limit=25&status=${statusFilter}`,
+    fetcher,
+    { refreshInterval: 5_000 },
+  );
 
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
@@ -132,6 +142,28 @@ export default function WebhooksClient() {
     for (const e of endpoints) m.set(e.id, e.name);
     return m;
   }, [endpoints]);
+
+  const onRedeliver = useCallback(
+    async (id: string) => {
+      setRedeliverErr(null);
+      setRedeliveringId(id);
+      try {
+        const res = await fetch(`/api/webhooks/deliveries/${id}/redeliver`, {
+          method: "POST",
+        });
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setRedeliverErr(j?.detail ?? j?.error ?? `redeliver failed (${res.status})`);
+        }
+        await mutateDeliveries();
+      } catch (e) {
+        setRedeliverErr(e instanceof Error ? e.message : "network error");
+      } finally {
+        setRedeliveringId(null);
+      }
+    },
+    [mutateDeliveries],
+  );
 
   const onCreate = useCallback(async () => {
     setCreateErr(null);
@@ -421,6 +453,33 @@ export default function WebhooksClient() {
               </MonoChip>
             }
           />
+          <div className="px-4 pt-3 flex flex-wrap items-center gap-2">
+            {([
+              ["all", "all"],
+              ["ok", "delivered"],
+              ["failed", "failed"],
+              ["pending", "retrying"],
+            ] as const).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setStatusFilter(key)}
+                className={cn(
+                  "font-mono text-[10px] uppercase tracking-[0.14em] px-2 py-1 rounded border",
+                  statusFilter === key
+                    ? "bg-[var(--color-fg)] text-[var(--color-bg)] border-[var(--color-fg)]"
+                    : "border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-fg)]",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+            {redeliverErr ? (
+              <span className="ml-auto font-mono text-[11px] text-[var(--color-danger)]">
+                {redeliverErr}
+              </span>
+            ) : null}
+          </div>
           {delivLoading && deliveries.length === 0 ? (
             <div className="p-4 flex flex-col gap-2">
               {[0, 1, 2].map((i) => (
@@ -430,62 +489,155 @@ export default function WebhooksClient() {
           ) : deliveries.length === 0 ? (
             <Empty
               icon={<Warning weight="duotone" size={32} />}
-              title="No deliveries yet"
-              hint="Create a run on /predict or send a test ping to populate this log."
+              title={statusFilter === "all" ? "No deliveries yet" : `No ${statusFilter} deliveries`}
+              hint={
+                statusFilter === "all"
+                  ? "Create a run on /predict or send a test ping to populate this log."
+                  : "Try a different filter or trigger a new event."
+              }
             />
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full text-[12px]">
                 <thead>
                   <tr className="text-left text-[10px] uppercase tracking-[0.14em] font-mono text-[var(--color-muted)] border-b border-[var(--color-border)]">
+                    <th className="px-2 py-2 w-6"></th>
                     <th className="px-4 py-2">when</th>
                     <th className="px-4 py-2">endpoint</th>
                     <th className="px-4 py-2">event</th>
                     <th className="px-4 py-2">status</th>
                     <th className="px-4 py-2">attempts</th>
                     <th className="px-4 py-2">last error</th>
+                    <th className="px-4 py-2 text-right">action</th>
                   </tr>
                 </thead>
                 <tbody>
                   {deliveries.map((d) => {
                     const last = d.attempts[d.attempts.length - 1];
+                    const isOpen = expanded === d.id;
+                    const canRedeliver = d.event !== "test.ping";
                     return (
-                      <tr
-                        key={d.id}
-                        className="border-b border-[var(--color-border)]/60"
-                      >
-                        <td className="px-4 py-2 font-mono whitespace-nowrap">
-                          {fmtTime(d.created_at)}
-                        </td>
-                        <td className="px-4 py-2 truncate max-w-[180px]">
-                          {endpointName.get(d.endpoint_id) ?? d.endpoint_id}
-                        </td>
-                        <td className="px-4 py-2 font-mono">{d.event}</td>
-                        <td className="px-4 py-2">
-                          {d.delivered ? (
-                            <span className="inline-flex items-center gap-1 text-[var(--color-success)] font-mono">
-                              <CheckCircle weight="duotone" size={14} />
-                              {last?.status ?? "ok"}
-                            </span>
-                          ) : d.finished_at ? (
-                            <span className="inline-flex items-center gap-1 text-[var(--color-danger)] font-mono">
-                              <XCircle weight="duotone" size={14} />
-                              {last?.status ?? "fail"}
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 text-[var(--color-muted)] font-mono">
-                              <Pulse weight="duotone" size={14} />
-                              retrying
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2 font-mono">
-                          {d.attempts.length}
-                        </td>
-                        <td className="px-4 py-2 font-mono text-[var(--color-muted)] truncate max-w-[240px]">
-                          {last?.error ?? "—"}
-                        </td>
-                      </tr>
+                      <Fragment key={d.id}>
+                        <tr className="border-b border-[var(--color-border)]/60 hover:bg-[var(--color-bg-elev)]">
+                          <td className="px-2 py-2">
+                            <button
+                              type="button"
+                              onClick={() => setExpanded(isOpen ? null : d.id)}
+                              aria-label={isOpen ? "collapse" : "expand"}
+                              aria-expanded={isOpen}
+                              className="text-[var(--color-muted)] hover:text-[var(--color-fg)]"
+                            >
+                              <CaretRight
+                                weight="duotone"
+                                size={14}
+                                className={cn(
+                                  "transition-transform",
+                                  isOpen && "rotate-90",
+                                )}
+                              />
+                            </button>
+                          </td>
+                          <td className="px-4 py-2 font-mono whitespace-nowrap">
+                            {fmtTime(d.created_at)}
+                          </td>
+                          <td className="px-4 py-2 truncate max-w-[180px]">
+                            {endpointName.get(d.endpoint_id) ?? d.endpoint_id}
+                          </td>
+                          <td className="px-4 py-2 font-mono">{d.event}</td>
+                          <td className="px-4 py-2">
+                            {d.delivered ? (
+                              <span className="inline-flex items-center gap-1 text-[var(--color-success)] font-mono">
+                                <CheckCircle weight="duotone" size={14} />
+                                {last?.status ?? "ok"}
+                              </span>
+                            ) : d.finished_at ? (
+                              <span className="inline-flex items-center gap-1 text-[var(--color-danger)] font-mono">
+                                <XCircle weight="duotone" size={14} />
+                                {last?.status ?? "fail"}
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-[var(--color-muted)] font-mono">
+                                <Pulse weight="duotone" size={14} />
+                                retrying
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2 font-mono">
+                            {d.attempts.length}
+                          </td>
+                          <td className="px-4 py-2 font-mono text-[var(--color-muted)] truncate max-w-[240px]">
+                            {last?.error ?? "-"}
+                          </td>
+                          <td className="px-4 py-2 text-right">
+                            {canRedeliver ? (
+                              <button
+                                type="button"
+                                onClick={() => onRedeliver(d.id)}
+                                disabled={redeliveringId === d.id}
+                                className={cn(
+                                  "inline-flex items-center gap-1 font-mono text-[11px] px-2 py-1 rounded border border-[var(--color-border)]",
+                                  "hover:bg-[var(--color-bg-elev)] disabled:opacity-50",
+                                )}
+                                title="Send this payload again as a new delivery"
+                              >
+                                <ArrowCounterClockwise
+                                  weight="duotone"
+                                  size={12}
+                                  className={redeliveringId === d.id ? "animate-spin" : undefined}
+                                />
+                                redeliver
+                              </button>
+                            ) : (
+                              <span className="font-mono text-[10px] text-[var(--color-muted)]">
+                                test
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                        {isOpen ? (
+                          <tr className="border-b border-[var(--color-border)]/60 bg-[var(--color-bg-elev)]/40">
+                            <td colSpan={8} className="px-4 py-3">
+                              <div className="grid lg:grid-cols-2 gap-4">
+                                <div>
+                                  <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--color-muted)] mb-2">
+                                    attempts ({d.attempts.length})
+                                  </div>
+                                  <ol className="flex flex-col gap-1">
+                                    {d.attempts.length === 0 ? (
+                                      <li className="font-mono text-[11px] text-[var(--color-muted)]">no attempts yet</li>
+                                    ) : (
+                                      d.attempts.map((a) => (
+                                        <li
+                                          key={a.attempt}
+                                          className="font-mono text-[11px] flex items-center gap-2"
+                                        >
+                                          <span className="text-[var(--color-muted)]">#{a.attempt}</span>
+                                          <span className="text-[var(--color-muted)]">{fmtTime(a.at)}</span>
+                                          <span className={a.ok ? "text-[var(--color-success)]" : "text-[var(--color-danger)]"}>
+                                            {a.status ?? a.error ?? "err"}
+                                          </span>
+                                          <span className="text-[var(--color-muted)]">{a.duration_ms}ms</span>
+                                          {a.error && a.status ? (
+                                            <span className="text-[var(--color-muted)] truncate">{a.error}</span>
+                                          ) : null}
+                                        </li>
+                                      ))
+                                    )}
+                                  </ol>
+                                </div>
+                                <div>
+                                  <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--color-muted)] mb-2">
+                                    payload
+                                  </div>
+                                  <pre className="font-mono text-[11px] whitespace-pre-wrap break-words bg-[var(--color-bg)] border border-[var(--color-border)] rounded p-2 max-h-48 overflow-auto">
+                                    {JSON.stringify(d.payload, null, 2)}
+                                  </pre>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
                     );
                   })}
                 </tbody>

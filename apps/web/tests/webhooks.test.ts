@@ -21,8 +21,10 @@ import {
   listDeliveries,
   newDeliveryId,
   endpointSecretHash,
+  getDelivery,
+  deliveryStatus,
 } from "../lib/webhooks-store";
-import { verifySignature } from "../lib/webhook-dispatch";
+import { redeliver, verifySignature } from "../lib/webhook-dispatch";
 import { createHmac } from "node:crypto";
 
 afterAll(() => {
@@ -129,5 +131,91 @@ describe("verifySignature", () => {
     const t = Math.floor(Date.now() / 1000) - 3600;
     const v1 = createHmac("sha256", key).update(`${t}.${body}`).digest("hex");
     expect(verifySignature(key, `t=${t},v1=${v1}`, body)).toBe(false);
+  });
+});
+
+describe("deliveries: status filter + redeliver", () => {
+  it("filters by status and exposes getDelivery", async () => {
+    const { record } = await createEndpoint({
+      name: "filt",
+      url: "https://example.com/f",
+    });
+    const mk = (delivered: boolean, finished: boolean) => ({
+      id: newDeliveryId(),
+      endpoint_id: record.id,
+      event: "run.created" as const,
+      url: record.url,
+      payload: { hello: "world" },
+      created_at: Date.now(),
+      finished_at: finished ? Date.now() : null,
+      delivered,
+      attempts: [],
+    });
+    const ok = mk(true, true);
+    const failed = mk(false, true);
+    const pending = mk(false, false);
+    await recordDelivery(ok);
+    await recordDelivery(failed);
+    await recordDelivery(pending);
+
+    expect(deliveryStatus(ok)).toBe("ok");
+    expect(deliveryStatus(failed)).toBe("failed");
+    expect(deliveryStatus(pending)).toBe("pending");
+
+    const okList = await listDeliveries({ endpoint_id: record.id, status: "ok" });
+    expect(okList.every((d) => d.delivered)).toBe(true);
+    expect(okList.find((d) => d.id === ok.id)).toBeTruthy();
+
+    const failList = await listDeliveries({ endpoint_id: record.id, status: "failed" });
+    expect(failList.every((d) => !d.delivered && d.finished_at)).toBe(true);
+
+    const pendList = await listDeliveries({ endpoint_id: record.id, status: "pending" });
+    expect(pendList.every((d) => !d.finished_at)).toBe(true);
+
+    const fetched = await getDelivery(ok.id);
+    expect(fetched?.id).toBe(ok.id);
+    expect(await getDelivery("del_does_not_exist")).toBeNull();
+  });
+
+  it("redeliver creates a fresh delivery against the same endpoint", async () => {
+    const calls: string[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      calls.push(typeof input === "string" ? input : input.toString());
+      return new Response("ok", { status: 200 });
+    }) as typeof fetch;
+    try {
+      const { record } = await createEndpoint({
+        name: "redeliv",
+        url: "https://example.com/r",
+      });
+      const source = {
+        id: newDeliveryId(),
+        endpoint_id: record.id,
+        event: "run.created" as const,
+        url: record.url,
+        payload: { run_id: "r_xyz", risk: 0.42 },
+        created_at: Date.now() - 5_000,
+        finished_at: Date.now() - 4_000,
+        delivered: false,
+        attempts: [],
+      };
+      await recordDelivery(source);
+
+      const ep = (await listEndpoints()).find((e) => e.id === record.id)!;
+      const fresh = await redeliver(ep, source);
+      expect(fresh).not.toBeNull();
+      expect(fresh!.id).not.toBe(source.id);
+      expect(fresh!.endpoint_id).toBe(record.id);
+      expect(fresh!.event).toBe(source.event);
+      expect(fresh!.delivered).toBe(true);
+      expect(fresh!.attempts.length).toBeGreaterThan(0);
+      expect(calls[0]).toBe(record.url);
+
+      const original = await getDelivery(source.id);
+      expect(original?.delivered).toBe(false);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 });

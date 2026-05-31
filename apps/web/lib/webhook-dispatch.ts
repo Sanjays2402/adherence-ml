@@ -196,4 +196,18 @@ export async function dispatchTest(
   );
 }
 
+/**
+ * Re-send a previously recorded delivery. Creates a brand new delivery row
+ * tied to the same endpoint + event + payload, retries inline, and returns
+ * the new delivery. The original row is left intact so users can compare.
+ */
+export async function redeliver(
+  endpoint: WebhookEndpoint,
+  source: WebhookDelivery,
+): Promise<WebhookDelivery | null> {
+  return dispatchToEndpoint(endpoint, source.event, source.payload, {
+    awaitRetries: true,
+  });
+}
+
 export const __test = { MAX_ATTEMPTS, BACKOFF_MS };

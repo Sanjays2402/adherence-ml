@@ -95,9 +95,20 @@ curl -X POST http://localhost:3000/api/runs \
   -H "content-type: application/json" \
   -d '{"kind":"demo","title":"hello","payload":{}}'
 
-# 3. tail the delivery log
-curl http://localhost:3000/api/webhooks/deliveries | jq
+# 3. tail the delivery log (filter by status: all|ok|failed|pending)
+curl 'http://localhost:3000/api/webhooks/deliveries?status=failed' | jq
+
+# 4. inspect a single delivery (payload + per-attempt status, duration, error)
+curl http://localhost:3000/api/webhooks/deliveries/del_XXXX | jq
+
+# 5. redeliver a failed one against its original endpoint (new delivery row,
+#    original is preserved for comparison; test pings are excluded)
+curl -X POST http://localhost:3000/api/webhooks/deliveries/del_XXXX/redeliver | jq
 ```
+
+The `/webhooks` dashboard now ships status filter chips, expandable rows
+showing the full payload plus per-attempt log, and a one-click `redeliver`
+button on every non-test delivery.
 
 ### API keys
 

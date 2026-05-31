@@ -234,9 +234,18 @@ export async function recordDelivery(
   await writeQueue;
 }
 
+export type DeliveryStatusFilter = "all" | "ok" | "failed" | "pending";
+
 export interface ListDeliveriesQuery {
   endpoint_id?: string;
   limit?: number;
+  status?: DeliveryStatusFilter;
+}
+
+export function deliveryStatus(d: WebhookDelivery): "ok" | "failed" | "pending" {
+  if (d.delivered) return "ok";
+  if (d.finished_at) return "failed";
+  return "pending";
 }
 
 export async function listDeliveries(
@@ -246,8 +255,16 @@ export async function listDeliveries(
   const limit = Math.min(Math.max(q.limit ?? 50, 1), MAX_DELIVERIES);
   let items = [...s.deliveries];
   if (q.endpoint_id) items = items.filter((d) => d.endpoint_id === q.endpoint_id);
+  if (q.status && q.status !== "all") {
+    items = items.filter((d) => deliveryStatus(d) === q.status);
+  }
   items.sort((a, b) => b.created_at - a.created_at);
   return items.slice(0, limit);
+}
+
+export async function getDelivery(id: string): Promise<WebhookDelivery | null> {
+  const s = await readStore();
+  return s.deliveries.find((d) => d.id === id) ?? null;
 }
 
 export function newDeliveryId(): string {
