@@ -469,7 +469,20 @@ public shareable URL at `/r/<id>` via the new `Share` button, which POSTs
 the full request and response to `POST /api/shares` and renders the rendered
 result (chart, dose table, reason codes, OpenGraph preview) for anyone with
 the link, no account required. Shares persist to `.data/shares.json` next to
-the Next.js app and are read back by `GET /api/shares/<id>`.
+the Next.js app and are read back by `GET /api/shares/<id>`. You can manage
+them at [`/shares`](http://localhost:3000/shares): the page lists every link
+you created, searches by id or title, shows the top miss probability and
+model version on each row, lets you copy or open the public URL, and revokes
+links with a two-step confirm. Revoking is owner-scoped: `DELETE
+/api/shares/<id>` returns 403 when the session user does not own the share.
+Try it:
+
+```bash
+curl -s 'http://localhost:3000/api/shares?scope=all&limit=5'
+# -> {"items":[{"id":"...","title":"...","top_risk":0.78,...}],"total":...}
+curl -s -X DELETE http://localhost:3000/api/shares/<ID>
+# -> {"deleted":true,"id":"<ID>"}
+```
 
 Every `/r/<id>` link now serves a real 1200x630 OpenGraph PNG at
 `/r/<id>/opengraph-image`, generated on the fly with `next/og`. It shows the

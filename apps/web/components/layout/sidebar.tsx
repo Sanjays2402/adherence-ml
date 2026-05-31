@@ -25,6 +25,7 @@ import {
   UsersFour,
   CalendarCheck,
   EnvelopeSimple,
+  Share,
 } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import SidebarUser from "./sidebar-user";
@@ -44,6 +45,7 @@ const NAV = [
   { href: "/batch", label: "Batch", icon: UploadSimple, hint: "Score a CSV upload" },
   { href: "/audit", label: "Audit", icon: ClipboardText, hint: "Call log" },
   { href: "/history", label: "History", icon: ClockCounterClockwise, hint: "Saved runs" },
+  { href: "/shares", label: "Share links", icon: Share, hint: "Public links // revoke" },
   { href: "/api-keys", label: "API keys", icon: Key, hint: "Programmatic access" },
   { href: "/usage", label: "Usage", icon: Gauge, hint: "Quota // billing" },
   { href: "/billing", label: "Billing", icon: Receipt, hint: "Plan // history" },

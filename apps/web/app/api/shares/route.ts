@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { createShare, type ShareRecord } from "@/lib/shares";
+import { createShare, listShares, type ShareRecord } from "@/lib/shares";
+import { getSession } from "@/lib/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,6 +45,35 @@ const Body = z.object({
   latency_ms: z.number().int().nonnegative().nullable().optional(),
   title: z.string().max(120).optional(),
 });
+
+export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const session = await getSession();
+  const scope = url.searchParams.get("scope") ?? "mine";
+  const limit = Number(url.searchParams.get("limit") ?? "50");
+  const offset = Number(url.searchParams.get("offset") ?? "0");
+  const q = url.searchParams.get("q") ?? undefined;
+
+  // "mine" requires a session; "all" only when no session (single-tenant dev).
+  let user_id: string | undefined;
+  if (scope === "mine") {
+    if (!session) {
+      return NextResponse.json(
+        { error: "unauthenticated", detail: "sign in to view your share links" },
+        { status: 401 },
+      );
+    }
+    user_id = session.payload.uid;
+  }
+
+  const page = await listShares({
+    user_id,
+    limit: Number.isFinite(limit) ? limit : 50,
+    offset: Number.isFinite(offset) ? offset : 0,
+    q: q ?? undefined,
+  });
+  return NextResponse.json(page);
+}
 
 export async function POST(req: Request) {
   let json: unknown;

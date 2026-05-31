@@ -1,14 +1,16 @@
 name: release
 on:
   push:
-    tags: ["v*.*.*"]
+    tags:
+      - 'v*.*.*'
 
 jobs:
   gate:
     runs-on: ubuntu-latest
-    outputs: { enabled: ${{ steps.c.outputs.enabled }} }
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
     steps:
-      - id: c
+      - id: check
         run: |
           if [ "${{ vars.ENABLE_CI }}" = "1" ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
@@ -20,7 +22,9 @@ jobs:
     needs: gate
     if: needs.gate.outputs.enabled == 'true'
     runs-on: ubuntu-latest
-    permissions: { contents: read, packages: write }
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3

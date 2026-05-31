@@ -19,7 +19,7 @@ async function main() {
   process.chdir(tmp);
   try {
     const mod = await import("../../../../lib/shares.ts");
-    const { createShare, getShare, newShareId } = mod;
+    const { createShare, getShare, newShareId, listShares, deleteShare } = mod;
 
     const id = newShareId();
     if (!/^[a-z0-9]{10}$/.test(id)) {
@@ -69,6 +69,64 @@ async function main() {
     );
     if (onDisk.version !== 1 || onDisk.shares.length !== 1) {
       throw new Error("on-disk store malformed");
+    }
+
+    // listShares: scope to user, search, pagination
+    await createShare({
+      user_id: "other-user",
+      top_k: 1,
+      rows: [
+        { dose_id: "d2", scheduled_at: "2025-02-01T00:00:00Z", dose_class: "neuro", dose_strength_mg: 5 },
+      ],
+      result: {
+        user_id: "other-user",
+        model_version: "test-v1",
+        predictions: [
+          {
+            dose_id: "d2",
+            scheduled_at: "2025-02-01T00:00:00Z",
+            miss_probability: 0.81,
+            risk_tier: "high",
+            reasons: [],
+          },
+        ],
+      },
+      latency_ms: 9,
+      title: "Other user share",
+    });
+
+    const mine = await listShares({ user_id: "test-user" });
+    if (mine.total !== 1) throw new Error(`listShares scope failed: ${mine.total}`);
+    if (mine.items[0].id !== rec.id) throw new Error("listShares returned wrong record");
+    if (mine.items[0].top_risk !== 0.42) throw new Error("summary top_risk wrong");
+    if (mine.items[0].prediction_count !== 1) throw new Error("summary count wrong");
+
+    const all = await listShares({});
+    if (all.total !== 2) throw new Error(`listShares all failed: ${all.total}`);
+
+    const searched = await listShares({ q: "other user" });
+    if (searched.total !== 1 || searched.items[0].user_id !== "other-user") {
+      throw new Error("listShares search failed");
+    }
+
+    // deleteShare: forbidden when scoped to wrong user
+    const forbidden = await deleteShare(rec.id, { user_id: "other-user" });
+    if (forbidden.deleted || forbidden.reason !== "forbidden") {
+      throw new Error("deleteShare should refuse cross-user delete");
+    }
+    if (await getShare(rec.id) === null) {
+      throw new Error("forbidden delete should not have removed record");
+    }
+
+    const okDel = await deleteShare(rec.id, { user_id: "test-user" });
+    if (!okDel.deleted) throw new Error("deleteShare failed for owner");
+    if ((await getShare(rec.id)) !== null) {
+      throw new Error("share should be gone after delete");
+    }
+
+    const ghost = await deleteShare("doesnotexist1");
+    if (ghost.deleted || ghost.reason !== "not_found") {
+      throw new Error("deleteShare should 404 unknown id");
     }
 
     // eslint-disable-next-line no-console
