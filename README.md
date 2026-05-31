@@ -19,6 +19,19 @@ a notification queue with risk-tier policies, quiet hours, per-user mutes, and
 notification budgets. Every prediction, override, and delivery is recorded in
 an append-only audit log with CSV export.
 
+### Weekly digest
+
+Visit [/digest](http://localhost:3000/digest) for a 7-day activity summary
+(runs, top tags, recent titles, week-over-week delta) plus a live HTML
+email preview that mirrors what gets sent to the contact email set in
+[/settings](http://localhost:3000/settings). The page renders the same
+payload the email job uses, includes a 7-day bar chart, and records every
+delivery to `.data/digest-sent.json` so you can audit when each digest
+went out. Toggle the schedule with the *Weekly activity digest* switch
+in Settings; wire a real transport by POSTing the output of
+`renderDigestHtml()` to Resend/SES/SMTP inside
+`apps/web/app/api/digest/route.ts`.
+
 ### Usage and quota
 
 Every `/v1/predict` call is metered against the workspace's active plan

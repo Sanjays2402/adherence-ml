@@ -23,7 +23,11 @@ import {
   Rocket,
   Receipt,
   UsersFour,
+<<<<<<< HEAD
   CalendarCheck,
+=======
+  EnvelopeSimple,
+>>>>>>> 9ab4695 (feat(web): weekly activity digest page with email preview, send log, and API)
 } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import SidebarUser from "./sidebar-user";
@@ -49,6 +53,7 @@ const NAV = [
   { href: "/webhooks", label: "Webhooks", icon: Plugs, hint: "Outbound deliveries" },
   { href: "/schedules", label: "Schedules", icon: CalendarCheck, hint: "Recurring predictions" },
   { href: "/notifications", label: "Notifications", icon: Bell, hint: "Activity feed" },
+  { href: "/digest", label: "Weekly digest", icon: EnvelopeSimple, hint: "Email preview // send" },
   { href: "/workspace", label: "Workspace", icon: UsersFour, hint: "Members // invites" },
   { href: "/settings", label: "Settings", icon: Gear, hint: "Profile // data // wipe" },
 ];
