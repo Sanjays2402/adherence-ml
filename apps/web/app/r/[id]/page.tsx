@@ -32,6 +32,20 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       title: rec.title,
       description: rec.summary || `Shared ${rec.kind} run from adherence.ml`,
       type: "article",
+      images: [
+        {
+          url: `/r/${rec.id}/opengraph-image`,
+          width: 1200,
+          height: 630,
+          alt: rec.title,
+        },
+      ],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: rec.title,
+      description: rec.summary || `Shared ${rec.kind} run from adherence.ml`,
+      images: [`/r/${rec.id}/opengraph-image`],
     },
   };
 }

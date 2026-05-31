@@ -238,6 +238,20 @@ result (chart, dose table, reason codes, OpenGraph preview) for anyone with
 the link, no account required. Shares persist to `.data/shares.json` next to
 the Next.js app and are read back by `GET /api/shares/<id>`.
 
+Every `/r/<id>` link now serves a real 1200x630 OpenGraph PNG at
+`/r/<id>/opengraph-image`, generated on the fly with `next/og`. It shows the
+run title, kind, top miss probability, risk tier, and tags, so links unfurl
+cleanly in Slack, iMessage, X, and LinkedIn. The page also emits matching
+`twitter:card` and `og:image` meta tags. Try it locally:
+
+```bash
+curl -s -X POST http://localhost:3000/api/runs \
+  -H 'content-type: application/json' \
+  -d '{"kind":"predict","title":"Persona Alex // morning miss risk","summary":"3 doses scored","payload":{"response":{"predictions":[{"miss_probability":0.78,"risk_tier":"high"}]}},"tags":["demo"]}'
+# -> {"id":"<ID>"}
+curl -s -o preview.png http://localhost:3000/r/<ID>/opengraph-image
+```
+
 Quick share round-trip:
 
 ```bash
