@@ -57,21 +57,42 @@ function rerunHref(r: Run): string {
 export default function HistoryClient() {
   const [q, setQ] = useState("");
   const [kind, setKind] = useState<KindFilter>("all");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
   const [page, setPage] = useState(0);
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
     setPage(0);
-  }, [q, kind]);
+  }, [q, kind, from, to]);
 
   const url = useMemo(() => {
     const sp = new URLSearchParams();
     if (q.trim()) sp.set("q", q.trim());
     if (kind !== "all") sp.set("kind", kind);
+    if (from) sp.set("from", from);
+    if (to) sp.set("to", to);
     sp.set("limit", String(PAGE));
     sp.set("offset", String(page * PAGE));
     return `/api/runs?${sp.toString()}`;
-  }, [q, kind, page]);
+  }, [q, kind, from, to, page]);
+
+  /** Build an /api/runs/export URL that honors the active filters. */
+  const exportUrl = useCallback(
+    (format: "csv" | "json" | "ndjson") => {
+      const sp = new URLSearchParams();
+      sp.set("format", format);
+      if (q.trim()) sp.set("q", q.trim());
+      if (kind !== "all") sp.set("kind", kind);
+      if (from) sp.set("from", from);
+      if (to) sp.set("to", to);
+      return `/api/runs/export?${sp.toString()}`;
+    },
+    [q, kind, from, to],
+  );
+
+  const filterCount =
+    (q.trim() ? 1 : 0) + (kind !== "all" ? 1 : 0) + (from ? 1 : 0) + (to ? 1 : 0);
 
   const { data, error, isLoading, mutate } = useSWR<ListResp>(url, fetcher, {
     keepPreviousData: true,
@@ -148,18 +169,35 @@ export default function HistoryClient() {
         title="Run history"
         description="Every prediction, cohort scan, and forecast is saved here. Search, rename, tag, share, replay, or export."
         actions={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {filterCount > 0 && (
+              <span
+                className="hidden sm:inline-flex items-center rounded-md border border-[var(--color-border)] bg-[var(--color-accent-soft)] px-2 py-1 text-[10px] font-mono uppercase tracking-wider text-[var(--color-muted)]"
+                title="Exports below honor these filters"
+              >
+                {filterCount} filter{filterCount === 1 ? "" : "s"} active
+              </span>
+            )}
             <a
-              href="/api/runs/export?format=csv"
+              href={exportUrl("csv")}
               className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[12px] hover:bg-[var(--color-border)]/30"
+              title="Download filtered runs as CSV"
             >
               <DownloadSimple weight="duotone" size={14} /> CSV
             </a>
             <a
-              href="/api/runs/export?format=json"
+              href={exportUrl("json")}
               className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[12px] hover:bg-[var(--color-border)]/30"
+              title="Download filtered runs as JSON"
             >
               <DownloadSimple weight="duotone" size={14} /> JSON
+            </a>
+            <a
+              href={exportUrl("ndjson")}
+              className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[12px] hover:bg-[var(--color-border)]/30"
+              title="Download filtered runs as newline-delimited JSON"
+            >
+              <DownloadSimple weight="duotone" size={14} /> NDJSON
             </a>
           </div>
         }
@@ -179,6 +217,38 @@ export default function HistoryClient() {
             className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] pl-7 pr-3 py-1.5 text-[13px] outline-none focus:border-[var(--color-accent)]"
           />
         </label>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-wider text-[var(--color-muted)]">
+            from
+            <input
+              type="date"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+              className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[12px] font-mono text-[var(--color-fg)] outline-none focus:border-[var(--color-accent)]"
+            />
+          </label>
+          <label className="flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-wider text-[var(--color-muted)]">
+            to
+            <input
+              type="date"
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+              className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[12px] font-mono text-[var(--color-fg)] outline-none focus:border-[var(--color-accent)]"
+            />
+          </label>
+          {(from || to) && (
+            <button
+              type="button"
+              onClick={() => {
+                setFrom("");
+                setTo("");
+              }}
+              className="rounded-md border border-[var(--color-border)] px-2 py-1 text-[11px] font-mono uppercase tracking-wider text-[var(--color-muted)] hover:text-[var(--color-fg)]"
+            >
+              clear
+            </button>
+          )}
+        </div>
         <div className="flex flex-wrap gap-1">
           {KINDS.map((k) => (
             <button

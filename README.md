@@ -181,17 +181,27 @@ app is automatically saved to a per-instance run log under `apps/web/.data/runs.
 (override path with `ADHERENCE_DATA_DIR`). Open
 [http://localhost:3000/history](http://localhost:3000/history) to search,
 filter by kind, rename, tag, copy a shareable link (`/history/<id>`), delete,
-or export the full log as CSV or JSON. The detail page is a plain server
-route so links are shareable in incognito.
+or export the full log as CSV, JSON, or NDJSON. The History page exports
+honor the active search, kind, and date-range filters, so you can pull just
+"failed predict runs in the last 7 days" without post-processing. The detail
+page is a plain server route so links are shareable in incognito.
 
 API surface:
 
-- `GET /api/runs?q=&kind=&limit=&offset=` list with search and pagination
+- `GET /api/runs?q=&kind=&from=&to=&limit=&offset=` list with search, date range, pagination
 - `POST /api/runs` append a record (validated with zod)
 - `GET /api/runs/:id` fetch one
 - `PATCH /api/runs/:id` rename or retag (`{ title?, tags? }`)
 - `DELETE /api/runs/:id` remove
-- `GET /api/runs/export?format=csv|json` download the whole log
+- `GET /api/runs/export?format=csv|json|ndjson&q=&kind=&from=&to=&tag=&user_id=` filtered download
+
+Try it:
+
+```bash
+# every cohort run with the "prod" tag from June, as NDJSON
+curl -sS 'http://localhost:3000/api/runs/export?format=ndjson&kind=cohort&tag=prod&from=2025-06-01&to=2025-06-30' \
+  -o cohort-prod-june.ndjson
+```
 
 Unit test: `pnpm --filter @adherence/web test`.
 

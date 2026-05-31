@@ -89,11 +89,24 @@ export async function GET(req: NextRequest) {
   const limit = Number(sp.get("limit") ?? 25);
   const offset = Number(sp.get("offset") ?? 0);
   const q = sp.get("q") ?? undefined;
+  const fromRaw = sp.get("from");
+  const toRaw = sp.get("to");
+  const parseBound = (raw: string | null, endOfDay: boolean): number | null => {
+    if (!raw) return null;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      const t = Date.parse(raw + (endOfDay ? "T23:59:59.999Z" : "T00:00:00.000Z"));
+      return Number.isNaN(t) ? null : t;
+    }
+    const t = Date.parse(raw);
+    return Number.isNaN(t) ? null : t;
+  };
   const result = await listRuns({
     q,
     kind: kind as RunKind | "all",
     limit: Number.isFinite(limit) ? limit : 25,
     offset: Number.isFinite(offset) ? offset : 0,
+    from: parseBound(fromRaw, false),
+    to: parseBound(toRaw, true),
   });
   return NextResponse.json(result);
 }

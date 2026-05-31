@@ -68,6 +68,8 @@ export interface ListQuery {
   kind?: RunKind | "all";
   limit?: number;
   offset?: number;
+  from?: number | null;
+  to?: number | null;
 }
 
 export interface ListResult {
@@ -83,9 +85,13 @@ export async function listRuns(query: ListQuery = {}): Promise<ListResult> {
   const all = await readAll();
   const q = query.q?.trim().toLowerCase();
   const kind = query.kind && query.kind !== "all" ? query.kind : null;
+  const from = query.from ?? null;
+  const to = query.to ?? null;
 
   const filtered = all.filter((r) => {
     if (kind && r.kind !== kind) return false;
+    if (from !== null && r.created_at < from) return false;
+    if (to !== null && r.created_at > to) return false;
     if (q) {
       const hay =
         `${r.title} ${r.summary} ${r.user_id ?? ""} ${r.tags.join(" ")}`.toLowerCase();
