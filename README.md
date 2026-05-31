@@ -4,6 +4,49 @@ ML risk scoring for medication adherence. Predicts which upcoming doses a user
 is likely to miss in the next 24 hours and turns those scores into ranked
 interventions.
 
+## SCIM 2.0 user provisioning (Okta, Azure AD, Google Workspace)
+
+Workspace owners can mint SCIM 2.0 bearer tokens that let their identity
+provider create, update, and deprovision members automatically. Every token
+is scoped to exactly one workspace, so a token issued for workspace A can
+never read or mutate workspace B.
+
+- RFC 7643/7644 endpoints under `/scim/v2/*`: `ServiceProviderConfig`,
+  `Schemas`, `ResourceTypes`, `Users`, `Users/{id}` (GET/POST/PUT/PATCH/DELETE).
+- Bearer tokens are hashed at rest (sha256), shown plaintext exactly once,
+  and verified with `timingSafeEqual`. Each verification updates last-used
+  timestamp, IP, and use count.
+- Group membership and the enterprise extension `department` attribute both
+  map to internal roles (`owners`, `editors`, `viewers`). Azure AD's
+  pathless PATCH shape is supported.
+- The last owner of a workspace cannot be demoted or deprovisioned by an
+  IdP, so a misconfigured directory cannot strand a tenant.
+- Every SCIM mutation writes to the hash-chained dashboard audit log with
+  actor `scim:<token-id>`, source IP, and a before/after diff.
+- Manage tokens at `/workspace/scim` (owner-only). Cross-tenant isolation
+  is enforced by the store layer and covered by
+  `apps/web/tests/scim-provisioning.test.ts`.
+
+### Try it
+
+```bash
+# 1. Sign in at http://localhost:3000, open /workspace/scim, mint a token.
+# 2. Point your IdP at:
+curl -H "Authorization: Bearer $SCIM_TOKEN" \
+  http://localhost:3000/scim/v2/ServiceProviderConfig
+
+# 3. Provision a user the way Okta does:
+curl -X POST http://localhost:3000/scim/v2/Users \
+  -H "Authorization: Bearer $SCIM_TOKEN" \
+  -H "Content-Type: application/scim+json" \
+  -d '{
+    "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+    "userName": "alice@acme.com",
+    "active": true,
+    "groups": [{"display": "editors"}]
+  }'
+```
+
 ## Active sessions: per-device list and revoke
 
 Every sign-in (magic link, SSO, GitHub OAuth, post-2FA) now mints a

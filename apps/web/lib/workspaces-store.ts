@@ -646,6 +646,167 @@ export async function _resetForTests(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// SCIM-driven provisioning. These helpers are called by /scim/v2/* after the
+// caller has presented a valid workspace-scoped bearer token. They are
+// strictly scoped to one `workspaceId` so a token for workspace A can never
+// touch workspace B.
+// ---------------------------------------------------------------------------
+
+export interface ProvisionedMember {
+  user_id: string;
+  email: string;
+  role: Role;
+  workspace_id: string;
+  created: boolean; // true if the user record was created by this call
+  joined: boolean;  // true if the member row was created by this call
+}
+
+/**
+ * Create or update a member of `workspaceId`. If a user with this email
+ * doesn't exist yet, one is created. If the user is already a member, only
+ * the role is updated (when changed). Caller has already verified workspace
+ * authorisation.
+ */
+export async function provisionMember(
+  workspaceId: string,
+  email: string,
+  role: Role,
+): Promise<ProvisionedMember> {
+  const e = email.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) throw new Error("invalid email");
+  if (!isRole(role)) throw new Error("invalid role");
+  const store = await readStore();
+  const ws = store.workspaces.find((w) => w.id === workspaceId);
+  if (!ws) throw new Error("workspace not found");
+
+  const { getOrCreateUserByEmail } = await import("./users-store");
+  const userCountBefore = (await import("./users-store")).getUserById; // tree-shake guard
+  void userCountBefore;
+  const user = await getOrCreateUserByEmail(e);
+  const userWasNew = user.created_at === user.last_login_at;
+
+  // Re-read after user creation so we don't clobber a concurrent write.
+  const s2 = await readStore();
+  const existing = s2.members.find(
+    (m) => m.workspace_id === workspaceId && m.user_id === user.id,
+  );
+  let joined = false;
+  if (!existing) {
+    s2.members.push({
+      workspace_id: workspaceId,
+      user_id: user.id,
+      email: e,
+      role,
+      joined_at: Date.now(),
+    });
+    joined = true;
+  } else if (existing.role !== role) {
+    // Never demote the last owner via SCIM; the IdP must not be able to
+    // strand a workspace.
+    if (existing.role === "owner" && role !== "owner") {
+      const owners = s2.members.filter(
+        (m) => m.workspace_id === workspaceId && m.role === "owner",
+      );
+      if (owners.length <= 1) {
+        throw new Error("cannot demote the last owner");
+      }
+    }
+    existing.role = role;
+  }
+  await writeStore(s2);
+  return {
+    user_id: user.id,
+    email: e,
+    role,
+    workspace_id: workspaceId,
+    created: userWasNew,
+    joined,
+  };
+}
+
+/**
+ * Look up a member by user id within a workspace. SCIM `Users/{id}` reads
+ * use this; returns null on cross-tenant lookups, which is what makes the
+ * isolation property true.
+ */
+export async function findMember(
+  workspaceId: string,
+  userId: string,
+): Promise<Member | null> {
+  const s = await readStore();
+  const m = s.members.find(
+    (x) => x.workspace_id === workspaceId && x.user_id === userId,
+  );
+  return m ?? null;
+}
+
+export async function listMembers(
+  workspaceId: string,
+): Promise<Member[]> {
+  const s = await readStore();
+  return s.members
+    .filter((m) => m.workspace_id === workspaceId)
+    .sort((a, b) => a.joined_at - b.joined_at);
+}
+
+/**
+ * SCIM-driven role update. Same safety: refuses to demote the last owner.
+ */
+export async function setMemberRole(
+  workspaceId: string,
+  userId: string,
+  role: Role,
+): Promise<Member | null> {
+  if (!isRole(role)) throw new Error("invalid role");
+  const s = await readStore();
+  const m = s.members.find(
+    (x) => x.workspace_id === workspaceId && x.user_id === userId,
+  );
+  if (!m) return null;
+  if (m.role === role) return m;
+  if (m.role === "owner" && role !== "owner") {
+    const owners = s.members.filter(
+      (x) => x.workspace_id === workspaceId && x.role === "owner",
+    );
+    if (owners.length <= 1) throw new Error("cannot demote the last owner");
+  }
+  m.role = role;
+  await writeStore(s);
+  return m;
+}
+
+/**
+ * SCIM-driven deprovisioning. Refuses to remove the last owner. Returns
+ * false when no such member exists in the given workspace (so a token for
+ * workspace A trying to delete a user in workspace B is a no-op, not an
+ * accidental cross-tenant write).
+ */
+export async function deprovisionMember(
+  workspaceId: string,
+  userId: string,
+): Promise<boolean> {
+  const s = await readStore();
+  const m = s.members.find(
+    (x) => x.workspace_id === workspaceId && x.user_id === userId,
+  );
+  if (!m) return false;
+  if (m.role === "owner") {
+    const owners = s.members.filter(
+      (x) => x.workspace_id === workspaceId && x.role === "owner",
+    );
+    if (owners.length <= 1) throw new Error("cannot remove the last owner");
+  }
+  const before = s.members.length;
+  s.members = s.members.filter(
+    (x) => !(x.workspace_id === workspaceId && x.user_id === userId),
+  );
+  if (s.members.length === before) return false;
+  await writeStore(s);
+  return true;
+}
+
+
+// ---------------------------------------------------------------------------
 // Workspace security policy (session TTL cap, MFA requirement)
 // ---------------------------------------------------------------------------
 
