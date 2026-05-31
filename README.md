@@ -21,13 +21,33 @@ an append-only audit log with CSV export.
 
 ### Usage and quota
 
-Every `/v1/predict` call is metered. The free tier ships with a 500
+Every `/v1/predict` call is metered against the workspace's active plan
+(see `/billing` and `/pricing`). The free tier ships with a 500
 requests/day quota (override with `ADHERENCE_FREE_DAILY_QUOTA`). When the
 limit is reached the endpoint returns `429` with `x-quota-*` headers and an
 `upgrade_url`. Browse the live meter, 30-day request sparkline, and per-key
 breakdown at [http://localhost:3000/usage](http://localhost:3000/usage).
 Every 200 response carries `x-quota-limit`, `x-quota-used`, and
 `x-quota-remaining` so clients can back off before getting throttled.
+
+### Billing and plans
+
+Three self-serve tiers ship in the UI: Free (500 req/day), Pro (25,000
+req/day, $49/mo), and Scale (250,000 req/day, $299/mo). Override the
+quota numbers with `ADHERENCE_PRO_DAILY_QUOTA` and
+`ADHERENCE_SCALE_DAILY_QUOTA`. Visit
+[/pricing](http://localhost:3000/pricing) to compare plans and
+[/billing](http://localhost:3000/billing) to see the current plan, today's
+usage against the new quota, and a change history. Plan changes apply
+immediately to `/v1/predict` quota gating, no restart required.
+
+No Stripe key is required to use the flow as shipped: `POST
+/api/plan/checkout` records the plan change server side and redirects back
+to `/billing?session=<id>`. To wire real payments, replace the body of
+`apps/web/app/api/plan/checkout/route.ts` with a Stripe Checkout Session
+create call and move the `changePlan` call into a
+`checkout.session.completed` webhook handler. The UI does not change.
+
 ### Sign in (magic link)
 
 The web app now ships with passwordless email sign-in. Visit
@@ -236,7 +256,29 @@ curl -X PATCH http://localhost:3000/api/onboarding \
 
 With the API on `:8000` and the web app on `:3000`, open
 [http://localhost:3000/demo](http://localhost:3000/demo) for the one-click
-demo. Three preloaded patient personas (stable hypertension, slipping
+demo.
+
+Upgrade plan and inspect quota:
+
+```bash
+# Current plan + quota
+curl http://localhost:3000/api/plan
+
+# Switch to Pro (applies immediately, recorded in plan history)
+curl -X POST http://localhost:3000/api/plan/checkout \
+  -H 'content-type: application/json' \
+  -d '{"plan":"pro"}'
+
+# Confirm the new daily quota on the usage endpoint
+curl http://localhost:3000/api/usage | jq '{quota, used_today, remaining_today}'
+```
+
+Then visit [/pricing](http://localhost:3000/pricing) and
+[/billing](http://localhost:3000/billing) in the UI.
+
+The original demo flow:
+
+Three preloaded patient personas (stable hypertension, slipping
 diabetes plus SSRI, newly prescribed antibiotic course) ship with 14 days of
 synthetic dosing history. Picking a persona POSTs the full schedule and
 history to `POST /v1/predict` and renders per-dose miss probability, risk

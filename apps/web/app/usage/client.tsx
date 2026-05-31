@@ -233,26 +233,26 @@ export default function UsageClient() {
           </Card>
 
           <Card>
-            <CardHeader title="Need more headroom?" hint="Upgrade for higher quotas and SLAs" />
+            <CardHeader title="Need more headroom?" hint="Switch plans any time, change applies immediately" />
             <div className="p-4 md:p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
               <div className="space-y-1">
-                <SectionLabel>Pro tier</SectionLabel>
+                <SectionLabel>Upgrade your plan</SectionLabel>
                 <div className="text-sm text-[var(--color-muted)]">
-                  100,000 requests / day, priority routing, email support.
+                  Pro: 25,000 req / day. Scale: 250,000 req / day with priority routing.
                 </div>
               </div>
               <div className="flex gap-2">
-                <a
-                  href="mailto:sales@adherence.ml?subject=Upgrade%20to%20Pro"
+                <Link
+                  href="/pricing"
                   className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm bg-[var(--color-fg)] text-[var(--color-bg)] hover:bg-white transition-colors"
                 >
-                  Contact sales
-                </a>
+                  Compare plans
+                </Link>
                 <Link
-                  href="/api-keys"
+                  href="/billing"
                   className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm border border-[var(--color-border-strong)] text-[var(--color-fg)] hover:bg-[var(--color-border)]/40 hover:border-[var(--color-accent)]/40 transition-colors"
                 >
-                  Manage keys
+                  Billing
                 </Link>
               </div>
             </div>

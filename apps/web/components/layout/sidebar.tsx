@@ -21,6 +21,7 @@ import {
   UploadSimple,
   Gear,
   Rocket,
+  Receipt,
 } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import SidebarUser from "./sidebar-user";
@@ -42,6 +43,7 @@ const NAV = [
   { href: "/history", label: "History", icon: ClockCounterClockwise, hint: "Saved runs" },
   { href: "/api-keys", label: "API keys", icon: Key, hint: "Programmatic access" },
   { href: "/usage", label: "Usage", icon: Gauge, hint: "Quota // billing" },
+  { href: "/billing", label: "Billing", icon: Receipt, hint: "Plan // history" },
   { href: "/webhooks", label: "Webhooks", icon: Plugs, hint: "Outbound deliveries" },
   { href: "/notifications", label: "Notifications", icon: Bell, hint: "Activity feed" },
   { href: "/settings", label: "Settings", icon: Gear, hint: "Profile // data // wipe" },

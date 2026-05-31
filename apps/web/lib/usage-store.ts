@@ -35,9 +35,21 @@ const DATA_DIR =
 const STORE_PATH = path.join(DATA_DIR, "usage.json");
 
 // Free-tier quota: requests/day. Override with ADHERENCE_FREE_DAILY_QUOTA.
+// Note: this is the static *free-tier* number. The live quota used by
+// the /usage page and /v1/predict gating comes from the active plan in
+// lib/plan-store.ts (see effectiveQuota below), which may upgrade this.
 export const FREE_DAILY_QUOTA = Number(
   process.env.ADHERENCE_FREE_DAILY_QUOTA ?? 500,
 );
+
+async function effectiveQuota(): Promise<number> {
+  try {
+    const { dailyQuota } = await import("./plan-store");
+    return await dailyQuota();
+  } catch {
+    return FREE_DAILY_QUOTA;
+  }
+}
 
 function ensureDir() {
   if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
@@ -110,6 +122,7 @@ export interface UsageSummary {
 export async function summary(): Promise<UsageSummary> {
   const s = await readStore();
   const today = todayUtc();
+  const quota = await effectiveQuota();
   const window = s.days.slice(-30);
   // Backfill empty days for a clean sparkline
   const filled: DayBucket[] = [];
@@ -134,10 +147,10 @@ export async function summary(): Promise<UsageSummary> {
     .map(([key_id, count]) => ({ key_id, count }))
     .sort((a, b) => b.count - a.count);
   return {
-    quota: FREE_DAILY_QUOTA,
+    quota,
     used_today,
-    remaining_today: Math.max(0, FREE_DAILY_QUOTA - used_today),
-    pct_today: Math.min(1, used_today / Math.max(1, FREE_DAILY_QUOTA)),
+    remaining_today: Math.max(0, quota - used_today),
+    pct_today: Math.min(1, used_today / Math.max(1, quota)),
     used_30d,
     days: filled,
     by_key_30d,

@@ -16,6 +16,7 @@ import { ApiError, apiFetch } from "@/lib/api";
 import { extractKey, verifyKey } from "@/lib/api-keys-store";
 import { appendRun, newRunId } from "@/lib/runs-store";
 import { FREE_DAILY_QUOTA, recordUsage, usedToday } from "@/lib/usage-store";
+import { dailyQuota as planDailyQuota } from "@/lib/plan-store";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -46,20 +47,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ detail: "invalid or revoked api key" }, { status: 401 });
   }
 
-  // Free-tier daily quota check.
+  // Plan-aware daily quota check. The active plan in lib/plan-store.ts
+  // wins over FREE_DAILY_QUOTA so upgrading on /pricing immediately
+  // raises the ceiling for /v1/predict.
   const used = await usedToday();
-  if (used >= FREE_DAILY_QUOTA) {
+  const quota = await planDailyQuota().catch(() => FREE_DAILY_QUOTA);
+  if (used >= quota) {
     return NextResponse.json(
       {
-        detail: "daily free-tier quota exceeded",
-        quota: FREE_DAILY_QUOTA,
+        detail: "daily plan quota exceeded",
+        quota,
         used_today: used,
-        upgrade_url: "/usage",
+        upgrade_url: "/pricing",
       },
       {
         status: 429,
         headers: {
-          "x-quota-limit": String(FREE_DAILY_QUOTA),
+          "x-quota-limit": String(quota),
           "x-quota-used": String(used),
           "x-quota-remaining": "0",
           "retry-after": "3600",
@@ -127,11 +131,11 @@ export async function POST(req: NextRequest) {
     } catch {
       // bookkeeping must never break the call
     }
-    const remaining = Math.max(0, FREE_DAILY_QUOTA - used - 1);
+    const remaining = Math.max(0, quota - used - 1);
     return NextResponse.json(data, {
       headers: {
         "x-latency-ms": String(latency),
-        "x-quota-limit": String(FREE_DAILY_QUOTA),
+        "x-quota-limit": String(quota),
         "x-quota-used": String(used + 1),
         "x-quota-remaining": String(remaining),
       },
