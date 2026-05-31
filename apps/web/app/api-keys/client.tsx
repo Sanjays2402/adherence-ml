@@ -185,6 +185,24 @@ export default function KeysClient() {
   const curlRunGet = `curl http://localhost:3000/v1/runs/RUN_ID \\
   -H "authorization: Bearer ${sampleKey}"`;
 
+  const curlRunPatch = `curl -X PATCH http://localhost:3000/v1/runs/RUN_ID \\
+  -H "authorization: Bearer ${sampleKey}" \\
+  -H "content-type: application/json" \\
+  -d '{"title":"october cohort","tags":["q4","retention"]}'`;
+
+  const curlRunDelete = `curl -X DELETE http://localhost:3000/v1/runs/RUN_ID \\
+  -H "authorization: Bearer ${sampleKey}"`;
+
+  const curlRunShare = `curl -X POST http://localhost:3000/v1/runs/RUN_ID/share \\
+  -H "authorization: Bearer ${sampleKey}" \\
+  -H "content-type: application/json" \\
+  -d '{"enabled":true}'`;
+
+  const curlRunCreate = `curl -X POST http://localhost:3000/v1/runs \\
+  -H "authorization: Bearer ${sampleKey}" \\
+  -H "content-type: application/json" \\
+  -d '{"kind":"predict","title":"manual ingest","summary":"from notebook","payload":{"any":"json"},"tags":["ingest"]}'`;
+
   const curlMe = `curl http://localhost:3000/v1/keys/me \\
   -H "authorization: Bearer ${sampleKey}"`;
 
@@ -217,7 +235,7 @@ export default function KeysClient() {
       <PageHeader
         eyebrow="developer"
         title="API keys"
-        description="Programmatic access to the /v1 prediction endpoint. Each key is shown once at creation."
+        description="Programmatic access to /v1: predict, create, read, rename, retag, share, and delete runs. Each key is shown once at creation."
       />
 
       {issued ? (
@@ -516,6 +534,34 @@ export default function KeysClient() {
           </div>
           <pre className="rounded border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-[12px] leading-relaxed overflow-x-auto">
 {curlRunGet}
+          </pre>
+          <div className="flex items-center justify-between pt-2">
+            <span className="text-[11px] text-[var(--color-muted)]">POST /v1/runs (create a run from any external job, requires predict scope)</span>
+            <CopyBtn text={curlRunCreate} label="copy curl" />
+          </div>
+          <pre className="text-[11px] font-mono p-3 rounded bg-[var(--color-surface)] border border-[var(--color-border)] overflow-x-auto whitespace-pre">
+{curlRunCreate}
+          </pre>
+          <div className="flex items-center justify-between pt-2">
+            <span className="text-[11px] text-[var(--color-muted)]">PATCH /v1/runs/&lt;id&gt; (rename or retag, requires predict scope)</span>
+            <CopyBtn text={curlRunPatch} label="copy curl" />
+          </div>
+          <pre className="text-[11px] font-mono p-3 rounded bg-[var(--color-surface)] border border-[var(--color-border)] overflow-x-auto whitespace-pre">
+{curlRunPatch}
+          </pre>
+          <div className="flex items-center justify-between pt-2">
+            <span className="text-[11px] text-[var(--color-muted)]">DELETE /v1/runs/&lt;id&gt; (permanent, requires predict scope)</span>
+            <CopyBtn text={curlRunDelete} label="copy curl" />
+          </div>
+          <pre className="text-[11px] font-mono p-3 rounded bg-[var(--color-surface)] border border-[var(--color-border)] overflow-x-auto whitespace-pre">
+{curlRunDelete}
+          </pre>
+          <div className="flex items-center justify-between pt-2">
+            <span className="text-[11px] text-[var(--color-muted)]">POST /v1/runs/&lt;id&gt;/share (mint or revoke a public /share/&lt;token&gt; link, requires predict scope)</span>
+            <CopyBtn text={curlRunShare} label="copy curl" />
+          </div>
+          <pre className="text-[11px] font-mono p-3 rounded bg-[var(--color-surface)] border border-[var(--color-border)] overflow-x-auto whitespace-pre">
+{curlRunShare}
           </pre>
           <div className="flex items-center justify-between">
             <span className="text-[11px] text-[var(--color-muted)]">GET /v1/keys/me (verify a key, requires read scope, does not spend predict quota)</span>
