@@ -1,7 +1,8 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 import Sidebar from "@/components/layout/sidebar";
+import InstallPrompt from "@/components/layout/install-prompt";
 
 const plexSans = IBM_Plex_Sans({
   subsets: ["latin"],
@@ -20,6 +21,22 @@ const plexMono = IBM_Plex_Mono({
 export const metadata: Metadata = {
   title: "adherence.ml // observability",
   description: "Online metrics, calibration, and intervention queue for the adherence risk model.",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    title: "adherence",
+    statusBarStyle: "black-translucent",
+  },
+  icons: {
+    icon: "/icon-512.svg",
+    apple: "/icon-192.svg",
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#0a0b0d",
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -30,6 +47,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <Sidebar />
           <main className="flex-1 min-w-0">{children}</main>
         </div>
+        <InstallPrompt />
       </body>
     </html>
   );

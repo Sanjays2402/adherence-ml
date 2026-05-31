@@ -28,6 +28,14 @@ limit is reached the endpoint returns `429` with `x-quota-*` headers and an
 breakdown at [http://localhost:3000/usage](http://localhost:3000/usage).
 Every 200 response carries `x-quota-limit`, `x-quota-used`, and
 `x-quota-remaining` so clients can back off before getting throttled.
+### Install as an app
+
+The web app ships a `manifest.webmanifest`, themed icons, and a dismissible
+install chip. On Chrome, Edge, and Android the chip surfaces the native
+`beforeinstallprompt`; on iOS Safari it nudges users to use Share then Add
+to Home Screen. Dismissals are remembered for 14 days. Launching from the
+home screen runs the app standalone with the existing dark theme.
+
 ### Webhooks
 
 Register an HTTP endpoint and adherence.ml will POST a signed JSON envelope to

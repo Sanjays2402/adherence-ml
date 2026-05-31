@@ -1,0 +1,43 @@
+{
+  "name": "adherence.ml",
+  "short_name": "adherence",
+  "description": "Online metrics, calibration, and intervention queue for the adherence risk model.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0a0b0d",
+  "theme_color": "#0a0b0d",
+  "orientation": "any",
+  "categories": ["health", "developer", "productivity"],
+  "icons": [
+    {
+      "src": "/icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Try a sample",
+      "short_name": "Demo",
+      "url": "/demo"
+    },
+    {
+      "name": "History",
+      "short_name": "History",
+      "url": "/history"
+    },
+    {
+      "name": "API keys",
+      "short_name": "Keys",
+      "url": "/api-keys"
+    }
+  ]
+}
