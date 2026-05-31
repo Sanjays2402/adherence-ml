@@ -15,6 +15,7 @@ import { z } from "zod";
 import { ApiError, apiFetch } from "@/lib/api";
 import { extractKey, verifyKey } from "@/lib/api-keys-store";
 import { appendRun, newRunId } from "@/lib/runs-store";
+import { FREE_DAILY_QUOTA, recordUsage, usedToday } from "@/lib/usage-store";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -43,6 +44,28 @@ export async function POST(req: NextRequest) {
   const key = await verifyKey(presented);
   if (!key) {
     return NextResponse.json({ detail: "invalid or revoked api key" }, { status: 401 });
+  }
+
+  // Free-tier daily quota check.
+  const used = await usedToday();
+  if (used >= FREE_DAILY_QUOTA) {
+    return NextResponse.json(
+      {
+        detail: "daily free-tier quota exceeded",
+        quota: FREE_DAILY_QUOTA,
+        used_today: used,
+        upgrade_url: "/usage",
+      },
+      {
+        status: 429,
+        headers: {
+          "x-quota-limit": String(FREE_DAILY_QUOTA),
+          "x-quota-used": String(used),
+          "x-quota-remaining": "0",
+          "retry-after": "3600",
+        },
+      },
+    );
   }
 
   let raw: unknown;
@@ -92,8 +115,26 @@ export async function POST(req: NextRequest) {
     } catch {
       // never let bookkeeping break the user-facing call
     }
+    // record usage (best-effort, never block the response)
+    try {
+      await recordUsage({
+        ts: Date.now(),
+        key_id: key.id,
+        key_prefix: key.prefix,
+        status: 200,
+        latency_ms: latency,
+      });
+    } catch {
+      // bookkeeping must never break the call
+    }
+    const remaining = Math.max(0, FREE_DAILY_QUOTA - used - 1);
     return NextResponse.json(data, {
-      headers: { "x-latency-ms": String(latency) },
+      headers: {
+        "x-latency-ms": String(latency),
+        "x-quota-limit": String(FREE_DAILY_QUOTA),
+        "x-quota-used": String(used + 1),
+        "x-quota-remaining": String(remaining),
+      },
     });
   } catch (err) {
     if (err instanceof ApiError) {

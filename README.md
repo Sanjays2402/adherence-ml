@@ -19,6 +19,16 @@ a notification queue with risk-tier policies, quiet hours, per-user mutes, and
 notification budgets. Every prediction, override, and delivery is recorded in
 an append-only audit log with CSV export.
 
+### Usage and quota
+
+Every `/v1/predict` call is metered. The free tier ships with a 500
+requests/day quota (override with `ADHERENCE_FREE_DAILY_QUOTA`). When the
+limit is reached the endpoint returns `429` with `x-quota-*` headers and an
+`upgrade_url`. Browse the live meter, 30-day request sparkline, and per-key
+breakdown at [http://localhost:3000/usage](http://localhost:3000/usage).
+Every 200 response carries `x-quota-limit`, `x-quota-used`, and
+`x-quota-remaining` so clients can back off before getting throttled.
+
 ### API keys
 
 Issue your own keys for the public `/v1/predict` endpoint and call it from

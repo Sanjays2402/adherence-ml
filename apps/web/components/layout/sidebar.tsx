@@ -14,6 +14,7 @@ import {
   ClipboardText,
   ClockCounterClockwise,
   Key,
+  Gauge,
   House,
   Sparkle,
   UploadSimple,
@@ -34,6 +35,7 @@ const NAV = [
   { href: "/audit", label: "Audit", icon: ClipboardText, hint: "Call log" },
   { href: "/history", label: "History", icon: ClockCounterClockwise, hint: "Saved runs" },
   { href: "/api-keys", label: "API keys", icon: Key, hint: "Programmatic access" },
+  { href: "/usage", label: "Usage", icon: Gauge, hint: "Quota // billing" },
 ];
 
 export default function Sidebar() {
