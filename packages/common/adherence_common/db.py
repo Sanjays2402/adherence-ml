@@ -274,12 +274,26 @@ class WebhookDelivery(Base):
     __tablename__ = "webhook_deliveries"
     id = Column(Integer, primary_key=True, autoincrement=True)
     subscription_id = Column(Integer, nullable=False, index=True)
+    # Denormalised tenant of the owning subscription. Persisted on the
+    # delivery row itself so cross-tenant isolation can be enforced with
+    # a single WHERE clause on every listing/replay/retention query
+    # instead of an implicit join. New deliveries written by dispatch()
+    # always populate this; in-place upgrades backfill via
+    # _ensure_tenant_columns from webhook_subscriptions.tenant_id.
+    tenant_id = Column(
+        String(64), nullable=False, default="default", index=True,
+    )
     event_type = Column(String(64), nullable=False, index=True)
     payload_json = Column(JSON, nullable=False)
     attempt = Column(Integer, nullable=False, default=0)
     status_code = Column(Integer, nullable=True)
     latency_ms = Column(Float, nullable=True)
     error = Column(Text, nullable=True)
+    # State machine: queued -> success | failed | dead_letter | blocked.
+    # A delivery is promoted from ``failed`` to ``dead_letter`` once all
+    # retry attempts have been exhausted so operator dashboards can
+    # distinguish a transient failure (will retry) from a giving-up
+    # event that needs human attention or a manual replay.
     state = Column(String(16), nullable=False, default="queued", index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -544,6 +558,25 @@ def _ensure_tenant_columns(engine) -> None:
                     "ALTER TABLE webhook_subscriptions "
                     "ADD COLUMN disabled_reason VARCHAR(255)"
                 ))
+    # Denormalised tenant_id on webhook_deliveries: backfill from the
+    # owning subscription so existing rows participate in tenant-scoped
+    # queries the moment the upgraded code starts running.
+    if "webhook_deliveries" in existing_tables:
+        cols = {c["name"] for c in insp.get_columns("webhook_deliveries")}
+        if "tenant_id" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE webhook_deliveries "
+                    "ADD COLUMN tenant_id VARCHAR(64) NOT NULL DEFAULT 'default'"
+                ))
+                if "webhook_subscriptions" in existing_tables:
+                    conn.execute(text(
+                        "UPDATE webhook_deliveries AS d "
+                        "SET tenant_id = COALESCE(( "
+                        "  SELECT s.tenant_id FROM webhook_subscriptions s "
+                        "  WHERE s.id = d.subscription_id "
+                        "), 'default')"
+                    ))
 
 
 def init_db() -> None:

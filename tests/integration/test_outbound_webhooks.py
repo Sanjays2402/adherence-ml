@@ -153,7 +153,7 @@ def test_dispatch_retries_then_fails(tmp_path, monkeypatch):
     assert hits["n"] == 3  # MAX_ATTEMPTS
     with session() as s:
         d = s.get(WebhookDelivery, ids[0])
-        assert d.state == "failed"
+        assert d.state == "dead_letter"
         assert d.attempt == 3
         assert d.status_code == 500
 
@@ -223,7 +223,7 @@ def test_replay_endpoint_creates_new_delivery(tmp_path, monkeypatch):
         assert len(first) == 1
         with session() as s:
             d = s.get(WebhookDelivery, first[0])
-            assert d.state == "failed"
+            assert d.state == "dead_letter"
         new_id = omod.replay(first[0], _client=client)
         assert new_id is not None
         with session() as s:

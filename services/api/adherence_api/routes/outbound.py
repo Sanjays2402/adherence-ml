@@ -489,6 +489,48 @@ def test_send(body: TestSendIn, p=Depends(require_admin)) -> TestSendOut:
     return TestSendOut(delivery_ids=ids)
 
 
+class DeadLetterOut(BaseModel):
+    count: int
+    items: list[DeliveryOut]
+
+
+@router.get("/deliveries/dead-letter", response_model=DeadLetterOut)
+def list_dead_letter(
+    limit: int = Query(100, ge=1, le=1000),
+    p=Depends(require_admin),
+) -> DeadLetterOut:
+    """Tenant-scoped dead-letter queue.
+
+    A delivery lands here once its retry budget has been exhausted
+    without a 2xx response. Operators see exactly what the receiver
+    dropped and can replay individual rows via
+    ``POST /deliveries/{id}/replay`` once the downstream is healthy.
+
+    Isolation is enforced twice: deliveries are filtered on the
+    denormalised ``tenant_id`` column written at dispatch time, and the
+    replay endpoint independently verifies tenant ownership of the
+    owning subscription. A cross-tenant request returns an empty list,
+    never another tenant's failures.
+    """
+    init_db()
+    tenant_id = str(p.get("tenant") or "default")
+    rows = outbound_mod.recent_deliveries(limit=limit, tenant_id=tenant_id)
+    items = [
+        DeliveryOut(
+            id=r.id, subscription_id=r.subscription_id,
+            event_type=r.event_type, attempt=r.attempt,
+            status_code=r.status_code, latency_ms=r.latency_ms,
+            error=r.error, state=r.state,
+            created_at=r.created_at.isoformat(),
+        )
+        for r in rows if r.state == "dead_letter"
+    ]
+    return DeadLetterOut(
+        count=outbound_mod.dead_letter_count(tenant_id),
+        items=items,
+    )
+
+
 class PolicyOut(BaseModel):
     allow_http: bool
     allow_private: bool

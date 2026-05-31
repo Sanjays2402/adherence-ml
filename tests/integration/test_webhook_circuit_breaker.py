@@ -98,7 +98,7 @@ def test_breaker_trips_after_threshold_and_dispatch_skips(tmp_path, monkeypatch)
         "/v1/webhooks/outbound/deliveries",
         headers={"x-api-key": "adm"},
     ).json()
-    failed_id = next(d["id"] for d in deliveries if d.get("state") == "failed")
+    failed_id = next(d["id"] for d in deliveries if d.get("state") == "dead_letter")
     rr = client.post(
         f"/v1/webhooks/outbound/deliveries/{failed_id}/replay",
         headers={"x-api-key": "adm"},

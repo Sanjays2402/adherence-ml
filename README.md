@@ -108,6 +108,34 @@ curl -sS -X POST http://localhost:8000/v1/webhooks/outbound/subscriptions/clinic
 
 Local API: <http://localhost:8000>. Dashboard: <http://localhost:3000>.
 
+## Tenant-scoped webhook dead-letter queue
+
+A delivery that fails every retry attempt is now marked `dead_letter`
+instead of the generic `failed`, so operators can tell a transient
+blip apart from a giving-up event that needs human attention. Each
+`WebhookDelivery` row carries a denormalised `tenant_id` populated at
+dispatch time and backfilled from the owning subscription on first
+startup, which means cross-tenant isolation is enforced with a single
+`WHERE tenant_id = ?` clause on every listing, retention sweep, and
+DLQ count, not via an implicit join an unrelated route might forget.
+The scenario is locked down in
+`tests/integration/test_outbound_delivery_tenant_isolation.py`: two
+tenants register their own subscriptions, both deliveries exhaust
+retries, and each tenant sees exactly its own DLQ entry while the
+other tenant's id 404s on replay.
+
+### Try it
+
+```bash
+# How many deliveries gave up on this workspace?
+curl -sS http://localhost:8000/v1/webhooks/outbound/deliveries/dead-letter \
+  -H "x-api-key: $ADMIN_KEY" | jq '{count, items: [.items[] | {id, event_type, status_code, error}]}'
+
+# Replay one of them after fixing the receiver.
+curl -sS -X POST http://localhost:8000/v1/webhooks/outbound/deliveries/123/replay \
+  -H "x-api-key: $ADMIN_KEY"
+```
+
 ## Per-workspace legal hold (litigation / preservation order)
 
 Enterprise legal teams need a way to freeze deletions when a matter,

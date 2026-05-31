@@ -180,6 +180,7 @@ def dispatch(
                 with session() as s:
                     row = WebhookDelivery(
                         subscription_id=sub.id,
+                        tenant_id=sub_tenant,
                         event_type=event_type,
                         payload_json=payload,
                         attempt=0,
@@ -230,12 +231,21 @@ def dispatch(
             if status is not None and 200 <= status < 300:
                 state = "success"
                 break
+        else:
+            # No 2xx within the configured retry budget. Promote the
+            # terminal state from generic "failed" to "dead_letter" so
+            # operator dashboards can surface a DLQ count and require an
+            # explicit replay to retry. Transport-level rejects already
+            # use the dedicated "blocked" state (see above).
+            if attempt_n >= max_attempts:
+                state = "dead_letter"
         try:
             _ensure_table()
             threshold = _breaker_threshold()
             with session() as s:
                 row = WebhookDelivery(
                     subscription_id=sub.id,
+                    tenant_id=sub_tenant,
                     event_type=event_type,
                     payload_json=payload,
                     attempt=attempt_n,
@@ -301,14 +311,52 @@ def replay(delivery_id: int, *, _client: httpx.Client | None = None) -> int | No
     return ids[0] if ids else None
 
 
-def recent_deliveries(limit: int = 100) -> list[WebhookDelivery]:
+def recent_deliveries(
+    limit: int = 100,
+    *,
+    tenant_id: str | None = None,
+) -> list[WebhookDelivery]:
+    """Return the most recent WebhookDelivery rows, newest first.
+
+    When ``tenant_id`` is provided the result is scoped to deliveries
+    that belong to that tenant. The unscoped form remains available for
+    internal jobs (retention sweep, prometheus exporter) that have a
+    legitimate cross-tenant read, but all user-facing routes must pass
+    the caller's tenant explicitly so cross-tenant leakage is impossible
+    at the query layer.
+    """
     _ensure_table()
     with session() as s:
-        return list(s.scalars(
+        q = (
             select(WebhookDelivery)
             .order_by(WebhookDelivery.id.desc())
             .limit(limit)
+        )
+        if tenant_id is not None:
+            q = (
+                select(WebhookDelivery)
+                .where(WebhookDelivery.tenant_id == str(tenant_id))
+                .order_by(WebhookDelivery.id.desc())
+                .limit(limit)
+            )
+        return list(s.scalars(q))
+
+
+def dead_letter_count(tenant_id: str) -> int:
+    """Number of dead-letter deliveries pending operator attention.
+
+    Scoped to a single tenant; a returned value > 0 should drive a
+    banner / alert in the admin console.
+    """
+    _ensure_table()
+    with session() as s:
+        rows = list(s.scalars(
+            select(WebhookDelivery).where(
+                WebhookDelivery.tenant_id == str(tenant_id),
+                WebhookDelivery.state == "dead_letter",
+            )
         ))
+    return len(rows)
 
 
 __all__ = [
@@ -321,4 +369,5 @@ __all__ = [
     "dispatch",
     "replay",
     "recent_deliveries",
+    "dead_letter_count",
 ]
