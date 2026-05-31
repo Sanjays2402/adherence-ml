@@ -11,6 +11,8 @@ import {
 } from "@/lib/workspaces-store";
 import { dryRunBody, isDryRun, withDryRunHeaders } from "@/lib/dry-run";
 import { recordAudit } from "@/lib/dashboard-audit";
+import { withResidencyHeaders } from "@/lib/residency";
+import { publicPolicy } from "@/lib/workspaces-store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,21 +27,24 @@ export async function GET(
   const ws = await getWorkspaceForUser(id, ctx.user.id);
   if (!ws) return NextResponse.json({ detail: "not found" }, { status: 404 });
   const invites = await listInvites(id);
-  return NextResponse.json({
-    workspace: ws.workspace,
-    role: ws.role,
-    members: ws.members,
-    sso: publicSso(ws.workspace.sso),
-    invites: invites.map((i) => ({
-      id: i.id,
-      email: i.email,
-      role: i.role,
-      created_at: i.created_at,
-      expires_at: i.expires_at,
-      accepted_at: i.accepted_at,
-      revoked_at: i.revoked_at,
-    })),
-  });
+  return withResidencyHeaders(
+    NextResponse.json({
+      workspace: ws.workspace,
+      role: ws.role,
+      members: ws.members,
+      sso: publicSso(ws.workspace.sso),
+      invites: invites.map((i) => ({
+        id: i.id,
+        email: i.email,
+        role: i.role,
+        created_at: i.created_at,
+        expires_at: i.expires_at,
+        accepted_at: i.accepted_at,
+        revoked_at: i.revoked_at,
+      })),
+    }),
+    publicPolicy(ws.workspace.security_policy).data_residency,
+  );
 }
 
 const PatchSchema = z.object({

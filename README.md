@@ -4,6 +4,33 @@ ML risk scoring for medication adherence. Predicts which upcoming doses a user
 is likely to miss in the next 24 hours and turns those scores into ranked
 interventions.
 
+## Workspace data residency (declared region, advertised on every response)
+
+Workspace owners pick the declared region for their data from
+`/workspace/security` (US, US-East, US-West, EU, EU-Frankfurt, EU-Ireland, UK,
+CA, AP-Sydney, AP-Tokyo, AP-Singapore, or `unspecified`). The operator sets
+the actual deployment region with the `ADHERENCE_DEPLOY_REGION` env var.
+
+Every workspace-scoped response carries three headers so SIEM, DLP, and
+procurement teams can verify residency without scraping the UI:
+
+- `X-Data-Residency`: workspace-declared region
+- `X-Data-Residency-Deploy`: operator-declared deployment region
+- `X-Data-Residency-Match`: `match`, `mismatch`, or `unspecified`
+
+A broader region is treated as compatible with a sub-region (workspace `eu`
+plus deploy `eu-frankfurt` reports `match`). Only owners can change it; the
+change is appended to the hash-chained dashboard audit log.
+
+### Try it
+
+```bash
+ADHERENCE_DEPLOY_REGION=us-east pnpm --filter web dev
+# sign in, then
+curl -i http://localhost:3000/api/workspaces/<ws-id>/policy \
+  -H "cookie: $YOUR_SESSION_COOKIE" | grep -i x-data-residency
+```
+
 ## SIEM audit log export (`/v1/audit`)
 
 The dashboard's hash-chained audit log (settings changes, key rotations,

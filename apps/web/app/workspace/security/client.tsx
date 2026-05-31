@@ -12,6 +12,7 @@ import {
   CheckCircle,
   ArrowSquareOut,
   Globe,
+  MapPin,
 } from "@phosphor-icons/react";
 import {
   PageHeader,
@@ -33,13 +34,19 @@ interface PublicPolicy {
   require_mfa: boolean;
   webhook_allow_private_networks: boolean;
   webhook_host_allowlist: string[];
+  data_residency: string;
   updated_at: number;
 }
 
 interface PolicyResp {
   policy: PublicPolicy;
   role: Role;
-  limits: { min_session_minutes: number; max_session_minutes: number };
+  deployment_region: string;
+  limits: {
+    min_session_minutes: number;
+    max_session_minutes: number;
+    regions: string[];
+  };
 }
 
 const fetcher = async (url: string) => {
@@ -95,6 +102,7 @@ export default function SecurityClient() {
   const [requireMfa, setRequireMfa] = useState(false);
   const [allowPrivate, setAllowPrivate] = useState(false);
   const [hostAllowlist, setHostAllowlist] = useState("");
+  const [residency, setResidency] = useState<string>("unspecified");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
@@ -109,6 +117,7 @@ export default function SecurityClient() {
       setRequireMfa(Boolean(policy.require_mfa));
       setAllowPrivate(Boolean(policy.webhook_allow_private_networks));
       setHostAllowlist((policy.webhook_host_allowlist ?? []).join("\n"));
+      setResidency(policy.data_residency ?? "unspecified");
     }
   }, [policy, selected]);
 
@@ -146,6 +155,7 @@ export default function SecurityClient() {
           require_mfa: requireMfa,
           webhook_allow_private_networks: allowPrivate,
           webhook_host_allowlist: allowlist,
+          data_residency: residency,
         }),
       });
       const j = await r.json().catch(() => ({}));
@@ -161,6 +171,27 @@ export default function SecurityClient() {
 
   const minM = limits?.min_session_minutes ?? 5;
   const maxM = limits?.max_session_minutes ?? 43200;
+  const regions = limits?.regions ?? [
+    "unspecified",
+    "us",
+    "us-east",
+    "us-west",
+    "eu",
+    "eu-frankfurt",
+    "eu-ireland",
+    "uk",
+    "ca",
+    "ap-sydney",
+    "ap-tokyo",
+    "ap-singapore",
+  ];
+  const deployRegion = policySwr.data?.deployment_region ?? "unspecified";
+  const residencyMismatch =
+    residency !== "unspecified" &&
+    deployRegion !== "unspecified" &&
+    residency !== deployRegion &&
+    !deployRegion.startsWith(`${residency}-`) &&
+    !residency.startsWith(`${deployRegion}-`);
 
   return (
     <div className="min-h-dvh">
@@ -356,6 +387,41 @@ export default function SecurityClient() {
         ) : null}
 
         {policy ? (
+          <Card>
+            <CardHeader
+              title="Data residency"
+              right={<Badge><MapPin weight="duotone" size={11} /> deploy {deployRegion}</Badge>}
+            />
+            <div className="px-4 py-4 space-y-3">
+              <div className="text-[12px] text-[var(--color-muted)]">
+                Declared region for this workspace. Surfaced on every workspace-scoped API response as <MonoChip>X-Data-Residency</MonoChip> so your SIEM, DLP, and procurement teams can verify where the data is held. If it does not match the deployment region the response header <MonoChip>X-Data-Residency-Match</MonoChip> reads <MonoChip>mismatch</MonoChip>.
+              </div>
+              <div className="max-w-sm">
+                <Label><MapPin weight="duotone" size={11} /> Region</Label>
+                <select
+                  value={residency}
+                  disabled={!isOwner}
+                  onChange={(e) => setResidency(e.target.value)}
+                  className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 text-[12px] font-mono focus:outline-none focus:border-[var(--color-fg)] disabled:opacity-50"
+                >
+                  {regions.map((r) => (
+                    <option key={r} value={r}>{r}</option>
+                  ))}
+                </select>
+              </div>
+              {residencyMismatch ? (
+                <div className="text-[11px] font-mono text-[var(--color-warning,#b45309)] inline-flex items-center gap-2">
+                  <Warning weight="duotone" size={12} /> Declared region {residency} does not match deployment region {deployRegion}. Responses will advertise X-Data-Residency-Match: mismatch.
+                </div>
+              ) : null}
+              <div className="text-[11px] font-mono text-[var(--color-muted)] inline-flex items-center gap-2">
+                <ShieldCheck weight="duotone" size={12} /> Set deployment region with <MonoChip>ADHERENCE_DEPLOY_REGION</MonoChip> on the API host.
+              </div>
+            </div>
+          </Card>
+        ) : null}
+
+        {policy ? (
           <div className="flex items-center gap-3">
             <Button onClick={save} disabled={!isOwner || busy}>
               <FloppyDisk weight="duotone" size={13} /> {busy ? "Saving" : "Save policy"}
@@ -382,6 +448,7 @@ export default function SecurityClient() {
               <div>require_mfa = <MonoChip>{String(policy.require_mfa)}</MonoChip></div>
               <div>webhook_allow_private_networks = <MonoChip>{String(policy.webhook_allow_private_networks)}</MonoChip></div>
               <div>webhook_host_allowlist = <MonoChip>{policy.webhook_host_allowlist.length ? policy.webhook_host_allowlist.join(", ") : "any public host"}</MonoChip></div>
+              <div>data_residency = <MonoChip>{policy.data_residency}</MonoChip> (deploy: <MonoChip>{deployRegion}</MonoChip>)</div>
               <div className="text-[11px] mt-2">
                 When a user belongs to multiple workspaces the tightest rule wins: the lowest session cap and require_mfa from any workspace applies.
               </div>

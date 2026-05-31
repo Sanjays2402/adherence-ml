@@ -56,8 +56,52 @@ export interface WorkspaceSecurityPolicy {
    * Empty array means "no host restriction beyond the SSRF guard".
    */
   webhook_host_allowlist: string[];
+  /**
+   * Declared data residency region for this workspace. Surfaced on every
+   * workspace-scoped response as the `X-Data-Residency` header so customers
+   * and SIEM/DLP tools can verify where their data is held. Stored as a
+   * lowercased region code from {@link DATA_RESIDENCY_REGIONS}.
+   *
+   * Note: the running deployment region is set by the operator; this field
+   * is the workspace owner's declared/contracted region. A mismatch with
+   * `DEPLOY_REGION` is surfaced in the response header so auditors notice.
+   */
+  data_residency: DataResidencyRegion;
   updated_at: number;
   updated_by: string;
+}
+
+export type DataResidencyRegion =
+  | "unspecified"
+  | "us"
+  | "us-east"
+  | "us-west"
+  | "eu"
+  | "eu-frankfurt"
+  | "eu-ireland"
+  | "uk"
+  | "ca"
+  | "ap-sydney"
+  | "ap-tokyo"
+  | "ap-singapore";
+
+export const DATA_RESIDENCY_REGIONS: DataResidencyRegion[] = [
+  "unspecified",
+  "us",
+  "us-east",
+  "us-west",
+  "eu",
+  "eu-frankfurt",
+  "eu-ireland",
+  "uk",
+  "ca",
+  "ap-sydney",
+  "ap-tokyo",
+  "ap-singapore",
+];
+
+export function isDataResidencyRegion(v: unknown): v is DataResidencyRegion {
+  return typeof v === "string" && (DATA_RESIDENCY_REGIONS as string[]).includes(v);
 }
 
 export const POLICY_MIN_SESSION_MINUTES = 5;
@@ -869,6 +913,7 @@ export interface PublicWorkspaceSecurityPolicy {
   require_mfa: boolean;
   webhook_allow_private_networks: boolean;
   webhook_host_allowlist: string[];
+  data_residency: DataResidencyRegion;
   updated_at: number;
 }
 
@@ -881,6 +926,7 @@ export function publicPolicy(
       require_mfa: false,
       webhook_allow_private_networks: false,
       webhook_host_allowlist: [],
+      data_residency: "unspecified",
       updated_at: 0,
     };
   }
@@ -891,6 +937,9 @@ export function publicPolicy(
     webhook_host_allowlist: Array.isArray(p.webhook_host_allowlist)
       ? [...p.webhook_host_allowlist]
       : [],
+    data_residency: isDataResidencyRegion(p.data_residency)
+      ? p.data_residency
+      : "unspecified",
     updated_at: p.updated_at,
   };
 }
@@ -911,6 +960,7 @@ export async function setWorkspacePolicy(
     require_mfa: boolean;
     webhook_allow_private_networks?: boolean;
     webhook_host_allowlist?: string[];
+    data_residency?: DataResidencyRegion;
   },
 ): Promise<PublicWorkspaceSecurityPolicy> {
   const store = await readStore();
@@ -947,11 +997,17 @@ export async function setWorkspacePolicy(
     typeof next.webhook_allow_private_networks === "boolean"
       ? next.webhook_allow_private_networks
       : Boolean(ws.security_policy?.webhook_allow_private_networks);
+  const residency: DataResidencyRegion = isDataResidencyRegion(next.data_residency)
+    ? next.data_residency
+    : isDataResidencyRegion(ws.security_policy?.data_residency)
+      ? (ws.security_policy!.data_residency as DataResidencyRegion)
+      : "unspecified";
   ws.security_policy = {
     session_max_age_minutes: cap,
     require_mfa: Boolean(next.require_mfa),
     webhook_allow_private_networks: allowPrivate,
     webhook_host_allowlist: hostAllowlist,
+    data_residency: residency,
     updated_at: Date.now(),
     updated_by: actorUserId,
   };

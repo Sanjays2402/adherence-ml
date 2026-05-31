@@ -9,12 +9,15 @@ import { getSession } from "@/lib/session";
 import {
   POLICY_MAX_SESSION_MINUTES,
   POLICY_MIN_SESSION_MINUTES,
+  DATA_RESIDENCY_REGIONS,
+  type DataResidencyRegion,
   getWorkspaceForUser,
   publicPolicy,
   setWorkspacePolicy,
 } from "@/lib/workspaces-store";
 import { recordAudit } from "@/lib/dashboard-audit";
 import { dryRunBody, isDryRun, withDryRunHeaders } from "@/lib/dry-run";
+import { withResidencyHeaders, deploymentRegion } from "@/lib/residency";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,6 +35,9 @@ const Body = z.object({
     .array(z.string().trim().min(1).max(253))
     .max(64)
     .optional(),
+  data_residency: z
+    .enum(DATA_RESIDENCY_REGIONS as [DataResidencyRegion, ...DataResidencyRegion[]])
+    .optional(),
 });
 
 export async function GET(
@@ -43,14 +49,20 @@ export async function GET(
   const { id } = await params;
   const ws = await getWorkspaceForUser(id, ctx.user.id);
   if (!ws) return NextResponse.json({ detail: "not found" }, { status: 404 });
-  return NextResponse.json({
-    policy: publicPolicy(ws.workspace.security_policy),
-    role: ws.role,
-    limits: {
-      min_session_minutes: POLICY_MIN_SESSION_MINUTES,
-      max_session_minutes: POLICY_MAX_SESSION_MINUTES,
-    },
-  });
+  const policy = publicPolicy(ws.workspace.security_policy);
+  return withResidencyHeaders(
+    NextResponse.json({
+      policy,
+      role: ws.role,
+      deployment_region: deploymentRegion(),
+      limits: {
+        min_session_minutes: POLICY_MIN_SESSION_MINUTES,
+        max_session_minutes: POLICY_MAX_SESSION_MINUTES,
+        regions: DATA_RESIDENCY_REGIONS,
+      },
+    }),
+    policy.data_residency,
+  );
 }
 
 export async function PUT(
@@ -109,7 +121,10 @@ export async function PUT(
       request: req,
       metadata: { before: before as unknown as Record<string, unknown>, after: after as unknown as Record<string, unknown> },
     });
-    return NextResponse.json({ policy: after });
+    return withResidencyHeaders(
+      NextResponse.json({ policy: after, deployment_region: deploymentRegion() }),
+      after.data_residency,
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : "policy update failed";
     return NextResponse.json({ detail: message }, { status: 400 });
