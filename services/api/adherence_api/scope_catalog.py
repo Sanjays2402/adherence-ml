@@ -106,6 +106,11 @@ _CATALOG: tuple[ScopeRule, ...] = (
     ScopeRule("*", "/v1/admin/policies",        "admin:policy",    "Manage risk-tier policies"),
     ScopeRule("POST","/v1/admin/token",         "admin:keys",      "Mint short-lived JWT"),
     ScopeRule("GET","/v1/admin/models",         "models:read",     "List registered models"),
+
+    # ----- Legal documents and per-workspace acceptance
+    ScopeRule("POST", "/v1/legal/accept",     "legal:accept",   "Accept the current TOS / DPA for this workspace"),
+    ScopeRule("POST", "/v1/legal/documents",  "legal:publish",  "Publish a new legal document version"),
+    ScopeRule("GET",  "/v1/legal",            "legal:read",     "Read legal documents and acceptance log"),
 )
 
 
@@ -118,6 +123,7 @@ EXEMPT_PREFIXES: tuple[str, ...] = (
     "/v1/admin/sso",   # SSO sign-in must reach API before tenant context exists
     "/v1/auth/scopes", # introspection must be reachable to discover scopes
     "/scim/v2",        # SCIM uses its own per-tenant bearer, not an API key
+    "/v1/legal",       # legal acceptance gate exempts these too; keep scope-exempt so a stuck tenant can read and accept
 )
 
 

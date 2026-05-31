@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from adherence_api.body_size_middleware import BodySizeLimitMiddleware
 from adherence_api.middleware import RequestIdMiddleware
 from adherence_api.ip_allowlist_middleware import IpAllowlistMiddleware
+from adherence_api.legal_acceptance_middleware import LegalAcceptanceMiddleware
 from adherence_api.ratelimit_middleware import RateLimitMiddleware
 from adherence_api.scope_enforce_middleware import ScopeEnforceMiddleware
 from adherence_api.routes import auth_scopes as auth_scopes_route
@@ -32,6 +33,7 @@ from adherence_api.routes import retention_policy as retention_policy_route
 from adherence_api.routes import break_glass as break_glass_route
 from adherence_api.routes import legal_hold as legal_hold_route
 from adherence_api.routes import access_reviews as access_reviews_route
+from adherence_api.routes import legal as legal_route
 from adherence_api.routes import (
     admin,
     cohort,
@@ -130,6 +132,12 @@ def create_app() -> FastAPI:
     # Both run before route dispatch. Rate limit is added last so it
     # wraps outermost and runs first; scope enforcement runs just
     # before the route, after auth headers are present.
+    # Legal acceptance gate runs before scope checks so a workspace that
+    # owes a TOS/DPA gets a 451 with a clear remediation path instead of
+    # a generic 403 about missing scopes. Read paths and /v1/legal stay
+    # exempt (see middleware EXEMPT_PREFIXES) so a blocked tenant can
+    # still discover what to accept.
+    app.add_middleware(LegalAcceptanceMiddleware, settings=s)
     app.add_middleware(ScopeEnforceMiddleware)
     app.add_middleware(RateLimitMiddleware, settings=s)
     # IP allowlist gates tenant-bound traffic. Health/metrics/docs stay
@@ -199,6 +207,7 @@ def create_app() -> FastAPI:
     app.include_router(quota_route.router)
     app.include_router(auth_scopes_route.router)
     app.include_router(siem_route.router)
+    app.include_router(legal_route.router)
     # Ensure quota + workspace tables exist before the first request.
     try:
         from adherence_common.db import init_db

@@ -2,11 +2,57 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Workspace legal acceptance (TOS / DPA gate)
+
+Enterprise procurement asks: "Prove which version of your Terms of Service and Data Processing Agreement each of our workspaces accepted, by whom, when, from which IP." The API now publishes immutable legal document versions (`tos`, `dpa`, `privacy`), records per-workspace acceptance events with actor, IP, and user agent, and gates every mutating request behind acceptance via `LegalAcceptanceMiddleware`. A workspace that owes acceptance gets a 451 with a structured remediation payload (kind, version, sha256) instead of a generic 403. Read paths, `/v1/legal`, `/v1/gdpr`, health, metrics, and admin token mint stay open so a blocked tenant can self-serve or walk away with its data.
+
+Key invariants enforced in tests (`tests/integration/test_legal_acceptance.py`):
+
+- Per-tenant isolation: one workspace accepting does not unblock another.
+- Idempotency: re-accepting the same `(kind, version)` by the same subject does not duplicate rows.
+- sha256 mismatch rejects acceptance, proving the document body did not silently change under a previously-accepted version label.
+- Green-field default (no published documents) does not gate any tenant.
+- Every publish and accept event is written to `admin_audit_log`.
+
+Scoped API keys can call the legal surface via the canonical scopes `legal:read`, `legal:accept`, `legal:publish` exposed in `/v1/auth/scopes`.
+
+### Try it
+
+Local API: <http://127.0.0.1:8000>.
+
+```bash
+# 1. As an operator (admin in the default tenant), publish the current TOS and DPA.
+curl -s -X POST http://127.0.0.1:8000/v1/legal/documents \
+  -H "authorization: Bearer $OPERATOR_JWT" \
+  -H 'content-type: application/json' \
+  -d '{"kind":"tos","version":"2026-01-01","title":"Terms of Service","body":"..."}'
+
+curl -s -X POST http://127.0.0.1:8000/v1/legal/documents \
+  -H "authorization: Bearer $OPERATOR_JWT" \
+  -H 'content-type: application/json' \
+  -d '{"kind":"dpa","version":"2026-01-01","title":"Data Processing Agreement","body":"..."}'
+
+# 2. A workspace admin sees what they owe.
+curl -s http://127.0.0.1:8000/v1/legal/outstanding \
+  -H "authorization: Bearer $WORKSPACE_ADMIN_JWT"
+# { "tenant_id": "acme", "blocked": true, "outstanding": [ ... ] }
+
+# 3. Acceptance unblocks the workspace. The optional sha256 pins the body.
+curl -s -X POST http://127.0.0.1:8000/v1/legal/accept \
+  -H "authorization: Bearer $WORKSPACE_ADMIN_JWT" \
+  -H 'content-type: application/json' \
+  -d '{"kind":"tos","version":"2026-01-01"}'
+
+# 4. Audit trail for procurement: who accepted, when, from where.
+curl -s http://127.0.0.1:8000/v1/legal/acceptances \
+  -H "authorization: Bearer $WORKSPACE_ADMIN_JWT"
+```
+
 ## Periodic access reviews (SOC2 CC6.3 / ISO 27001 A.9.2.5)
 
 Workspace owners can run periodic access reviews to re-certify which members still need access. Opening a review snapshots every current member as a pending item; for each item an admin records keep, change (with a new role), or revoke. Closing the review applies every change and revoke to the live membership table in a single transaction and writes one admin audit row per applied decision. Reviews are strictly tenant-scoped: a review opened in workspace A is invisible (404) from workspace B, and decisions cannot cross tenants. Every mutation requires an active admin MFA challenge.
 
-### Try it
+### Try access reviews
 
 Local API: <http://127.0.0.1:8000>.
 
