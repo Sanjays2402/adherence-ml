@@ -4,6 +4,34 @@ ML risk scoring for medication adherence. Predicts which upcoming doses a user
 is likely to miss in the next 24 hours and turns those scores into ranked
 interventions.
 
+## Standard rate-limit headers on every /v1 response
+
+Every `/v1/*` endpoint now emits IETF-style rate-limit headers on success
+responses and a real `Retry-After` value on 429s, sourced from a single
+helper (`apps/web/lib/v1-ratelimit.ts`). One source of truth, two rings
+(plan + per-key) reconciled into a binding limit, no more bespoke header
+names per route. SDKs and load balancers can back off correctly without
+any custom integration.
+
+- `X-RateLimit-Limit` binding daily cap (min of plan vs per-key)
+- `X-RateLimit-Remaining` remaining requests for that binding ring after this call
+- `X-RateLimit-Reset` unix seconds when the UTC day rolls over
+- `X-RateLimit-Scope` `plan` or `api_key` so callers know which ring is binding
+- `X-RateLimit-Plan-Limit` / `X-RateLimit-Plan-Remaining` workspace plan ring
+- `X-RateLimit-Key-Limit` / `X-RateLimit-Key-Remaining` per-key cap (when set)
+- `Retry-After` (on 429) integer seconds to UTC midnight, never zero, never the old hard-coded 3600
+
+The `/v1/keys/me` read endpoint reports the current budget without
+charging a unit, so a customer's CI can poll headroom safely.
+
+Try it:
+
+    pnpm --filter @adherence/web dev
+    # mint a key from /keys, then:
+    curl -i http://localhost:3000/v1/keys/me \
+      -H "authorization: Bearer adh_..." | grep -i 'x-ratelimit\|retry-after'
+    # force a 429 by setting daily_quota=1 on the key and calling /v1/predict twice
+
 ![landing](docs/screenshots/landing.png)
 
 ## Observability for the dashboard (health, metrics, request IDs)

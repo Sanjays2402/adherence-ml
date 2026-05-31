@@ -21,11 +21,9 @@ import { z } from "zod";
 
 import { ApiError, apiFetch } from "@/lib/api";
 import { extractKey, hasScope, verifyKey } from "@/lib/api-keys-store";
-import { recordKeyUsage, usedTodayForKey } from "@/lib/api-key-usage-store";
 import { parseCsv, toCsv } from "@/lib/csv";
 import { appendRun, newRunId } from "@/lib/runs-store";
-import { FREE_DAILY_QUOTA, recordUsage, usedToday } from "@/lib/usage-store";
-import { dailyQuota as planDailyQuota } from "@/lib/plan-store";
+import { chargeCall, over429, rateLimitHeaders, readBudget } from "@/lib/v1-ratelimit";
 import type { PredictResponse, DoseClass } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -193,60 +191,10 @@ export async function POST(req: NextRequest) {
   }
 
   // --- Quota check (all-or-nothing) ----------------------------------------
-  const used = await usedToday();
-  const quota = await planDailyQuota().catch(() => FREE_DAILY_QUOTA);
   const cost = parsedRows.length;
-
-  // Per-key cap, enforced before the workspace plan quota. Same semantics
-  // as /v1/predict: a partner key with daily_quota=N can never exceed N
-  // calls/day even if the workspace plan has more headroom.
-  const perKeyLimit = typeof key.daily_quota === "number" && key.daily_quota > 0
-    ? key.daily_quota
-    : null;
-  const perKeyUsed = perKeyLimit !== null ? await usedTodayForKey(key.id) : 0;
-  if (perKeyLimit !== null && perKeyUsed + cost > perKeyLimit) {
-    return NextResponse.json(
-      {
-        error: "key_quota_exceeded",
-        detail: "this batch would exceed the per-key daily quota",
-        key_daily_quota: perKeyLimit,
-        key_used_today: perKeyUsed,
-        batch_cost: cost,
-        key_remaining: Math.max(0, perKeyLimit - perKeyUsed),
-      },
-      {
-        status: 429,
-        headers: {
-          "x-ratelimit-limit": String(perKeyLimit),
-          "x-ratelimit-remaining": String(Math.max(0, perKeyLimit - perKeyUsed)),
-          "x-ratelimit-scope": "api_key",
-          "retry-after": "3600",
-        },
-      },
-    );
-  }
-  if (used + cost > quota) {
-    return NextResponse.json(
-      {
-        error: "quota_exceeded",
-        detail: "this batch would exceed the daily plan quota",
-        quota,
-        used_today: used,
-        batch_cost: cost,
-        remaining: Math.max(0, quota - used),
-        upgrade_url: "/pricing",
-      },
-      {
-        status: 429,
-        headers: {
-          "x-quota-limit": String(quota),
-          "x-quota-used": String(used),
-          "x-quota-remaining": String(Math.max(0, quota - used)),
-          "retry-after": "3600",
-        },
-      },
-    );
-  }
+  const budget = await readBudget(key);
+  const blocked = over429(budget, cost);
+  if (blocked) return blocked;
 
   // --- Score ---------------------------------------------------------------
   const t0 = Date.now();
@@ -341,38 +289,25 @@ export async function POST(req: NextRequest) {
     // bookkeeping must never break the call
   }
 
-  try {
-    // Record one usage event per row so meters & sparklines stay accurate.
-    const now = Date.now();
-    for (let i = 0; i < parsedRows.length; i++) {
-      await recordUsage({
-        ts: now,
-        key_id: key.id,
-        key_prefix: key.prefix,
-        status: 200,
-        latency_ms: i === 0 ? latency : 0,
-      });
-    }
-  } catch {
-    // bookkeeping must never break the call
-  }
+  await chargeCall({
+    key,
+    method: "POST",
+    path: "/v1/batch",
+    status: 200,
+    latencyMs: latency,
+    cost,
+  });
 
-  const remaining = Math.max(0, quota - used - cost);
   const quotaHeaders: Record<string, string> = {
-    "x-quota-limit": String(quota),
-    "x-quota-used": String(used + cost),
-    "x-quota-remaining": String(remaining),
+    ...rateLimitHeaders(budget, cost),
+    // legacy quota header aliases retained for older SDKs that read them
+    "x-quota-limit": String(budget.plan.limit),
+    "x-quota-used": String(budget.plan.used + cost),
+    "x-quota-remaining": String(Math.max(0, budget.plan.remaining - cost)),
     "x-batch-rows": String(outRows.length),
     "x-batch-users": String(byUser.size),
     "x-latency-ms": String(latency),
   };
-  if (perKeyLimit !== null) {
-    quotaHeaders["x-ratelimit-limit"] = String(perKeyLimit);
-    quotaHeaders["x-ratelimit-remaining"] = String(
-      Math.max(0, perKeyLimit - perKeyUsed - cost),
-    );
-    quotaHeaders["x-ratelimit-scope"] = "api_key";
-  }
 
   if (format === "csv") {
     const csv = toCsv(

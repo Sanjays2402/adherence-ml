@@ -14,10 +14,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { ApiError, apiFetch } from "@/lib/api";
 import { extractKey, hasScope, verifyKey } from "@/lib/api-keys-store";
-import { recordKeyUsage, usedTodayForKey } from "@/lib/api-key-usage-store";
+import { recordKeyUsage } from "@/lib/api-key-usage-store";
 import { appendRun, newRunId } from "@/lib/runs-store";
-import { FREE_DAILY_QUOTA, recordUsage, usedToday } from "@/lib/usage-store";
-import { dailyQuota as planDailyQuota } from "@/lib/plan-store";
+import { chargeCall, over429, rateLimitHeaders, readBudget } from "@/lib/v1-ratelimit";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -58,57 +57,12 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Plan-aware daily quota check. The active plan in lib/plan-store.ts
-  // wins over FREE_DAILY_QUOTA so upgrading on /pricing immediately
-  // raises the ceiling for /v1/predict.
-  const used = await usedToday();
-  const quota = await planDailyQuota().catch(() => FREE_DAILY_QUOTA);
-
-  // Per-key daily cap, if the key has one. Independent of and stricter than
-  // the workspace plan quota. Lets admins hand a partner a key that can
-  // only burn N calls/day no matter how much plan headroom exists.
-  const perKeyLimit = typeof key.daily_quota === "number" && key.daily_quota > 0
-    ? key.daily_quota
-    : null;
-  const perKeyUsed = perKeyLimit !== null ? await usedTodayForKey(key.id) : 0;
-  if (perKeyLimit !== null && perKeyUsed >= perKeyLimit) {
-    return NextResponse.json(
-      {
-        detail: "per-key daily quota exceeded",
-        key_daily_quota: perKeyLimit,
-        key_used_today: perKeyUsed,
-        scope: "api_key",
-      },
-      {
-        status: 429,
-        headers: {
-          "x-ratelimit-limit": String(perKeyLimit),
-          "x-ratelimit-remaining": "0",
-          "x-ratelimit-scope": "api_key",
-          "retry-after": "3600",
-        },
-      },
-    );
-  }
-  if (used >= quota) {
-    return NextResponse.json(
-      {
-        detail: "daily plan quota exceeded",
-        quota,
-        used_today: used,
-        upgrade_url: "/pricing",
-      },
-      {
-        status: 429,
-        headers: {
-          "x-quota-limit": String(quota),
-          "x-quota-used": String(used),
-          "x-quota-remaining": "0",
-          "retry-after": "3600",
-        },
-      },
-    );
-  }
+  // One read of the combined budget (plan + per-key). The helper returns
+  // a fully formed 429 (with standard X-RateLimit-* and Retry-After) when
+  // either ring is exhausted, so /v1 routes stay consistent.
+  const budget = await readBudget(key);
+  const blocked = over429(budget, 1);
+  if (blocked) return blocked;
 
   let raw: unknown;
   try {
@@ -157,39 +111,22 @@ export async function POST(req: NextRequest) {
     } catch {
       // never let bookkeeping break the user-facing call
     }
-    // record usage (best-effort, never block the response)
-    try {
-      await recordUsage({
-        ts: Date.now(),
-        key_id: key.id,
-        key_prefix: key.prefix,
-        status: 200,
-        latency_ms: latency,
-      });
-    } catch {
-      // bookkeeping must never break the call
-    }
-    const remaining = Math.max(0, quota - used - 1);
-    void recordKeyUsage({
-      key_id: key.id,
-      ts: Date.now(),
+    await chargeCall({
+      key,
       method: "POST",
       path: "/v1/predict",
       status: 200,
-      latency_ms: latency,
-    }).catch(() => {});
+      latencyMs: latency,
+      cost: 1,
+    });
     const headers: Record<string, string> = {
       "x-latency-ms": String(latency),
-      "x-quota-limit": String(quota),
-      "x-quota-used": String(used + 1),
-      "x-quota-remaining": String(remaining),
+      ...rateLimitHeaders(budget, 1),
+      // legacy quota header aliases retained for older SDKs that read them
+      "x-quota-limit": String(budget.plan.limit),
+      "x-quota-used": String(budget.plan.used + 1),
+      "x-quota-remaining": String(Math.max(0, budget.plan.remaining - 1)),
     };
-    if (perKeyLimit !== null) {
-      const keyRemaining = Math.max(0, perKeyLimit - perKeyUsed - 1);
-      headers["x-ratelimit-limit"] = String(perKeyLimit);
-      headers["x-ratelimit-remaining"] = String(keyRemaining);
-      headers["x-ratelimit-scope"] = "api_key";
-    }
     return NextResponse.json(data, { headers });
   } catch (err) {
     const status = err instanceof ApiError ? err.status : 502;

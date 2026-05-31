@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractKey, hasScope, scopesOf, verifyKey } from "@/lib/api-keys-store";
 import { recordKeyUsage } from "@/lib/api-key-usage-store";
+import { rateLimitHeaders, readBudget } from "@/lib/v1-ratelimit";
 
 
 export const dynamic = "force-dynamic";
@@ -53,15 +54,31 @@ export async function GET(req: NextRequest) {
     status: 200,
     latency_ms: 0,
   }).catch(() => {});
-  return NextResponse.json({
-    id: key.id,
-    name: key.name,
-    prefix: key.prefix,
-    scopes,
-    created_at: key.created_at,
-    last_used_at: key.last_used_at,
-    use_count: key.use_count,
-    rotated_at: key.rotated_at ?? null,
-    expires_at: key.expires_at ?? null,
-  });
+  // Read-only call: advertise current headroom on the standard headers
+  // without consuming a unit. Lets SDKs poll this endpoint to drive
+  // back-off and dashboards without hitting the billable predict path.
+  const budget = await readBudget(key);
+  const headers = rateLimitHeaders(budget, 0);
+  return NextResponse.json(
+    {
+      id: key.id,
+      name: key.name,
+      prefix: key.prefix,
+      scopes,
+      created_at: key.created_at,
+      last_used_at: key.last_used_at,
+      use_count: key.use_count,
+      rotated_at: key.rotated_at ?? null,
+      expires_at: key.expires_at ?? null,
+      rate_limit: {
+        limit: budget.limit,
+        remaining: budget.remaining,
+        reset: budget.reset,
+        scope: budget.scope,
+        plan: budget.plan,
+        key: budget.key,
+      },
+    },
+    { headers },
+  );
 }
