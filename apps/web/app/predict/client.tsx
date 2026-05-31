@@ -10,6 +10,10 @@ import {
   Timer,
   ClockCounterClockwise,
   ArrowCounterClockwise,
+  ShareNetwork,
+  Copy,
+  Check,
+  X,
 } from "@phosphor-icons/react";
 import {
   PageHeader,
@@ -108,10 +112,61 @@ export default function PredictClient() {
   const [result, setResult] = useState<PredictResponse | null>(null);
   const [latencyMs, setLatencyMs] = useState<number | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [sharing, setSharing] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     setHistory(loadHistory());
   }, []);
+
+  async function share() {
+    if (!result) return;
+    setSharing(true);
+    setShareError(null);
+    setShareUrl(null);
+    setCopied(false);
+    try {
+      const res = await fetch("/api/shares", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          user_id: userId.trim(),
+          top_k: topK,
+          rows: rows.map((r) => ({
+            dose_id: r.dose_id,
+            scheduled_at: r.scheduled_at,
+            dose_class: r.dose_class,
+            dose_strength_mg: Number(r.dose_strength_mg) || 0,
+          })),
+          result,
+          latency_ms: latencyMs,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(typeof data?.detail === "string" ? data.detail : `share failed (${res.status})`);
+      }
+      const abs = typeof window !== "undefined" ? `${window.location.origin}${data.url}` : data.url;
+      setShareUrl(abs);
+    } catch (err) {
+      setShareError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSharing(false);
+    }
+  }
+
+  async function copyShareUrl() {
+    if (!shareUrl || typeof window === "undefined") return;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      // ignore
+    }
+  }
 
   function update(i: number, patch: Partial<Row>) {
     setRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
@@ -317,10 +372,66 @@ export default function PredictClient() {
                   <Badge tone="success">
                     <CheckCircle weight="duotone" size={10} /> ok
                   </Badge>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={share}
+                    disabled={sharing}
+                    aria-label="share result"
+                  >
+                    {sharing ? (
+                      <Spinner weight="duotone" size={12} className="animate-spin" />
+                    ) : (
+                      <ShareNetwork weight="duotone" size={12} />
+                    )}
+                    {sharing ? "Sharing" : "Share"}
+                  </Button>
                 </div>
               ) : null
             }
           />
+          {shareUrl || shareError ? (
+            <div className="px-4 pt-3 pb-3 border-b border-[var(--color-border)] bg-[var(--color-surface)]/40">
+              {shareError ? (
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs text-[var(--color-danger)]">{shareError}</div>
+                  <Button type="button" variant="ghost" onClick={() => setShareError(null)} aria-label="dismiss">
+                    <X weight="duotone" size={12} />
+                  </Button>
+                </div>
+              ) : shareUrl ? (
+                <div className="space-y-2">
+                  <div className="text-[10px] font-mono uppercase tracking-[0.16em] text-[var(--color-muted)]">
+                    public shareable url
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      readOnly
+                      value={shareUrl}
+                      onFocus={(e) => e.currentTarget.select()}
+                      className="flex-1 min-w-0 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md px-2 py-1.5 text-xs font-mono text-[var(--color-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
+                    />
+                    <Button type="button" variant="ghost" onClick={copyShareUrl}>
+                      {copied ? (
+                        <Check weight="duotone" size={12} />
+                      ) : (
+                        <Copy weight="duotone" size={12} />
+                      )}
+                      {copied ? "Copied" : "Copy"}
+                    </Button>
+                    <a
+                      href={shareUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-[var(--color-accent)] hover:underline px-1"
+                    >
+                      Open
+                    </a>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           {result && result.predictions.length > 0 ? (
             <div className="px-4 pt-3 pb-1 border-b border-[var(--color-border)]">
               <div className="text-[10px] font-mono uppercase tracking-[0.16em] text-[var(--color-muted)] mb-1">

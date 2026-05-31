@@ -34,7 +34,26 @@ three-card preview, and
 [http://localhost:3000/predict](http://localhost:3000/predict) lets you hand
 build a dose schedule, see a recharts miss-probability bar chart with risk
 thresholds, the round-trip latency in milliseconds, and keeps your last eight
-runs on-device for one-click restore.
+runs on-device for one-click restore. Any result can be published to a
+public shareable URL at `/r/<id>` via the new `Share` button, which POSTs
+the full request and response to `POST /api/shares` and renders the rendered
+result (chart, dose table, reason codes, OpenGraph preview) for anyone with
+the link, no account required. Shares persist to `.data/shares.json` next to
+the Next.js app and are read back by `GET /api/shares/<id>`.
+
+Quick share round-trip:
+
+```bash
+curl -s -X POST http://localhost:3000/api/shares \
+  -H 'content-type: application/json' \
+  -d '{
+    "user_id":"demo-user-001",
+    "top_k":3,
+    "rows":[{"dose_id":"d1","scheduled_at":"2026-06-01T12:00:00Z","dose_class":"cardio","dose_strength_mg":10}],
+    "result":{"user_id":"demo-user-001","model_version":"v0","predictions":[{"dose_id":"d1","scheduled_at":"2026-06-01T12:00:00Z","miss_probability":0.42,"risk_tier":"medium","reasons":[]}]}
+  }'
+# -> {"id":"...","url":"/r/..."}  open http://localhost:3000/r/<id>
+```
 [http://localhost:3000/compare](http://localhost:3000/compare) scores all
 three personas in parallel and ranks who needs an intervention first with a
 composite triage score and a cohort-wide top-reasons chart aggregated from
