@@ -72,6 +72,12 @@ export async function GET(req: NextRequest) {
     q: sp.get("q") ?? undefined,
     kind,
     tag: sp.get("tag") ?? undefined,
+    tags: [
+      ...sp.getAll("tag"),
+      ...(sp.get("tags")?.split(",") ?? []),
+    ]
+      .map((t) => t.trim())
+      .filter(Boolean),
     user_id: sp.get("user_id") ?? undefined,
     from: parseDate(sp.get("from"), false),
     to: parseDate(sp.get("to"), true),

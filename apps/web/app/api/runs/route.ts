@@ -107,6 +107,13 @@ export async function GET(req: NextRequest) {
     offset: Number.isFinite(offset) ? offset : 0,
     from: parseBound(fromRaw, false),
     to: parseBound(toRaw, true),
+    tags: [
+      ...sp.getAll("tag"),
+      ...(sp.get("tags")?.split(",") ?? []),
+    ]
+      .map((t) => t.trim())
+      .filter(Boolean)
+      .slice(0, 12),
   });
   return NextResponse.json(result);
 }

@@ -74,6 +74,8 @@ export interface ListQuery {
   offset?: number;
   from?: number | null;
   to?: number | null;
+  /** Match runs that carry ALL of these tags (case-insensitive). */
+  tags?: string[];
 }
 
 export interface ListResult {
@@ -91,11 +93,20 @@ export async function listRuns(query: ListQuery = {}): Promise<ListResult> {
   const kind = query.kind && query.kind !== "all" ? query.kind : null;
   const from = query.from ?? null;
   const to = query.to ?? null;
+  const tags = (query.tags ?? [])
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean);
 
   const filtered = all.filter((r) => {
     if (kind && r.kind !== kind) return false;
     if (from !== null && r.created_at < from) return false;
     if (to !== null && r.created_at > to) return false;
+    if (tags.length) {
+      const have = new Set(r.tags.map((t) => t.toLowerCase()));
+      for (const t of tags) {
+        if (!have.has(t)) return false;
+      }
+    }
     if (q) {
       const hay =
         `${r.title} ${r.summary} ${r.user_id ?? ""} ${r.tags.join(" ")}`.toLowerCase();
@@ -196,5 +207,28 @@ export async function updateRun(
 
 export async function listAllRuns(): Promise<RunRecord[]> {
   return readAll();
+}
+
+/**
+ * Return all tags present across runs with their occurrence counts,
+ * optionally filtered by kind. Sorted by count desc, then alphabetically.
+ */
+export async function tagCounts(
+  kind?: RunKind | "all",
+): Promise<Array<{ tag: string; count: number }>> {
+  const all = await readAll();
+  const wanted = kind && kind !== "all" ? kind : null;
+  const counts = new Map<string, number>();
+  for (const r of all) {
+    if (wanted && r.kind !== wanted) continue;
+    for (const raw of r.tags) {
+      const t = raw.trim();
+      if (!t) continue;
+      counts.set(t, (counts.get(t) ?? 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .map(([tag, count]) => ({ tag, count }))
+    .sort((a, b) => (b.count - a.count) || a.tag.localeCompare(b.tag));
 }
 

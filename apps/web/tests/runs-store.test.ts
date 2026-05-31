@@ -69,4 +69,46 @@ describe("runs-store", () => {
     expect(await store.countRuns()).toBe(1);
     expect(await store.deleteRun("nope")).toBe(false);
   });
+
+  it("filters by tags (AND) and reports tag counts", async () => {
+    const store = await import("../lib/runs-store");
+    const base = Date.now();
+    const mk = (i: number, tags: string[], kind: "predict" | "cohort" = "predict") =>
+      store.appendRun({
+        id: store.newRunId(),
+        created_at: base + i,
+        kind,
+        title: `r${i}`,
+        summary: "",
+        user_id: null,
+        latency_ms: null,
+        payload: {},
+        tags,
+      });
+    await mk(1, ["prod", "v2"]);
+    await mk(2, ["prod"]);
+    await mk(3, ["v2", "experimental"]);
+    await mk(4, [], "cohort");
+
+    const onlyProd = await store.listRuns({ tags: ["prod"] });
+    expect(onlyProd.total).toBe(2);
+
+    const both = await store.listRuns({ tags: ["prod", "v2"] });
+    expect(both.total).toBe(1);
+    expect(both.items[0].title).toBe("r1");
+
+    // Case-insensitive match.
+    const caseInsensitive = await store.listRuns({ tags: ["PROD"] });
+    expect(caseInsensitive.total).toBe(2);
+
+    const counts = await store.tagCounts();
+    const map = Object.fromEntries(counts.map((c) => [c.tag, c.count]));
+    expect(map.prod).toBe(2);
+    expect(map.v2).toBe(2);
+    expect(map.experimental).toBe(1);
+
+    // Filter by kind narrows the tag universe (cohort run has no tags).
+    const predictOnly = await store.tagCounts("predict");
+    expect(predictOnly.find((t) => t.tag === "prod")?.count).toBe(2);
+  });
 });

@@ -224,12 +224,13 @@ page is a plain server route so links are shareable in incognito.
 
 API surface:
 
-- `GET /api/runs?q=&kind=&from=&to=&limit=&offset=` list with search, date range, pagination
+- `GET /api/runs?q=&kind=&from=&to=&tag=&limit=&offset=` list with search, date range, multi-tag (repeat `tag=` for AND match), pagination
 - `POST /api/runs` append a record (validated with zod)
 - `GET /api/runs/:id` fetch one
 - `PATCH /api/runs/:id` rename or retag (`{ title?, tags? }`)
 - `DELETE /api/runs/:id` remove
-- `GET /api/runs/export?format=csv|json|ndjson&q=&kind=&from=&to=&tag=&user_id=` filtered download
+- `GET /api/runs/tags?kind=` list every tag in use with its run count, optionally narrowed by kind, for the history filter chips
+- `GET /api/runs/export?format=csv|json|ndjson&q=&kind=&from=&to=&tag=&user_id=` filtered download (repeat `tag=` to AND multiple)
 - `GET /api/runs/:id/download` per-run JSON download (attachment with safe filename)
 - `GET /api/runs/:id/share` current public-share status for a run
 - `POST /api/runs/:id/share` body `{ enabled: boolean }` mint or revoke a public share link
@@ -247,7 +248,18 @@ Try it:
 # every cohort run with the "prod" tag from June, as NDJSON
 curl -sS 'http://localhost:3000/api/runs/export?format=ndjson&kind=cohort&tag=prod&from=2025-06-01&to=2025-06-30' \
   -o cohort-prod-june.ndjson
+
+# list every tag in use across saved runs with its count
+curl -sS 'http://localhost:3000/api/runs/tags'
+
+# runs that carry BOTH the "prod" and "v2" tags (AND match)
+curl -sS 'http://localhost:3000/api/runs?tag=prod&tag=v2'
 ```
+
+The History page renders one clickable chip per tag with its live count, so
+you can stack filters (`#prod` + `#v2`) without typing in the search box.
+Selecting chips updates the list, pagination, and every CSV/JSON/NDJSON
+export link in the toolbar in the same click.
 
 Unit test: `pnpm --filter @adherence/web test`.
 

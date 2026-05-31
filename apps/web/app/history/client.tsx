@@ -29,6 +29,7 @@ type Run = {
 };
 
 type ListResp = { items: Run[]; total: number; limit: number; offset: number };
+type TagsResp = { tags: Array<{ tag: string; count: number }>; total: number };
 
 const KINDS = ["all", "predict", "demo", "explain", "cohort", "forecast", "other"] as const;
 type KindFilter = (typeof KINDS)[number];
@@ -59,12 +60,13 @@ export default function HistoryClient() {
   const [kind, setKind] = useState<KindFilter>("all");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [page, setPage] = useState(0);
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
     setPage(0);
-  }, [q, kind, from, to]);
+  }, [q, kind, from, to, selectedTags]);
 
   const url = useMemo(() => {
     const sp = new URLSearchParams();
@@ -72,10 +74,11 @@ export default function HistoryClient() {
     if (kind !== "all") sp.set("kind", kind);
     if (from) sp.set("from", from);
     if (to) sp.set("to", to);
+    for (const t of selectedTags) sp.append("tag", t);
     sp.set("limit", String(PAGE));
     sp.set("offset", String(page * PAGE));
     return `/api/runs?${sp.toString()}`;
-  }, [q, kind, from, to, page]);
+  }, [q, kind, from, to, selectedTags, page]);
 
   /** Build an /api/runs/export URL that honors the active filters. */
   const exportUrl = useCallback(
@@ -86,18 +89,40 @@ export default function HistoryClient() {
       if (kind !== "all") sp.set("kind", kind);
       if (from) sp.set("from", from);
       if (to) sp.set("to", to);
+      for (const t of selectedTags) sp.append("tag", t);
       return `/api/runs/export?${sp.toString()}`;
     },
-    [q, kind, from, to],
+    [q, kind, from, to, selectedTags],
   );
 
   const filterCount =
-    (q.trim() ? 1 : 0) + (kind !== "all" ? 1 : 0) + (from ? 1 : 0) + (to ? 1 : 0);
+    (q.trim() ? 1 : 0) +
+    (kind !== "all" ? 1 : 0) +
+    (from ? 1 : 0) +
+    (to ? 1 : 0) +
+    selectedTags.length;
 
   const { data, error, isLoading, mutate } = useSWR<ListResp>(url, fetcher, {
     keepPreviousData: true,
     refreshInterval: 15_000,
   });
+
+  const tagsKey = useMemo(() => {
+    const sp = new URLSearchParams();
+    if (kind !== "all") sp.set("kind", kind);
+    return `/api/runs/tags${sp.toString() ? "?" + sp.toString() : ""}`;
+  }, [kind]);
+  const { data: tagsData } = useSWR<TagsResp>(tagsKey, fetcher, {
+    keepPreviousData: true,
+    refreshInterval: 30_000,
+  });
+  const allTags = tagsData?.tags ?? [];
+
+  const toggleTag = useCallback((t: string) => {
+    setSelectedTags((prev) =>
+      prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t],
+    );
+  }, []);
 
   const flash = useCallback((m: string) => {
     setToast(m);
@@ -267,6 +292,46 @@ export default function HistoryClient() {
           ))}
         </div>
       </div>
+
+      {allTags.length > 0 && (
+        <div className="px-6 py-3 border-b border-[var(--color-border)] flex items-start gap-3">
+          <div className="flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-wider text-[var(--color-muted)] pt-1 shrink-0">
+            <TagIcon weight="duotone" size={12} /> tags
+          </div>
+          <div className="flex flex-wrap gap-1 flex-1 min-w-0">
+            {allTags.map(({ tag, count }) => {
+              const active = selectedTags.includes(tag);
+              return (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() => toggleTag(tag)}
+                  aria-pressed={active}
+                  title={active ? `Remove #${tag} filter` : `Filter by #${tag}`}
+                  className={cn(
+                    "rounded-full border px-2 py-0.5 text-[11px] font-mono inline-flex items-center gap-1",
+                    active
+                      ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-fg)]"
+                      : "border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-fg)]",
+                  )}
+                >
+                  <span>#{tag}</span>
+                  <span className="opacity-60">{count}</span>
+                </button>
+              );
+            })}
+            {selectedTags.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setSelectedTags([])}
+                className="rounded-full border border-[var(--color-border)] px-2 py-0.5 text-[11px] font-mono uppercase tracking-wider text-[var(--color-muted)] hover:text-[var(--color-fg)]"
+              >
+                clear
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="p-6 flex-1">
         <Card>
