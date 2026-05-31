@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from adherence_common import api_keys as ak
 from adherence_common.admin_audit import list_admin_actions, record_admin_action
+from adherence_common.api_key_policy import PolicyViolation, enforce_key_ttl
 from adherence_common.auth import mint_jwt
 from adherence_common.quota import SeatLimitExceeded, enforce_seat_capacity
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -159,6 +160,32 @@ def create_api_key(
 ) -> APIKeyCreateOut:
     target_tenant = (body.tenant_id or "default").strip() or "default"
     try:
+        enforce_key_ttl(target_tenant, body.ttl_seconds)
+    except PolicyViolation as exc:
+        record_admin_action(
+            action="api_key.create", principal=p, target=body.name,
+            details={
+                "role": body.role, "scopes": body.scopes,
+                "tenant_id": target_tenant,
+                "requested_ttl_seconds": exc.requested_ttl_seconds,
+                "policy_max_ttl_seconds": exc.max_ttl_seconds,
+                "policy_require_expiry": exc.require_expiry,
+            },
+            ok=False, error="api_key_policy_violation",
+            request_id=_rid(request),
+        )
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "api_key_policy_violation",
+                "message": str(exc),
+                "tenant_id": exc.tenant_id,
+                "max_ttl_seconds": exc.max_ttl_seconds,
+                "require_expiry": exc.require_expiry,
+                "requested_ttl_seconds": exc.requested_ttl_seconds,
+            },
+        ) from exc
+    try:
         enforce_seat_capacity(target_tenant)
     except SeatLimitExceeded as exc:
         record_admin_action(
@@ -309,6 +336,36 @@ def rotate_api_key(
     new plaintext is returned ONCE in the response body.
     """
     extend_ttl = body.extend_ttl_seconds if body else None
+    if extend_ttl is not None:
+        existing = next((k for k in ak.list_keys() if k.name == name), None)
+        existing_tenant = (
+            (existing.tenant_id or "default") if existing is not None else "default"
+        )
+        try:
+            enforce_key_ttl(existing_tenant, extend_ttl)
+        except PolicyViolation as exc:
+            record_admin_action(
+                action="api_key.rotate", principal=p, target=name,
+                details={
+                    "tenant_id": existing_tenant,
+                    "requested_ttl_seconds": exc.requested_ttl_seconds,
+                    "policy_max_ttl_seconds": exc.max_ttl_seconds,
+                    "policy_require_expiry": exc.require_expiry,
+                },
+                ok=False, error="api_key_policy_violation",
+                request_id=_rid(request),
+            )
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": "api_key_policy_violation",
+                    "message": str(exc),
+                    "tenant_id": exc.tenant_id,
+                    "max_ttl_seconds": exc.max_ttl_seconds,
+                    "require_expiry": exc.require_expiry,
+                    "requested_ttl_seconds": exc.requested_ttl_seconds,
+                },
+            ) from exc
     if dry_run:
         match = next((k for k in ak.list_keys() if k.name == name), None)
         if match is None:

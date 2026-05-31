@@ -227,6 +227,54 @@ curl -sS -X DELETE http://localhost:8000/v1/workspace/session-policy \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
+## Per-workspace API key lifetime policy (forced rotation)
+
+Procurement teams in regulated verticals ask for a documented key
+rotation cadence ("every API key in this workspace must expire within
+90 days, no exceptions"). Until now the API would happily mint a
+non-expiring key or a 5-year key in any tenant, so the only enforcement
+was a wiki page.
+
+A workspace admin can now declare a per-tenant policy that the backend
+enforces on every `api_key.create` and `api_key.rotate` call. Requests
+that would issue a key longer-lived than `max_ttl_seconds` (or, when
+`require_expiry` is true, any key without an expiry) are rejected with
+HTTP 400, a structured `api_key_policy_violation` error, and an admin
+audit row showing the attempt.
+
+The policy is tenant-scoped: capping `acme` does not affect a key
+minted for tenant `globex` in the same deployment. There is a 1 day
+floor (avoid an operator pinning herself out instantly) and a 5 year
+ceiling, matching the existing global `ttl_seconds` bounds.
+
+Endpoints under `/v1/workspace/api-key-policy`:
+
+* `GET    /v1/workspace/api-key-policy` returns the current policy
+  (`max_ttl_seconds: null` means no per-tenant cap).
+* `PUT    /v1/workspace/api-key-policy` sets `max_ttl_seconds` and
+  `require_expiry`. Admin only, MFA-gated, dry-run aware.
+* `DELETE /v1/workspace/api-key-policy` lifts the cap.
+
+Try it locally:
+
+```bash
+# Inspect the current policy for your tenant.
+curl -sS http://localhost:8000/v1/workspace/api-key-policy \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+
+# Force 7-day rotation and require every key to declare an expiry.
+curl -sS -X PUT http://localhost:8000/v1/workspace/api-key-policy \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"max_ttl_seconds": 604800, "require_expiry": true}'
+
+# A 90-day key request now fails with api_key_policy_violation.
+curl -sS -X POST http://localhost:8000/v1/admin/api-keys \
+  -H "x-api-key: $ADHERENCE_ADMIN_KEY" \
+  -H "content-type: application/json" \
+  -d '{"name":"too-long","role":"viewer","ttl_seconds":7776000,"tenant_id":"acme"}'
+```
+
 ## Outbound webhook destination policy (SSRF defense)
 
 Procurement reviewers fail any SaaS that will POST to an arbitrary URL
