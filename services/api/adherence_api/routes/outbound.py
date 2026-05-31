@@ -52,9 +52,20 @@ class SubscriptionOut(BaseModel):
     created_by: str | None
     created_at: str
     updated_at: str
+    secret_previous_active: bool = False
+    secret_previous_expires_at: str | None = None
+
+
+def _previous_active(row: WebhookSubscription) -> bool:
+    exp = getattr(row, "secret_previous_expires_at", None)
+    prev = getattr(row, "secret_previous", None)
+    if not prev or exp is None:
+        return False
+    return datetime.utcnow() < exp
 
 
 def _row_to_out(row: WebhookSubscription) -> SubscriptionOut:
+    exp = getattr(row, "secret_previous_expires_at", None)
     return SubscriptionOut(
         id=row.id, name=row.name, url=row.url,
         event_types=[t for t in (row.event_types_csv or "").split(",") if t],
@@ -63,6 +74,8 @@ def _row_to_out(row: WebhookSubscription) -> SubscriptionOut:
         created_by=row.created_by,
         created_at=row.created_at.isoformat(),
         updated_at=row.updated_at.isoformat(),
+        secret_previous_active=_previous_active(row),
+        secret_previous_expires_at=exp.isoformat() if exp else None,
     )
 
 
@@ -118,6 +131,115 @@ def list_subscriptions(p=Depends(require_admin)) -> list[SubscriptionOut]:
             select(WebhookSubscription).order_by(WebhookSubscription.id.asc())
         ))
     return [_row_to_out(r) for r in rows]
+
+
+class RotateSecretIn(BaseModel):
+    overlap_minutes: int = Field(
+        60, ge=0, le=10080,
+        description=(
+            "How long the previous secret stays valid alongside the new one "
+            "so receivers can roll over without a dropped delivery. 0 means "
+            "hard cut. Max one week."
+        ),
+    )
+
+
+class RotateSecretOut(BaseModel):
+    name: str
+    secret: str
+    secret_previous_active: bool
+    secret_previous_expires_at: str | None
+    rotated_at: str
+
+
+@router.post(
+    "/subscriptions/{name}/rotate-secret",
+    response_model=RotateSecretOut,
+)
+def rotate_secret(
+    name: str,
+    body: RotateSecretIn,
+    request: Request,
+    dry_run: bool = Query(
+        False,
+        description=(
+            "Preview the rotation without changing the stored secret. "
+            "Returns what the next secret + overlap window would be."
+        ),
+    ),
+    p=Depends(require_admin),
+) -> RotateSecretOut:
+    """Generate a fresh HMAC secret for ``name`` and keep the current
+    secret valid for ``overlap_minutes`` so receivers can roll over
+    without dropped deliveries. During the overlap window, every signed
+    POST also carries ``X-Adherence-Signature-Previous`` so receivers
+    can verify against either secret.
+    """
+    from datetime import timedelta
+    init_db()
+    caller = _caller_id(request, p)
+    with session() as s:
+        row = s.execute(
+            select(WebhookSubscription).where(WebhookSubscription.name == name)
+        ).scalar_one_or_none()
+        if row is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, detail="subscription not found",
+            )
+        new_secret = secrets.token_urlsafe(32)
+        new_expires = (
+            datetime.utcnow() + timedelta(minutes=body.overlap_minutes)
+            if body.overlap_minutes > 0
+            else None
+        )
+        if dry_run:
+            return RotateSecretOut(
+                name=row.name,
+                secret=new_secret,
+                secret_previous_active=body.overlap_minutes > 0,
+                secret_previous_expires_at=(
+                    new_expires.isoformat() if new_expires else None
+                ),
+                rotated_at=datetime.utcnow().isoformat(),
+            )
+        old_secret = row.secret
+        row.secret = new_secret
+        if body.overlap_minutes > 0:
+            row.secret_previous = old_secret
+            row.secret_previous_expires_at = new_expires
+        else:
+            row.secret_previous = None
+            row.secret_previous_expires_at = None
+        row.updated_at = datetime.utcnow()
+        s.commit()
+        s.refresh(row)
+        result = RotateSecretOut(
+            name=row.name,
+            secret=row.secret,
+            secret_previous_active=_previous_active(row),
+            secret_previous_expires_at=(
+                row.secret_previous_expires_at.isoformat()
+                if row.secret_previous_expires_at else None
+            ),
+            rotated_at=row.updated_at.isoformat(),
+        )
+    try:
+        from adherence_common.admin_audit import record_admin_action
+        record_admin_action(
+            action="webhook.secret.rotate",
+            principal=p if isinstance(p, dict) else None,
+            target=f"webhook_subscription:{name}",
+            details={
+                "actor": caller,
+                "overlap_minutes": body.overlap_minutes,
+                "previous_expires_at": result.secret_previous_expires_at,
+            },
+            request_id=getattr(request.state, "request_id", None),
+        )
+    except Exception:
+        # Audit failures must not block rotation.
+        pass
+    return result
 
 
 @router.delete("/subscriptions/{name}")

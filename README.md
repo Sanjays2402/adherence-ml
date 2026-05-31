@@ -446,6 +446,56 @@ curl -sS -X PUT http://localhost:8000/v1/webhooks/outbound/subscriptions \
 # => 400 {"detail":{"code":"outbound_blocked","reason":"..."}}
 ```
 
+## Outbound webhook secret rotation with overlap window
+
+Receivers cannot stop their consumers, swap the shared HMAC secret, and
+restart in one atomic step. A naive secret rotation drops every
+in-flight delivery the moment the sender starts signing with the new
+key. Enterprise integrators have asked for an overlap window so they
+can roll over without paging on-call.
+
+`POST /v1/webhooks/outbound/subscriptions/{name}/rotate-secret` mints a
+fresh `secrets.token_urlsafe(32)` secret and keeps the previous secret
+valid for `overlap_minutes` (default 60, max 7 days, `0` is a hard cut).
+While the overlap window is open every dispatched POST carries two
+headers:
+
+- `X-Adherence-Signature` signed with the new secret.
+- `X-Adherence-Signature-Previous` signed with the secret being
+  retired.
+
+Receivers can keep verifying with the old secret while they roll their
+stored secret over, then start trusting the new one. The new helper
+`outbound.verify_any([new, old], body, header)` covers either side.
+
+The overlap window is per subscription, time-bounded, and stops being
+emitted as soon as `secret_previous_expires_at` passes. The rotation
+itself is written to the admin audit log (`webhook.secret.rotate`) with
+the actor, request id, and the chosen overlap. `?dry_run=true` returns
+the candidate secret and window without mutating the row, so operators
+can stage a rotation in a change ticket before executing it.
+
+Only admin-scoped principals can rotate. Viewer keys get `401`/`403`,
+unknown subscriptions get `404`.
+
+### Try it
+
+```bash
+# Preview the rotation without changing anything.
+curl -sS -X POST \
+  "http://localhost:8000/v1/webhooks/outbound/subscriptions/clinic-1/rotate-secret?dry_run=true" \
+  -H "x-api-key: $ADMIN_KEY" -H "content-type: application/json" \
+  -d '{"overlap_minutes": 60}'
+
+# Execute the rotation with a 1-hour overlap window.
+curl -sS -X POST \
+  http://localhost:8000/v1/webhooks/outbound/subscriptions/clinic-1/rotate-secret \
+  -H "x-api-key: $ADMIN_KEY" -H "content-type: application/json" \
+  -d '{"overlap_minutes": 60}'
+# => {"name":"clinic-1","secret":"...","secret_previous_active":true,
+#     "secret_previous_expires_at":"...","rotated_at":"..."}
+```
+
 ## Per-workspace seat enforcement
 
 Every plan tier already advertised a `seats` number (free=3, pro=25,

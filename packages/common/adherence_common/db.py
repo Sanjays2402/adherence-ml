@@ -242,6 +242,10 @@ class WebhookSubscription(Base):
     name = Column(String(64), nullable=False, unique=True, index=True)
     url = Column(String(512), nullable=False)
     secret = Column(String(128), nullable=False)
+    # Previous secret retained during a rotation overlap window so receivers
+    # can verify either signature while they roll their stored secret over.
+    secret_previous = Column(String(128), nullable=True)
+    secret_previous_expires_at = Column(DateTime, nullable=True)
     event_types_csv = Column(String(256), nullable=True)
     active = Column(Integer, nullable=False, default=1)
     created_by = Column(String(64), nullable=True)
@@ -462,6 +466,21 @@ def _ensure_tenant_columns(engine) -> None:
                 conn.execute(text(
                     "ALTER TABLE api_key_records "
                     "ADD COLUMN rotation_count INTEGER NOT NULL DEFAULT 0"
+                ))
+    # Webhook secret rotation overlap window.
+    if "webhook_subscriptions" in existing_tables:
+        cols = {c["name"] for c in insp.get_columns("webhook_subscriptions")}
+        if "secret_previous" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE webhook_subscriptions "
+                    "ADD COLUMN secret_previous VARCHAR(128)"
+                ))
+        if "secret_previous_expires_at" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE webhook_subscriptions "
+                    "ADD COLUMN secret_previous_expires_at DATETIME"
                 ))
 
 

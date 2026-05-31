@@ -63,6 +63,35 @@ def verify(secret: str, body: bytes, header_value: str) -> bool:
     return hmac.compare_digest(expected, header_value or "")
 
 
+def verify_any(
+    secrets_in: Iterable[str], body: bytes, header_value: str,
+) -> bool:
+    """Return True if ``header_value`` matches the signature of any of
+    ``secrets_in``. Used by receivers during a secret rotation overlap
+    window where the sender may sign with the new secret while the
+    receiver still has the old one (or vice versa)."""
+    if not header_value:
+        return False
+    for s in secrets_in:
+        if not s:
+            continue
+        if hmac.compare_digest(sign(s, body), header_value):
+            return True
+    return False
+
+
+def _previous_secret_active(sub: "WebhookSubscription") -> str | None:
+    """Return the previous secret if the rotation overlap window is still
+    open, else None. Pure helper, no DB access."""
+    prev = getattr(sub, "secret_previous", None)
+    expires = getattr(sub, "secret_previous_expires_at", None)
+    if not prev or expires is None:
+        return None
+    if datetime.utcnow() >= expires:
+        return None
+    return prev
+
+
 def _matches(sub: WebhookSubscription, event_type: str) -> bool:
     csv = (sub.event_types_csv or "").strip()
     if not csv:
@@ -152,6 +181,8 @@ def dispatch(
             )
             continue
         sig = sign(sub.secret, body)
+        prev_secret = _previous_secret_active(sub)
+        sig_prev = sign(prev_secret, body) if prev_secret else None
         last_status: int | None = None
         last_error: str | None = None
         last_latency: float | None = None
@@ -167,6 +198,11 @@ def dispatch(
                 "X-Adherence-Event": event_type,
                 "X-Adherence-Attempt": str(attempt),
             }
+            if sig_prev:
+                # Receivers in the middle of rotating their stored secret
+                # can verify either header. Drop this header once the
+                # window expires.
+                headers["X-Adherence-Signature-Previous"] = sig_prev
             status, latency_ms, err = _post(
                 sub.url, body, headers, timeout, client=_client,
             )
@@ -227,6 +263,7 @@ __all__ = [
     "MAX_ATTEMPTS",
     "sign",
     "verify",
+    "verify_any",
     "list_targets",
     "dispatch",
     "replay",
