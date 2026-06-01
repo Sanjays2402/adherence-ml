@@ -34,6 +34,42 @@ curl -s -X POST http://localhost:8000/v1/workspace/password-policy/check \
   -d '{"password":"hunter2"}' | jq
 ```
 
+## Workspace invitation email domain policy
+
+Lock down who can be invited into a workspace. Admins maintain a per-tenant
+allowlist and blocklist of email domains; matching applies to the apex and
+every subdomain. Block rules always win. The rule is enforced on invitation
+create and re-checked on accept so removing a domain after sending an invite
+still stops the join. Every mutation is written to the admin audit log.
+
+### Try it
+
+```sh
+cd services/api && uv run uvicorn adherence_api.app:app --reload --port 8000
+cd apps/web && pnpm dev
+# open http://localhost:3000/settings/invite-policy
+
+# Add an allow rule (only acme.com may be invited).
+curl -X POST http://localhost:8000/v1/admin/invite-policy/rules \
+  -H "authorization: Bearer $TOKEN" -H "content-type: application/json" \
+  -d '{"kind":"allow","domain":"acme.com","note":"corporate"}'
+
+# Add a block rule (gmail.com is never allowed, even via allow).
+curl -X POST http://localhost:8000/v1/admin/invite-policy/rules \
+  -H "authorization: Bearer $TOKEN" -H "content-type: application/json" \
+  -d '{"kind":"block","domain":"gmail.com"}'
+
+# Dry-run an email against the policy without sending an invite.
+curl -X POST http://localhost:8000/v1/admin/invite-policy/evaluate \
+  -H "authorization: Bearer $TOKEN" -H "content-type: application/json" \
+  -d '{"email":"someone@gmail.com"}'
+# => {"allowed":false,"code":"in_blocklist", ...}
+```
+
+A blocked invite create returns HTTP 400 with
+`{"detail":{"code":"not_in_allowlist"|"in_blocklist","domain":"..."}}`.
+A blocked accept returns the same family with code `domain_blocked`.
+
 ## Idempotency-Key support for mutating routes
 
 Any integration team that retries a failed POST without server-side

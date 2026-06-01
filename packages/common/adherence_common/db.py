@@ -786,6 +786,7 @@ def init_db() -> None:
     from adherence_common import api_deprecations as _apidep  # noqa: F401
     from adherence_common import support_access as _sa  # noqa: F401
     from adherence_common import purpose_of_use as _pou  # noqa: F401
+    from adherence_common import invite_policy as _invp  # noqa: F401
     engine = _engine()
     Base.metadata.create_all(engine)
     try:

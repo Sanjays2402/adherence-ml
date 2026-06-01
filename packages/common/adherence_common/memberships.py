@@ -349,6 +349,10 @@ def create_invitation(
     role_n = normalise_role(role)
     if ttl_hours <= 0 or ttl_hours > 24 * 90:
         raise ValueError("ttl_hours must be between 1 and 2160")
+    # Per-workspace invitation email-domain policy. No-op when the
+    # workspace has not configured any allow / block rules.
+    from adherence_common import invite_policy as _invp  # noqa: WPS433
+    _invp.evaluate(tid, em)
     now = _now()
     expires = now + timedelta(hours=ttl_hours)
 
@@ -510,6 +514,17 @@ def accept_invitation(
             raise InvitationError(
                 "email_mismatch",
                 "signed-in email does not match the invited address",
+            )
+        # Re-check the workspace invite-domain policy at accept time so
+        # an admin who blocked a domain after the invite was sent can
+        # still stop the join.
+        from adherence_common import invite_policy as _invp  # noqa: WPS433
+        try:
+            _invp.evaluate(str(row.tenant_id), str(row.email))
+        except _invp.InviteDomainBlocked as exc:
+            raise InvitationError(
+                "domain_blocked",
+                str(exc),
             )
         # Commit the membership inside the same transaction-of-record so
         # we never accept-without-membership or vice versa.

@@ -34,6 +34,7 @@ _EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 from adherence_common.admin_audit import record_admin_action
 from adherence_common import memberships as mem
 from adherence_common import quota as quota_mod
+from adherence_common import invite_policy as invp_mod
 from adherence_common.memberships import (
     DEFAULT_INVITE_TTL_HOURS,
     DuplicateInvitation,
@@ -344,6 +345,21 @@ def create_invitation(
             role=role,
             invited_by=_principal_subject(p),
             ttl_hours=body.ttl_hours,
+        )
+    except invp_mod.InviteDomainBlocked as exc:
+        record_admin_action(
+            action="workspace.invitation.create", principal=p, target=body.email,
+            details={"role": role, "domain": exc.domain, "code": exc.code},
+            ok=False, error=str(exc),
+            request_id=_rid(request), tenant_id=tenant,
+        )
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": exc.code,
+                "message": str(exc),
+                "domain": exc.domain,
+            },
         )
     except DuplicateInvitation as exc:
         record_admin_action(
