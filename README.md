@@ -2,6 +2,48 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Per-workspace data subject access request register
+
+Every workspace gets a per-tenant register of Data Subject Access Requests
+covering GDPR Art. 15-22 (access, erasure, rectification, restriction,
+portability, objection) and CCPA / CPRA opt-out-of-sale. Each request is
+scoped to the workspace, append-only on its timeline, and counted down
+against the GDPR Art. 12(3) one month deadline so privacy ops can see
+overdue items at a glance.
+
+PII minimisation is built in: the subject e-mail is stored as a
+tenant-salted sha256 fingerprint by default plus an optional display
+redaction (`j***@acme.co`). The raw address is retained only when the
+operator explicitly opts in via `store_raw_contact` and is purged
+automatically when the request moves to a terminal status
+(`fulfilled`, `rejected`, or `withdrawn`). Per-tenant salting means the
+same e-mail across two workspaces produces two different fingerprints,
+so the operator-wide audit log cannot be used as a cross-tenant join
+key on subject identity.
+
+Mutations require the `admin` role plus an active MFA step-up (same
+pattern as incidents, legal hold, retention policy) and are mirrored
+into the tamper-evident admin audit log. Cross-tenant isolation is
+covered by `tests/integration/test_dsar.py`.
+
+### Try it
+
+```
+cd apps/web && pnpm dev   # http://localhost:3000/settings/dsar
+```
+
+```
+curl -s -H "x-api-key: $ADMIN_KEY" -H 'content-type: application/json' \
+  -d '{
+    "request_type":"access",
+    "subject_name":"Alice Anderson",
+    "subject_email":"alice@patient.example",
+    "description":"Patient requests export of all adherence predictions held on her account.",
+    "received_via":"email"
+  }' \
+  http://localhost:8000/v1/admin/dsar | jq
+```
+
 ## Per-workspace SSO group to role mapping
 
 Enterprise IdPs (Okta, Azure AD, Google Workspace, Cognito) provision SaaS
