@@ -125,6 +125,7 @@ EXEMPT_PREFIXES: tuple[str, ...] = (
     "/v1/auth/scopes", # introspection must be reachable to discover scopes
     "/scim/v2",        # SCIM uses its own per-tenant bearer, not an API key
     "/v1/legal",       # legal acceptance gate exempts these too; keep scope-exempt so a stuck tenant can read and accept
+    "/.well-known",    # RFC 9116 + trust manifest; intentionally public for procurement scanners
 )
 
 

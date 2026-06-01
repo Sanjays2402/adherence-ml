@@ -23,6 +23,8 @@ import {
   Buildings,
   ListChecks,
   Eye,
+  Download,
+  Code,
 } from "@phosphor-icons/react";
 import {
   PageHeader,
@@ -432,6 +434,56 @@ export default function TrustClient() {
               );
             })}
           </ul>
+        </Card>
+      </div>
+
+      <div id="manifest" className="px-4 md:px-6 pb-6">
+        <Card>
+          <CardHeader
+            title="Machine-readable trust manifest"
+            hint="For procurement scanners and security questionnaire automation"
+          />
+          <div className="p-4 space-y-3 text-[13px] text-[var(--color-muted)]">
+            <p>
+              Pull the same posture this page renders, as a stable JSON
+              document your vendor-review pipeline can ingest. The
+              schema is versioned. Pin to{" "}
+              <span className="font-mono text-[var(--color-fg)]">schema_version</span>{" "}
+              and fail loudly if a future release breaks the contract.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <a
+                href="/api/well-known/security.json"
+                download="adherence-ml-trust-manifest.json"
+                className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--color-fg)] hover:bg-[var(--color-bg-subtle)]"
+              >
+                <Download size={14} weight="duotone" />
+                Download security.json
+              </a>
+              <a
+                href="/api/well-known/security.json"
+                target="_blank"
+                rel="noopener"
+                className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--color-fg)] hover:bg-[var(--color-bg-subtle)]"
+              >
+                <Code size={14} weight="duotone" />
+                View raw JSON
+              </a>
+              <a
+                href="/api/well-known/security.txt"
+                target="_blank"
+                rel="noopener"
+                className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--color-fg)] hover:bg-[var(--color-bg-subtle)]"
+              >
+                <FileLock size={14} weight="duotone" />
+                security.txt (RFC 9116)
+              </a>
+            </div>
+            <pre className="text-[11.5px] leading-relaxed font-mono bg-[var(--color-bg-subtle)] border border-[var(--color-border)] rounded-md p-3 overflow-x-auto">
+{`curl -s https://api.adherence.ml/.well-known/security.json | jq .schema_version
+# "1.0.0"`}
+            </pre>
+          </div>
         </Card>
       </div>
 

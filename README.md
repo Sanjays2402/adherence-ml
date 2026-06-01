@@ -2,6 +2,48 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Machine-readable trust manifest
+
+Procurement teams and automated vendor-review pipelines can pull our
+posture as a stable JSON document without an account, an API key, or a
+screen-scrape of the marketing site. The API serves RFC 9116
+`security.txt` plus a versioned `security.json` trust manifest from
+`/.well-known/`, mirroring the contacts on the marketing host so a
+scanner that lands on either origin gets the same answer.
+
+- Module: `packages/common/adherence_common/trust_manifest.py`
+- Route: `services/api/adherence_api/routes/well_known.py`
+- UI: `/trust` (Machine-readable trust manifest card)
+- Test: `tests/integration/test_well_known.py` (proves public reachability,
+  required schema keys, and that authenticated routes still 401)
+
+The manifest declares `schema_version` (currently `1.0.0`). Buyers pin
+to it and fail loudly if a future release breaks the contract. The
+endpoint is exempt from rate limits, tenant IP allowlists, legal
+acceptance gates, scope enforcement, and API-key auth, so a hardened
+production tenant cannot accidentally hide its own trust signals from a
+security reviewer.
+
+### Try the trust manifest
+
+```bash
+uv run uvicorn adherence_api.app:create_app --factory --port 8080
+
+# RFC 9116 contacts (text/plain)
+curl -s http://127.0.0.1:8080/.well-known/security.txt
+
+# Machine-readable manifest (application/json)
+curl -s http://127.0.0.1:8080/.well-known/security.json | jq '{
+  schema_version,
+  subprocessors: (.subprocessors | length),
+  controls: (.controls | length),
+  primary_region: .data_residency.primary_region
+}'
+```
+
+Then open `http://localhost:3000/trust#manifest` to download the same
+file from the dashboard.
+
 ## Tamper-evident admin audit chain
 
 Every row in `admin_audit_log` is now linked to its predecessor by a sha256

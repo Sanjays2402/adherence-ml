@@ -37,6 +37,7 @@ from adherence_api.routes import break_glass as break_glass_route
 from adherence_api.routes import legal_hold as legal_hold_route
 from adherence_api.routes import access_reviews as access_reviews_route
 from adherence_api.routes import legal as legal_route
+from adherence_api.routes import well_known as well_known_route
 from adherence_api.routes import (
     admin,
     cohort,
@@ -154,6 +155,11 @@ def create_app() -> FastAPI:
         exempt_prefixes=(
             "/v1/health", "/healthz", "/readyz", "/metrics",
             "/openapi.json", "/docs", "/redoc",
+            # Public trust-manifest endpoints must be reachable from
+            # outside the customer's corporate range so a procurement
+            # scanner can grab security.txt/security.json before any
+            # contract or allowlist is in place.
+            "/.well-known",
             # SSO sign-in must reach the API before the caller has a
             # tenant/IP context. Auth is enforced by IdP signature
             # verification on /oidc/exchange instead.
@@ -218,6 +224,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_scopes_route.router)
     app.include_router(siem_route.router)
     app.include_router(legal_route.router)
+    app.include_router(well_known_route.router)
     # Ensure quota + workspace tables exist before the first request.
     try:
         from adherence_common.db import init_db

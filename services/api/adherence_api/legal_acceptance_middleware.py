@@ -62,6 +62,7 @@ _EXEMPT_PREFIXES: tuple[str, ...] = (
     "/openapi.json",
     "/docs",
     "/redoc",
+    "/.well-known",
     "/v1/legal",
     "/v1/gdpr",
     "/v1/admin/sso",
