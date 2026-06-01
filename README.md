@@ -427,6 +427,51 @@ curl -OJ -H "x-api-key: $ADHERENCE_API_KEY" \
   http://localhost:7421/v1/admin/bcdr/export.csv
 ```
 
+## Per-workspace penetration test register
+
+Every enterprise procurement review (SIG Lite section H, CAIQ domains
+TVM and AIS, ISO 27001 Annex A.12.6 and A.14.2.8, SOC 2 CC4.1 and
+CC7.1, PCI DSS 11.3, HITRUST 10.m) asks the vendor to declare, per
+scope, the date and methodology of its last penetration test, who
+performed it, the highest unresolved finding severity, the count of
+open findings per severity, and when findings were remediated. The new
+register is per-workspace, tenant-scoped at the query layer, admin and
+MFA gated on every mutation, audit-logged through the existing admin
+audit chain, and surfaces overdue-test warnings against the declared
+cadence. A `POST /{id}/remediate` endpoint decrements the open counter
+for a given severity and refreshes `last_remediated_at` so the public
+attestation tracks reality.
+
+### Try it
+
+```bash
+# in another shell
+uvicorn adherence_api.app:create_app --factory --port 7421
+pnpm --filter @adherence/web dev
+
+# open http://localhost:3000/settings/pentests
+
+# list the register
+curl -H "x-api-key: $ADHERENCE_API_KEY" \
+  http://localhost:7421/v1/admin/pentests
+
+# dry-run a new engagement (no DB write, audit row still recorded)
+curl -X POST -H "x-api-key: $ADHERENCE_API_KEY" \
+  -H 'content-type: application/json' \
+  "http://localhost:7421/v1/admin/pentests?dry_run=true" \
+  -d '{"scope_name":"api-edge","engagement_type":"external","vendor":"Bishop Fox","last_tested_at":"2026-03-15T12:00:00Z","methodology":"OWASP WSTG v4.2","report_url":"https://reports.example.com/pt-2026-q1","open_critical":0,"open_high":2,"open_medium":5,"open_low":3,"test_cadence_days":180}'
+
+# log remediation against an existing entry (severity, count)
+curl -X POST -H "x-api-key: $ADHERENCE_API_KEY" \
+  -H 'content-type: application/json' \
+  http://localhost:7421/v1/admin/pentests/1/remediate \
+  -d '{"severity":"high","count":1}'
+
+# download the register as CSV for a procurement pack
+curl -OJ -H "x-api-key: $ADHERENCE_API_KEY" \
+  http://localhost:7421/v1/admin/pentests/export.csv
+```
+
 ## Per-workspace GDPR Article 35 data protection impact assessment register
 
 GDPR Art. 35 requires the controller to carry out a DPIA before any
