@@ -2,6 +2,63 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Per-workspace HIPAA Business Associate Agreement register
+
+45 CFR 164.502(e) and 164.504(e) forbid a covered entity from
+disclosing PHI to a business associate without a signed BAA in force.
+A medication adherence service is a business associate by
+construction, so procurement at any U.S. health system, payer, or
+pharmacy chain blocks adoption until a BAA is on file. The new
+`/settings/baa` console is the per-workspace register: name the
+counterparty, version the executed document, set effective and
+expiry dates, record signatories and the contractual breach-notify
+window, and link to the executed PDF in the customer's contracts
+vault. Status is reconciled with the date window so a long-expired
+BAA cannot read as `active`.
+
+A per-workspace policy toggle, `require_baa_for_phi`, gates every
+PHI-bearing route at the middleware. When on, requests to
+`/v1/predict`, `/v1/explain`, `/v1/cohort/*`, `/v1/forecast`,
+`/v1/interventions`, `/v1/phi/*`, and `/v1/dsar` return HTTP 451 with
+a structured `baa_required` error until an active BAA exists or the
+optional grace window covers today. The BAA admin endpoints, GDPR
+data exit, legal acceptance, and operator probes are exempt so a
+blocked workspace can self-serve. Reads need viewer role, mutations
+need admin plus active MFA, every change writes to the admin audit
+chain, and every query is strictly tenant-scoped.
+
+### Try it
+
+```bash
+# current enforcement decision for this workspace
+curl -sS -H "x-api-key: $ADHERENCE_API_KEY" \
+  http://localhost:7421/v1/admin/baa/status | jq .
+
+# register an executed BAA
+curl -sS -X POST -H "x-api-key: $ADHERENCE_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{
+    "counterparty": "Mercy Health System",
+    "document_version": "v2.1",
+    "status": "active",
+    "effective_on": "2026-01-01",
+    "expires_on": "2027-01-01",
+    "breach_notify_hours": 48,
+    "evidence_url": "https://vault.example/contracts/mercy-baa-v2.1.pdf"
+  }' \
+  http://localhost:7421/v1/admin/baa | jq .
+
+# turn on PHI-blocking until an active BAA exists
+curl -sS -X PUT -H "x-api-key: $ADHERENCE_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"require_baa_for_phi": true, "grace_until": null}' \
+  http://localhost:7421/v1/admin/baa/policy | jq .
+```
+
+Then open `http://localhost:3000/settings/baa` to register agreements,
+flip the enforcement toggle, set a grace window, and export the
+register as CSV for procurement and audit packs.
+
 ## Per-workspace enterprise risk register
 
 ISO 31000, COSO ERM, SOC 2 CC3.2, and NIST RMF all require a
