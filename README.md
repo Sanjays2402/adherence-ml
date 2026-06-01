@@ -2,35 +2,6 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
-## Expiring-soon API key warnings
-
-Long-lived API keys with a TTL eventually cross their expiry boundary and the first sign your customer notices is a wave of 401s at 3 a.m. This release adds a first-class warning surface so operators see it days ahead, not minutes after.
-
-- `GET /api/keys/expiring?within=14` returns every live, not-yet-expired key whose `expires_at` is inside the requested lookahead window (default 14 days, capped at 365). Revoked keys, never-expire keys, and already-expired keys are excluded by design (different alerts).
-- The response is sorted nearest-to-expiry first and includes `prefix`, `scopes`, `expires_at`, `days_remaining`, `last_used_at`, and `last_used_ip` so an operator can tell at a glance which integration owns each key.
-- Every list call lands in the dashboard audit log (`api_keys.expiring.list`) so "who looked at our key roster" stays answerable.
-- The `/api-keys` page now renders a banner card above the key list. Keys with `days_remaining <= 3` get a `danger` badge; the rest get a `warn` badge. Loading, error, and empty states are all real (no skeleton-forever bug, no silent failure).
-
-Proven by `apps/web/tests/api-keys-expiring-soon.test.ts`:
-
-- Revoked, already-expired, and never-expire keys are filtered out.
-- Output is sorted nearest-to-expiry first.
-- Absurd window values (`within=99999`) are clamped to `MAX_EXPIRING_SOON_WINDOW_DAYS = 365`.
-- The real on-disk store round-trips with `createKey` + `findExpiringSoon`.
-
-### Try the expiring-soon warning
-
-Web UI: <http://127.0.0.1:3000/api-keys> (the *Expiring soon* card at the top).
-
-```bash
-# Show every key that will silently stop working in the next 14 days.
-curl -s 'http://127.0.0.1:3000/api/keys/expiring?within=14' \
-  -b "adherence_session=$SESSION_COOKIE" | jq
-
-# Widen the lookahead to a full quarter (90 days).
-curl -s 'http://127.0.0.1:3000/api/keys/expiring?within=90' \
-  -b "adherence_session=$SESSION_COOKIE" | jq '.keys[] | {name, days_remaining}'
-
 ## Catalog-aligned webhook subscriptions
 
 The published webhook event catalog already advertised six stable event types, but `POST /api/webhooks` and `POST /v1/webhooks` only validated two of them, so an enterprise integrator who pasted `intervention.recommended` from the procurement-facing catalog page got a 422. The dashboard checkbox list was hard-coded to the same two events, so customers could not subscribe to risk interventions, member invites, or API-key rotations even though the catalog promised those payloads.
