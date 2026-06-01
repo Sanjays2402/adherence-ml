@@ -2,6 +2,29 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Break-glass cross-tenant access review console
+
+Every time a vendor admin reaches into a customer workspace from outside
+it, the FastAPI layer records a `BreakGlassEvent` with the caller, the
+typed justification, the route, the IP, and the request ID. Until now
+there was no way for the impacted tenant's owners to actually see those
+rows without shell access to the database. This release ships the
+tenant-facing review console at `/settings/break-glass`: filterable
+table, by-source-tenant stats, and a CSV export that customers can drop
+into their own SIEM. The store is tenant-scoped at the query layer, so
+one workspace cannot list another workspace's events.
+
+### Try it
+
+```bash
+cd apps/web && pnpm dev
+# then open http://localhost:3000/settings/break-glass
+
+curl -s http://localhost:3000/api/break-glass?limit=50 | jq .
+curl -s http://localhost:3000/api/break-glass/stats | jq .
+curl -sOJ http://localhost:3000/api/break-glass/export.csv
+```
+
 ## Per-subscription custom outbound webhook headers
 
 Enterprise customers wire our outbound webhooks into their own gateways,

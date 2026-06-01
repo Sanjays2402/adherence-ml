@@ -606,6 +606,21 @@ export default function SettingsClient() {
             />
           </a>
           <a
+            href="/settings/maintenance"
+            className="flex items-center justify-between gap-3 px-4 py-3 border-t border-[var(--color-border)] hover:bg-[var(--color-border)]/30 transition-colors group"
+          >
+            <div className="min-w-0">
+              <div className="text-[13px]">Maintenance windows</div>
+              <div className="text-[11px] text-[var(--color-muted)] mt-0.5">
+                Scheduled change calendar. Per-tenant register of planned maintenance with impact, status, audit-logged mutations, CSV export, and a live in-flight feed at /v1/maintenance/active.
+              </div>
+            </div>
+            <CaretRight
+              size={14}
+              className="text-[var(--color-muted)] group-hover:text-[var(--color-text)] shrink-0"
+            />
+          </a>
+          <a
             href="/settings/login-throttle"
             className="flex items-center justify-between gap-3 px-4 py-3 border-t border-[var(--color-border)] hover:bg-[var(--color-border)]/30 transition-colors group"
           >
@@ -688,6 +703,21 @@ export default function SettingsClient() {
               <div className="text-[13px]">Password policy</div>
               <div className="text-[11px] text-[var(--color-muted)] mt-0.5">
                 Set minimum length, character classes, rotation, and reuse limits for local credentials and SCIM service accounts.
+              </div>
+            </div>
+            <CaretRight
+              size={14}
+              className="text-[var(--color-muted)] group-hover:text-[var(--color-text)] shrink-0"
+            />
+          </a>
+          <a
+            href="/settings/break-glass"
+            className="flex items-center justify-between gap-3 px-4 py-3 border-t border-[var(--color-border)] hover:bg-[var(--color-border)]/30 transition-colors group"
+          >
+            <div className="min-w-0">
+              <div className="text-[13px]">Break-glass access</div>
+              <div className="text-[11px] text-[var(--color-muted)] mt-0.5">
+                Review every cross-tenant admin access into this workspace with the caller, justification, route, and request ID.
               </div>
             </div>
             <CaretRight
