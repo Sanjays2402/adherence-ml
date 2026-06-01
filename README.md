@@ -2,6 +2,36 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Per-workspace enterprise risk register
+
+ISO 31000, COSO ERM, SOC 2 CC3.2, and NIST RMF all require a
+forward-looking enterprise risk register. The new
+`/settings/risk-register` console is the per-workspace register:
+capture a risk with inherent likelihood and impact (1..5), record the
+mitigations in place, score the residual likelihood and impact,
+select a treatment (accept, mitigate, transfer, avoid), name the
+owner, and set a review-due date. Overdue reviews are flagged in the
+list and exported in CSV. Reads need viewer role, mutations need
+admin role with active MFA, and every change writes to the admin
+audit log. Every read and write is strictly scoped to the calling
+tenant; cross-tenant reads return 404 and cross-tenant mutations are
+a no-op.
+
+### Try it
+
+```bash
+# list active risks for the current workspace
+curl -sS -H "x-api-key: $ADHERENCE_API_KEY" \
+  http://localhost:7421/v1/admin/risk-register | jq .
+
+# summary: counts by category, status, treatment, plus top 5 residual
+curl -sS -H "x-api-key: $ADHERENCE_API_KEY" \
+  http://localhost:7421/v1/admin/risk-register/summary | jq .
+```
+
+Then open `http://localhost:3000/settings/risk-register` to add,
+update, close, and export risks.
+
 ## Workspace notification contacts
 
 Enterprise procurement always asks the same question: when something
@@ -36,6 +66,7 @@ curl -sS -X DELETE http://localhost:3000/api/workspace/contacts/billing
 ```
 
 UI: <http://localhost:3000/settings/workspace-contacts>
+
 
 ## Scheduled maintenance window register
 

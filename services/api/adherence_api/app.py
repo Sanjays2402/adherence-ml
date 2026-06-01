@@ -293,6 +293,8 @@ def create_app() -> FastAPI:
     app.include_router(dpia_route.router)
     from adherence_api.routes import baa as baa_route
     app.include_router(baa_route.router)
+    from adherence_api.routes import risk_register as risk_register_route
+    app.include_router(risk_register_route.router)
     from adherence_api.routes import dual_control as dual_control_route
     app.include_router(dual_control_route.router)
     from adherence_api.routes import maintenance as maintenance_route
