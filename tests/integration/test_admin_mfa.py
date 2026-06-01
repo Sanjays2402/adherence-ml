@@ -176,3 +176,83 @@ def test_reads_remain_open_without_mfa(tmp_path, monkeypatch):
     assert r.status_code == 200
     r = c.get("/v1/admin/mfa/status", headers=admin)
     assert r.status_code == 200
+
+
+def test_regenerate_backup_codes_requires_fresh_proof(tmp_path, monkeypatch):
+    """Rotation issues a fresh pool, retires every old code, requires MFA."""
+    c = _client(tmp_path, monkeypatch)
+    admin = {"x-api-key": "adm"}
+    from adherence_common import mfa
+
+    secret = c.post("/v1/admin/mfa/enroll", headers=admin).json()["secret_b32"]
+    confirm = c.post(
+        "/v1/admin/mfa/confirm", headers=admin,
+        json={"code": mfa.current_totp(secret)},
+    )
+    assert confirm.status_code == 200
+    old_codes = confirm.json()["backup_codes"]
+    assert len(old_codes) == mfa.BACKUP_CODE_COUNT
+
+    # Wrong code is rejected with 401 and a hint header for the client.
+    r = c.post(
+        "/v1/admin/mfa/backup-codes/regenerate", headers=admin,
+        json={"code": "000000"},
+    )
+    if r.status_code == 200:
+        # Astronomically rare clock collision; re-run with a length-invalid
+        # code that cannot match TOTP or a 10-char backup code.
+        r = c.post(
+            "/v1/admin/mfa/backup-codes/regenerate", headers=admin,
+            json={"code": "zzzzz"},
+        )
+    assert r.status_code == 401
+    assert r.headers.get("X-MFA-Required") == "totp"
+
+    # Valid TOTP rotates the pool and surfaces 10 fresh codes once.
+    r = c.post(
+        "/v1/admin/mfa/backup-codes/regenerate", headers=admin,
+        json={"code": mfa.current_totp(secret)},
+    )
+    assert r.status_code == 200, r.text
+    new_codes = r.json()["backup_codes"]
+    assert r.json()["issued_count"] == mfa.BACKUP_CODE_COUNT
+    assert len(new_codes) == mfa.BACKUP_CODE_COUNT
+    assert set(new_codes).isdisjoint(set(old_codes))
+
+    # The previous pool no longer authenticates anywhere; the verify path
+    # is the canonical proof of that contract.
+    from adherence_common.errors import AuthError
+    for stale in old_codes:
+        with pytest.raises(AuthError):
+            mfa.verify_code("api-key", stale)
+
+    # The new pool is honoured, exactly once per code, by the same path.
+    method = mfa.verify_code("api-key", new_codes[0])
+    assert method == "backup_code"
+    with pytest.raises(AuthError):
+        mfa.verify_code("api-key", new_codes[0])  # burned
+
+
+def test_status_low_watermark_flag(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    admin = {"x-api-key": "adm"}
+    from adherence_common import mfa
+
+    secret = c.post("/v1/admin/mfa/enroll", headers=admin).json()["secret_b32"]
+    codes = c.post(
+        "/v1/admin/mfa/confirm", headers=admin,
+        json={"code": mfa.current_totp(secret)},
+    ).json()["backup_codes"]
+
+    body = c.get("/v1/admin/mfa/status", headers=admin).json()
+    assert body["backup_codes_low"] is False
+    assert body["backup_codes_low_watermark"] == mfa.BACKUP_CODE_LOW_WATERMARK
+
+    # Burn down to the watermark and confirm the UI signal flips on.
+    to_burn = mfa.BACKUP_CODE_COUNT - mfa.BACKUP_CODE_LOW_WATERMARK
+    for code in codes[:to_burn]:
+        assert mfa.verify_code("api-key", code) == "backup_code"
+
+    body = c.get("/v1/admin/mfa/status", headers=admin).json()
+    assert body["backup_codes_remaining"] == mfa.BACKUP_CODE_LOW_WATERMARK
+    assert body["backup_codes_low"] is True

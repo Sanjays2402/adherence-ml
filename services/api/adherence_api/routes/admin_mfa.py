@@ -73,8 +73,20 @@ class StatusOut(BaseModel):
     enrolled: bool
     confirmed: bool
     backup_codes_remaining: int
+    backup_codes_low: bool
+    backup_codes_low_watermark: int
     last_used_at: str | None
     challenge_active: bool
+
+
+class RegenerateBackupCodesIn(BaseModel):
+    code: str = Field(min_length=4, max_length=16)
+
+
+class RegenerateBackupCodesOut(BaseModel):
+    principal: str
+    backup_codes: list[str]
+    issued_count: int
 
 
 class EnrollmentRow(BaseModel):
@@ -184,8 +196,51 @@ def status_self(p=Depends(require_admin)) -> StatusOut:
         enrolled=summary.enrolled,
         confirmed=summary.confirmed,
         backup_codes_remaining=summary.backup_codes_remaining,
+        backup_codes_low=(
+            summary.confirmed
+            and summary.backup_codes_remaining <= mfa.BACKUP_CODE_LOW_WATERMARK
+        ),
+        backup_codes_low_watermark=mfa.BACKUP_CODE_LOW_WATERMARK,
         last_used_at=summary.last_used_at.isoformat() if summary.last_used_at else None,
         challenge_active=mfa.has_recent_challenge(sub),
+    )
+
+
+@router.post(
+    "/backup-codes/regenerate",
+    response_model=RegenerateBackupCodesOut,
+)
+def regenerate_backup_codes(
+    body: RegenerateBackupCodesIn,
+    request: Request,
+    p=Depends(require_admin),
+) -> RegenerateBackupCodesOut:
+    """Mint a fresh set of single-use backup codes for the calling admin.
+
+    Requires a fresh TOTP or unused backup code in the body so a stolen
+    long-lived challenge cannot silently re-arm the account. Previous
+    codes are discarded atomically. The response is the only chance to
+    capture the new plaintext codes; the server stores only sha256
+    hashes.
+    """
+    sub = _principal_id(p)
+    try:
+        codes = mfa.regenerate_backup_codes(sub, body.code)
+    except AuthError as exc:
+        record_admin_action(
+            action="mfa.backup_codes.regenerate", principal=p, target=sub,
+            ok=False, error=str(exc), request_id=_rid(request),
+        )
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, detail=str(exc),
+            headers={"X-MFA-Required": "totp"},
+        ) from exc
+    record_admin_action(
+        action="mfa.backup_codes.regenerate", principal=p, target=sub,
+        details={"issued": len(codes)}, request_id=_rid(request),
+    )
+    return RegenerateBackupCodesOut(
+        principal=sub, backup_codes=codes, issued_count=len(codes),
     )
 
 

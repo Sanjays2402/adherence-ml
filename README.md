@@ -2,6 +2,35 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Admin MFA backup code rotation
+
+Admin TOTP MFA gates every sensitive backend mutation, and a fresh set of
+single-use backup codes is issued at enrolment. Until now the only way to
+replace a leaked or exhausted pool was to disable MFA entirely and start
+over, which both broke the audit chain and left the account temporarily
+unprotected. Procurement teams flag that gap on every SOC2 questionnaire.
+
+The new `POST /v1/admin/mfa/backup-codes/regenerate` endpoint mints a
+fresh pool atomically. The caller must present a live TOTP or an unused
+backup code in the body so a stolen long lived challenge cannot silently
+re arm the account. The previous codes are discarded before the new pool
+is returned. Every attempt (success or failure) is written to the admin
+audit log and the `/v1/admin/mfa/status` payload now exposes a
+`backup_codes_low` flag plus the watermark so the dashboard can nudge
+operators before the pool runs out.
+
+### Try it
+
+```
+cd apps/web && pnpm dev   # http://localhost:3000/settings/admin-mfa
+```
+
+```
+curl -s -H "x-api-key: $ADMIN_KEY" -H 'content-type: application/json' \
+  -d '{"code":"123456"}' \
+  http://localhost:8000/v1/admin/mfa/backup-codes/regenerate | jq
+```
+
 ## Per-workspace data subject access request register
 
 Every workspace gets a per-tenant register of Data Subject Access Requests
@@ -77,7 +106,6 @@ curl -s -H "x-api-key: $ADMIN_KEY" -H 'content-type: application/json' \
   -d '{"group_claim":"okta:adherence-admins","role":"admin","priority":500}' \
   http://localhost:8000/v1/admin/sso/group-roles | jq
 ```
-
 
 ## Per-workspace security incident register
 

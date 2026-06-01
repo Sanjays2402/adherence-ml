@@ -42,6 +42,10 @@ TOTP_DIGITS = 6
 TOTP_DRIFT_STEPS = 1
 MFA_CHALLENGE_TTL_SECONDS = 300
 BACKUP_CODE_COUNT = 10
+# Surface a 'running low' flag in status responses so the UI can nudge
+# operators to regenerate before they exhaust the pool. 2 is the
+# documented watermark in the trust manifest; keep them in sync.
+BACKUP_CODE_LOW_WATERMARK = 2
 
 
 class AdminMFAEnrollment(Base):
@@ -203,6 +207,60 @@ def confirm_enrollment(principal: str, code: str) -> list[str]:
     return codes
 
 
+def regenerate_backup_codes(principal: str, code: str) -> list[str]:
+    """Mint a fresh set of single-use backup codes for ``principal``.
+
+    Procurement teams require operators to rotate backup codes when one
+    is used, suspected to have leaked (lost laptop, shared 1Password
+    vault audit, employee departure), or when the remaining pool runs
+    low. To prevent a stolen TOTP-protected session from silently
+    re-arming itself, the caller must present a fresh TOTP or unused
+    backup code: the same proof the live ``verify_code`` path demands.
+
+    The previous backup-code hashes are unconditionally discarded; the
+    new set replaces them atomically inside the same session so a
+    racing read either sees the old set or the new set, never an empty
+    state. Returns the newly minted plaintext codes; like enrolment,
+    this is the only opportunity for the caller to record them.
+
+    Raises:
+        AuthError: if the principal is not enrolled+confirmed or the
+            supplied ``code`` does not validate against the current
+            TOTP secret / backup pool.
+    """
+    if not code:
+        raise AuthError("mfa code required")
+    init_db()
+    cleaned = code.strip().replace(" ", "")
+    with session() as s:
+        row = s.execute(
+            select(AdminMFAEnrollment).where(AdminMFAEnrollment.principal == principal)
+        ).scalar_one_or_none()
+        if row is None or row.confirmed_at is None:
+            raise AuthError("mfa not enrolled")
+        method: str | None = None
+        if cleaned.isdigit() and len(cleaned) == TOTP_DIGITS:
+            if verify_totp(row.secret_b32, cleaned):
+                method = "totp"
+        if method is None and row.backup_hashes_csv:
+            target = _hash_code(cleaned.lower())
+            hashes = [h for h in row.backup_hashes_csv.split(",") if h]
+            if target in hashes:
+                hashes.remove(target)
+                # Burn the spent code first so the new set is the only
+                # surviving pool even if the commit below partially fails.
+                row.backup_hashes_csv = ",".join(hashes)
+                method = "backup_code"
+        if method is None:
+            raise AuthError("invalid mfa code")
+        new_codes = _generate_backup_codes()
+        row.backup_hashes_csv = ",".join(_hash_code(c) for c in new_codes)
+        row.last_used_at = datetime.utcnow()
+        _record_challenge(s, principal, method=method)
+        s.commit()
+    return new_codes
+
+
 def disable_enrollment(principal: str) -> bool:
     init_db()
     with session() as s:
@@ -346,6 +404,8 @@ __all__: Sequence[str] = (
     "AdminMFAEnrollment", "AdminMFAChallenge", "EnrollmentSummary",
     "start_enrollment", "confirm_enrollment", "disable_enrollment",
     "enrollment_summary", "is_mfa_required", "verify_code",
+    "regenerate_backup_codes", "BACKUP_CODE_COUNT",
+    "BACKUP_CODE_LOW_WATERMARK",
     "has_recent_challenge", "revoke_challenges", "list_enrollments",
     "current_totp", "verify_totp", "generate_secret", "otpauth_uri",
     "MFA_CHALLENGE_TTL_SECONDS",
