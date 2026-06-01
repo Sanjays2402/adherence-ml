@@ -591,6 +591,21 @@ export default function SettingsClient() {
             />
           </a>
           <a
+            href="/settings/dpia"
+            className="flex items-center justify-between gap-3 px-4 py-3 border-t border-[var(--color-border)] hover:bg-[var(--color-border)]/30 transition-colors group"
+          >
+            <div className="min-w-0">
+              <div className="text-[13px]">Data protection impact assessments</div>
+              <div className="text-[11px] text-[var(--color-muted)] mt-0.5">
+                GDPR Article 35 register. Per-tenant DPIA catalogue with necessity, risks, mitigations, residual risk, review-due tracking, and CSV export.
+              </div>
+            </div>
+            <CaretRight
+              size={14}
+              className="text-[var(--color-muted)] group-hover:text-[var(--color-text)] shrink-0"
+            />
+          </a>
+          <a
             href="/settings/login-throttle"
             className="flex items-center justify-between gap-3 px-4 py-3 border-t border-[var(--color-border)] hover:bg-[var(--color-border)]/30 transition-colors group"
           >

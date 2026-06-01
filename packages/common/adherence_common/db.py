@@ -788,6 +788,7 @@ def init_db() -> None:
     from adherence_common import purpose_of_use as _pou  # noqa: F401
     from adherence_common import invite_policy as _invp  # noqa: F401
     from adherence_common import ropa as _ropa  # noqa: F401
+    from adherence_common import dpia as _dpia  # noqa: F401
     engine = _engine()
     Base.metadata.create_all(engine)
     try:

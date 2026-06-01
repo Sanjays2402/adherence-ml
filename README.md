@@ -2,6 +2,47 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Per-workspace GDPR Article 35 data protection impact assessment register
+
+GDPR Art. 35 requires the controller to carry out a DPIA before any
+processing likely to result in a high risk to the rights and freedoms of
+natural persons. Health-data processing (which this service does by
+construction) is on every supervisory authority's mandatory-DPIA list, so a
+regulated buyer cannot adopt the service in production without a DPIA on
+file for each high-risk activity. The new register is per-workspace,
+tenant-scoped at the query layer, admin and MFA gated on every mutation,
+and audit-logged through the existing admin audit chain. Each entry carries
+the Art. 35(7) fields (description, necessity, risks, mitigations, residual
+risk), tracks whether the DPO was consulted and whether Art. 36 prior
+consultation is required, and surfaces a `review_due_at` with an overdue
+count so the customer can keep the register current. Entries are versioned
+on update and archived (never hard-deleted) so the historical record stays
+intact for regulators.
+
+### Try it
+
+```bash
+# in another shell
+uvicorn adherence_api.app:create_app --factory --port 7421
+pnpm --filter @adherence/web dev
+
+# open http://localhost:3000/settings/dpia
+
+# list the register
+curl -H "x-api-key: $ADHERENCE_API_KEY" \
+  http://localhost:7421/v1/admin/dpia
+
+# dry-run a new assessment (no DB write, audit row still recorded)
+curl -X POST -H "x-api-key: $ADHERENCE_API_KEY" \
+  -H 'content-type: application/json' \
+  "http://localhost:7421/v1/admin/dpia?dry_run=true" \
+  -d '{"title":"Adherence risk scoring","description":"Train and serve adherence risk model over patient dose history.","residual_risk":"moderate","dpo_consulted":true,"review_in_days":180}'
+
+# download the register as CSV for a procurement pack
+curl -OJ -H "x-api-key: $ADHERENCE_API_KEY" \
+  http://localhost:7421/v1/admin/dpia/export.csv
+```
+
 ## Per-workspace GDPR Article 30 record of processing activities
 
 GDPR Art. 30(2) requires every processor to keep a written record of all
