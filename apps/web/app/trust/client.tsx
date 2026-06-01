@@ -404,8 +404,13 @@ export default function TrustClient() {
               },
               {
                 icon: Users,
+                href: "/v1/subprocessors",
+                label: "Subprocessor registry (live)",
+              },
+              {
+                icon: Users,
                 href: "https://github.com/Sanjays2402/adherence-ml/blob/main/docs/SUBPROCESSORS.md",
-                label: "Subprocessor list",
+                label: "Subprocessor list (historical)",
               },
               {
                 icon: Globe,

@@ -2,6 +2,64 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Sub-processor registry with per-workspace acknowledgment
+
+GDPR Art. 28(2) and most enterprise DPAs require advance notice of
+any change to the sub-processors that touch customer data, plus
+evidence that each customer received the notice. We replace the
+static markdown list with a live registry, an append-only change log,
+and a per-workspace acknowledgment record that ties an admin, IP,
+user-agent, and request id to every accepted change.
+
+- Module: `packages/common/adherence_common/subprocessors.py`
+- Route: `services/api/adherence_api/routes/subprocessors.py`
+- UI: `/settings/subprocessors` (admin acknowledges; viewer can read)
+- Test: `tests/integration/test_subprocessors.py` (cross-tenant
+  isolation, viewer denial, idempotent ack, admin-audit coverage)
+
+The public list (`GET /v1/subprocessors`) and the change log
+(`GET /v1/subprocessors/changes`) are reachable without credentials so
+a prospective customer's procurement scanner can audit the data flow
+from the trust center. Acknowledgment writes a row to
+`subprocessor_acknowledgments` scoped to the calling tenant and a
+row to `admin_audit_log` for tamper-evident replay.
+
+### Try the sub-processor flow
+
+```bash
+uv run uvicorn adherence_api.app:create_app --factory --port 8080
+
+# Public list, no auth required
+curl -s http://127.0.0.1:8080/v1/subprocessors | jq
+
+# Operator registers a sub-processor (admin in deployment-default tenant)
+TOKEN=$(curl -s -X POST http://127.0.0.1:8080/v1/admin/token \
+  -H 'x-api-key: <admin-key>' -H 'content-type: application/json' \
+  -d '{"subject":"operator@vendor.test","role":"admin","tenant":"default"}' \
+  | jq -r .token)
+
+curl -s -X POST http://127.0.0.1:8080/v1/subprocessors \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{
+    "name":"AWS RDS",
+    "purpose":"Managed Postgres",
+    "data_categories":"All customer data",
+    "region":"us-east-1"
+  }' | jq
+
+# Workspace admin lists outstanding acks and accepts the change
+curl -s http://127.0.0.1:8080/v1/subprocessors/outstanding \
+  -H "authorization: Bearer $WORKSPACE_ADMIN_TOKEN" | jq
+
+curl -s -X POST http://127.0.0.1:8080/v1/subprocessors/acknowledge \
+  -H "authorization: Bearer $WORKSPACE_ADMIN_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"change_id":1}' | jq
+```
+
+Then open `http://localhost:3000/settings/subprocessors` to review,
+acknowledge, and audit changes from the dashboard.
+
 ## Machine-readable trust manifest
 
 Procurement teams and automated vendor-review pipelines can pull our

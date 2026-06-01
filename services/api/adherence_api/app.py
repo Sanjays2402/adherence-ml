@@ -227,6 +227,8 @@ def create_app() -> FastAPI:
     app.include_router(legal_route.router)
     app.include_router(well_known_route.router)
     app.include_router(model_approval_route.router)
+    from adherence_api.routes import subprocessors as subprocessors_route
+    app.include_router(subprocessors_route.router)
     # Ensure quota + workspace tables exist before the first request.
     try:
         from adherence_common.db import init_db

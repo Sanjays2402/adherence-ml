@@ -64,6 +64,7 @@ _EXEMPT_PREFIXES: tuple[str, ...] = (
     "/redoc",
     "/.well-known",
     "/v1/legal",
+    "/v1/subprocessors",
     "/v1/gdpr",
     "/v1/admin/sso",
     "/v1/admin/token",
