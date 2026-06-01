@@ -2,6 +2,38 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Per-workspace password policy
+
+Even when a tenant federates through SSO, enterprise procurement and SOC2
+reviewers ask for a documented and enforceable local-credential policy
+for SCIM service accounts and break-glass logins. Each workspace can
+now configure its own rules: minimum length, character class requirements,
+rotation period, and password history depth, all bounded so an admin
+cannot lock everyone out. Defaults are stricter than the NIST 800-63B
+floor (12 character minimum, mixed classes, 5 entry history).
+
+Changes require admin MFA, support `?dry_run=true`, are written to the
+tamper-evident admin audit log, and are strictly tenant scoped: a policy
+set in workspace `acme` never bleeds into workspace `globex`. A side
+endpoint validates a candidate password without persisting or logging
+it, so the settings UI and SCIM provisioners can pre-flight credentials.
+
+### Try it
+
+```bash
+cd apps/web && pnpm dev   # http://localhost:3000/settings/password-policy
+
+# read the current policy
+curl -s http://localhost:8000/v1/workspace/password-policy \
+  -H "Authorization: Bearer $TOKEN" | jq
+
+# validate a candidate without storing it
+curl -s -X POST http://localhost:8000/v1/workspace/password-policy/check \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"password":"hunter2"}' | jq
+```
+
 ## Idempotency-Key support for mutating routes
 
 Any integration team that retries a failed POST without server-side
