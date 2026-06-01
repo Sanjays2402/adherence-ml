@@ -271,3 +271,19 @@ export async function verifyToken(
 export async function _resetForTests(): Promise<void> {
   await writeStore({ version: 1, tokens: [] });
 }
+
+/**
+ * Hard-delete every SCIM token belonging to the given workspace. Used by
+ * the workspace deletion flow; cross-tenant safe because the filter is
+ * keyed on `workspace_id` and no other workspace's tokens are touched.
+ */
+export async function purgeTokensForWorkspace(
+  workspaceId: string,
+): Promise<number> {
+  const s = await readStore();
+  const before = s.tokens.length;
+  s.tokens = s.tokens.filter((t) => t.workspace_id !== workspaceId);
+  const removed = before - s.tokens.length;
+  if (removed > 0) await writeStore(s);
+  return removed;
+}

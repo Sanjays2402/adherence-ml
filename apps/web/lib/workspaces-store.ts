@@ -806,6 +806,128 @@ export async function _resetForTests(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Owner-initiated full workspace deletion (tenant offboarding).
+// ---------------------------------------------------------------------------
+
+export interface WorkspaceDeletePreview {
+  workspace_id: string;
+  workspace_name: string;
+  caller_role: Role;
+  members: Array<Pick<Member, "user_id" | "email" | "role">>;
+  invites_open: number;
+  invites_total: number;
+  verified_domains: number;
+  sso_configured: boolean;
+  security_policy_set: boolean;
+  confirm_phrase: string;
+}
+
+export interface WorkspaceDeleteReport {
+  workspace_id: string;
+  workspace_name: string;
+  members_removed: number;
+  invites_removed: number;
+  verified_domains_removed: number;
+  sso_removed: boolean;
+  security_policy_removed: boolean;
+}
+
+export type WorkspaceDeleteError =
+  | "not_found"
+  | "forbidden"
+  | "bad_confirm";
+
+export function workspaceDeleteConfirmPhrase(name: string): string {
+  return `DELETE WORKSPACE ${name}`;
+}
+
+/**
+ * Owner-only preview of a full workspace deletion. Returns null when the
+ * caller is not a member; "forbidden" when the caller is a member but not
+ * the owner. Never mutates.
+ */
+export async function previewWorkspaceDelete(
+  workspaceId: string,
+  callerUserId: string,
+): Promise<WorkspaceDeletePreview | null | "forbidden"> {
+  const ctx = await getWorkspaceForUser(workspaceId, callerUserId);
+  if (!ctx) return null;
+  if (ctx.role !== "owner") return "forbidden";
+  const invites = await listInvites(workspaceId);
+  const open = invites.filter(
+    (i) => i.accepted_at === null && i.revoked_at === null,
+  ).length;
+  const ws = ctx.workspace;
+  return {
+    workspace_id: ws.id,
+    workspace_name: ws.name,
+    caller_role: ctx.role,
+    members: ctx.members.map((m) => ({
+      user_id: m.user_id,
+      email: m.email,
+      role: m.role,
+    })),
+    invites_open: open,
+    invites_total: invites.length,
+    verified_domains: (ws.verified_domains ?? []).length,
+    sso_configured: !!ws.sso,
+    security_policy_set: !!ws.security_policy,
+    confirm_phrase: workspaceDeleteConfirmPhrase(ws.name),
+  };
+}
+
+/**
+ * Hard-delete a workspace and every workspace-scoped row in this store:
+ * members, invites, the workspace record itself (verified domains, SSO
+ * config, and security policy are embedded on the workspace row, so they
+ * vanish with it).
+ *
+ * Cross-tenant safe: every filter is keyed on `workspace_id` and no row
+ * belonging to another workspace is touched. The caller is responsible for
+ * cascading into other workspace-scoped stores (e.g. scim tokens).
+ */
+export async function deleteWorkspaceFully(
+  workspaceId: string,
+  callerUserId: string,
+  confirmPhrase: string,
+): Promise<WorkspaceDeleteReport | WorkspaceDeleteError> {
+  const store = await readStore();
+  const ws = store.workspaces.find((w) => w.id === workspaceId);
+  if (!ws) return "not_found";
+  const me = store.members.find(
+    (m) => m.workspace_id === workspaceId && m.user_id === callerUserId,
+  );
+  if (!me) return "not_found";
+  if (me.role !== "owner") return "forbidden";
+  if (confirmPhrase !== workspaceDeleteConfirmPhrase(ws.name)) return "bad_confirm";
+
+  const beforeMembers = store.members.filter(
+    (m) => m.workspace_id === workspaceId,
+  ).length;
+  const beforeInvites = store.invites.filter(
+    (i) => i.workspace_id === workspaceId,
+  ).length;
+  const beforeDomains = (ws.verified_domains ?? []).length;
+  const ssoRemoved = !!ws.sso;
+  const policyRemoved = !!ws.security_policy;
+
+  store.members = store.members.filter((m) => m.workspace_id !== workspaceId);
+  store.invites = store.invites.filter((i) => i.workspace_id !== workspaceId);
+  store.workspaces = store.workspaces.filter((w) => w.id !== workspaceId);
+
+  await writeStore(store);
+  return {
+    workspace_id: workspaceId,
+    workspace_name: ws.name,
+    members_removed: beforeMembers,
+    invites_removed: beforeInvites,
+    verified_domains_removed: beforeDomains,
+    sso_removed: ssoRemoved,
+    security_policy_removed: policyRemoved,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // SCIM-driven provisioning. These helpers are called by /scim/v2/* after the
 // caller has presented a valid workspace-scoped bearer token. They are
 // strictly scoped to one `workspaceId` so a token for workspace A can never

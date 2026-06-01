@@ -333,6 +333,12 @@ export default function WorkspaceClient() {
             >
               <ShieldCheck weight="duotone" size={13} /> Data export
             </Link>
+            <Link
+              href="/workspace/danger-zone"
+              className="inline-flex items-center gap-1 rounded-md border border-[var(--color-danger)]/40 bg-[var(--color-surface)] px-2.5 py-1.5 text-[12px] text-[var(--color-danger)] hover:bg-[var(--color-surface-2)]"
+            >
+              <Trash weight="duotone" size={13} /> Danger zone
+            </Link>
             <form onSubmit={createWs} className="flex items-center gap-2">
             <Input
               placeholder="New workspace name"

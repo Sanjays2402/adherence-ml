@@ -36,6 +36,53 @@ cd apps/web && ADHERENCE_DASHBOARD_OPEN=1 pnpm dev
 curl -s http://localhost:3000/api/webhooks/inbound-config | jq
 ```
 
+## Owner-initiated workspace deletion (tenant offboarding)
+
+GDPR Art. 17 (right to erasure) and SOC2 CC6.1 (logical access removal
+on offboarding) require a documented, owner-controlled way to permanently
+remove a tenant's data on demand. The dashboard now ships that flow as the
+workspace sibling of the existing per-user account erasure.
+
+The deletion path enforces, in order: owner role, fresh second-factor
+MFA proof (step-up), typed confirmation phrase `DELETE WORKSPACE <name>`,
+and a tamper-evident audit row on every outcome (success or denied).
+Dry-run is available for previewing impact without mutation. The cascade
+is cross-tenant safe: every filter is keyed on `workspace_id`, so deleting
+workspace A leaves workspace B's members, invites, SSO config, security
+policy, verified domains, and SCIM tokens completely untouched. Coverage
+lives in `apps/web/tests/workspace-delete.test.ts`.
+
+Install-scoped resources (runs, notes, api keys, schedules, webhooks)
+are intentionally NOT touched here. They belong to the install, not a
+single workspace, and `POST /api/settings/wipe` remains the install-wide
+eraser for those.
+
+### Try the workspace deletion flow
+
+```bash
+cd apps/web
+pnpm install
+pnpm dev    # http://localhost:3000
+```
+
+Open `http://localhost:3000/workspace/danger-zone`, pick an owned
+workspace, click **preview (dry run)**, then type the confirmation
+phrase exactly as displayed and press **delete forever**.
+
+From the command line:
+
+```bash
+# 1. Preview (no mutation, no MFA required).
+curl -X POST "http://localhost:3000/api/workspaces/$WS/delete?dry_run=true" \
+  --cookie cookies.txt
+
+# 2. Real delete (owner session + fresh TOTP + typed phrase).
+curl -X POST "http://localhost:3000/api/workspaces/$WS/delete" \
+  --cookie cookies.txt \
+  -H 'content-type: application/json' \
+  -d '{"confirm":"DELETE WORKSPACE acme'"'"'s workspace"}'
+```
+
 ## Sub-processor registry with per-workspace acknowledgment
 
 GDPR Art. 28(2) and most enterprise DPAs require advance notice of
