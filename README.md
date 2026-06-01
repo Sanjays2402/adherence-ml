@@ -2,6 +2,36 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Per-workspace Service Account / Non-Human Identity register
+
+Enterprise procurement (SOC 2 CC6.1, ISO 27001 A.5.16/A.9.2.4, NIST SP 800-53 IA-2(5)/IA-4, CSA CCM IAM-02) requires an inventory of every non-human identity holding standing credentials: CI runners, ETL pipelines, third-party integrations, monitoring probes, headless daemons. Each entry names a human owner, system of record, credential kind, scopes, vault-managed flag, rotation and review cadences, last-rotated and last-used timestamps, and computed `rotation_overdue` / `review_overdue` / `dormant_days`. Lives in `adherence_common.service_accounts`, exposed at `/v1/admin/service-accounts`, admin-MFA gated, strictly tenant-scoped (no cross-tenant code path), every mutation supports `?dry_run=true` and writes an admin audit row. CSV export for evidence packs.
+
+### Try it
+
+Local dev: API at http://localhost:7421, dashboard at http://localhost:3000/settings/service-accounts.
+
+```sh
+curl -s -X POST http://localhost:7421/v1/admin/service-accounts \
+  -H "x-api-key: $ADHERENCE_API_KEY" -H "content-type: application/json" \
+  -d '{
+    "name": "ci-github-actions",
+    "kind": "ci",
+    "system_of_record": "github.com/acme/adherence",
+    "credential_kind": "oauth_client",
+    "owner_email": "platform@acme.example",
+    "scopes": ["write:runs"],
+    "vault_managed": true,
+    "rotation_cadence_days": 90,
+    "review_cadence_days": 180
+  }'
+
+curl -s http://localhost:7421/v1/admin/service-accounts \
+  -H "x-api-key: $ADHERENCE_API_KEY"
+
+curl -s http://localhost:7421/v1/admin/service-accounts/export.csv \
+  -H "x-api-key: $ADHERENCE_API_KEY"
+```
+
 ## Per-workspace HIPAA accounting of disclosures (45 CFR 164.528)
 
 A covered entity or business associate cannot sign the BAA without evidence that the vendor can produce, on demand, an accounting of every PHI disclosure made to external recipients for the prior six years, per patient, scoped to the workspace they are buying. The register lives in `adherence_common.disclosures`, is exposed at `/v1/admin/disclosures`, is admin-MFA gated, and is strictly tenant-scoped (no cross-tenant code path). Entries are append-only: corrections create a new row that references the prior id rather than mutating it, which is the immutability guarantee a regulator expects. Purpose categories follow the closed list in 164.528(a)(1) plus an `other` bucket. Every mutation writes an admin audit row. `GET /v1/admin/disclosures/subject/{subject_id}/accounting` returns the patient-ready accounting (default six year lookback). `GET /v1/admin/disclosures/export.csv` returns the full register for procurement packs.

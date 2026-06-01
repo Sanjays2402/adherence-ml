@@ -696,6 +696,21 @@ export default function SettingsClient() {
             />
           </a>
           <a
+            href="/settings/service-accounts"
+            className="flex items-center justify-between gap-3 px-4 py-3 border-t border-[var(--color-border)] hover:bg-[var(--color-border)]/30 transition-colors group"
+          >
+            <div className="min-w-0">
+              <div className="text-[13px]">Service accounts</div>
+              <div className="text-[11px] text-[var(--color-muted)] mt-0.5">
+                Per-workspace register of non-human identities. Owner, system of record, credential kind, scopes, rotation and review cadence, last used, vault flag. Procurement evidence for SOC 2 CC6.1 and ISO 27001 A.5.16. CSV export and audit-logged mutations.
+              </div>
+            </div>
+            <CaretRight
+              size={14}
+              className="text-[var(--color-muted)] group-hover:text-[var(--color-text)] shrink-0"
+            />
+          </a>
+          <a
             href="/settings/pentests"
             className="flex items-center justify-between gap-3 px-4 py-3 border-t border-[var(--color-border)] hover:bg-[var(--color-border)]/30 transition-colors group"
           >
