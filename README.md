@@ -2,6 +2,57 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## HIPAA purpose of use enforcement and PHI access log
+
+Healthcare buyers will not sign without an auditable answer to "who
+touched what PHI under what purpose, when, and from where." The new
+per-workspace purpose-of-use (POU) gate is that answer.
+
+A workspace owner picks the HL7 PurposeOfUse codes the workspace will
+accept (TREATMENT, PAYMENT, OPERATIONS, EMERGENCY, RESEARCH,
+COVERAGE, PUBLICHEALTH) and decides whether the policy is observed or
+strictly enforced. When enforced, every PHI request must carry an
+`X-Purpose-Of-Use` header from the allowed set; otherwise it is
+rejected with HTTP 412 and an `X-Purpose-Required` header listing the
+acceptable values. Successful responses are stamped with the resolved
+`X-Purpose-Of-Use` so SIEM and SDK telemetry can correlate.
+
+A single middleware enforces the gate across every PHI surface
+(`/v1/predict`, `/v1/cohort`, `/v1/forecast`, `/v1/explain`,
+`/v1/audit`, `/v1/interventions`, `/v1/users`, `/v1/plots`) so a
+future route added under any of those prefixes cannot quietly skip
+the check. Every request also writes one row into the append-only
+`phi_access_log` table with actor, route, purpose, patient user id,
+IP, status code, and latency. Workspace owners read the log at
+`/settings/purpose-of-use`; the underlying API at
+`/v1/admin/phi-access` is admin-only and tenant scoped.
+
+Cross-tenant isolation, missing-header rejection, and out-of-set
+rejection are pinned by `tests/unit/test_purpose_of_use.py`.
+
+### Try it
+
+```
+cd services/api && uvicorn adherence_api.app:create_app --factory --reload
+# http://localhost:3000/settings/purpose-of-use
+```
+
+```
+# Read the current policy.
+curl -s -H "Authorization: Bearer $ADMIN_JWT" \
+  http://localhost:8000/v1/admin/purpose-of-use | jq
+
+# Turn on enforcement with TREATMENT and OPERATIONS allowed.
+curl -s -X PUT -H "Authorization: Bearer $ADMIN_JWT" \
+  -H 'content-type: application/json' \
+  -d '{"allowed":["TREATMENT","OPERATIONS"],"enforce":true,"default_purpose":null}' \
+  http://localhost:8000/v1/admin/purpose-of-use | jq
+
+# A PHI call without the header is now rejected.
+curl -s -i -H "Authorization: Bearer $ADMIN_JWT" \
+  http://localhost:8000/v1/predict/sample | head -20
+```
+
 ## API deprecation and sunset registry (RFC 8594)
 
 Procurement reviewers ask: "what is your API lifecycle policy and how do

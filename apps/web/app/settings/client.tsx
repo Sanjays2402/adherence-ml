@@ -516,6 +516,21 @@ export default function SettingsClient() {
             />
           </a>
           <a
+            href="/settings/purpose-of-use"
+            className="flex items-center justify-between gap-3 px-4 py-3 border-t border-[var(--color-border)] hover:bg-[var(--color-border)]/30 transition-colors group"
+          >
+            <div className="min-w-0">
+              <div className="text-[13px]">Purpose of use (HIPAA)</div>
+              <div className="text-[11px] text-[var(--color-muted)] mt-0.5">
+                Require every PHI request to declare an HL7 PurposeOfUse code. Configure the allowed codes, enforcement, and review the per request access log.
+              </div>
+            </div>
+            <CaretRight
+              size={14}
+              className="text-[var(--color-muted)] group-hover:text-[var(--color-text)] shrink-0"
+            />
+          </a>
+          <a
             href="/settings/retention-policy"
             className="flex items-center justify-between gap-3 px-4 py-3 border-t border-[var(--color-border)] hover:bg-[var(--color-border)]/30 transition-colors group"
           >

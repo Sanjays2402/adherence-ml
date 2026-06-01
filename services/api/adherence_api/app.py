@@ -14,6 +14,7 @@ from adherence_api.middleware import RequestIdMiddleware
 from adherence_api.ip_allowlist_middleware import IpAllowlistMiddleware
 from adherence_api.origin_allowlist_middleware import OriginAllowlistMiddleware
 from adherence_api.legal_acceptance_middleware import LegalAcceptanceMiddleware
+from adherence_api.purpose_of_use_middleware import PurposeOfUseMiddleware
 from adherence_api.ratelimit_middleware import RateLimitMiddleware
 from adherence_api.scope_enforce_middleware import ScopeEnforceMiddleware
 from adherence_api.routes import auth_scopes as auth_scopes_route
@@ -150,6 +151,11 @@ def create_app() -> FastAPI:
     # exempt (see middleware EXEMPT_PREFIXES) so a blocked tenant can
     # still discover what to accept.
     app.add_middleware(LegalAcceptanceMiddleware, settings=s)
+    # HIPAA Purpose of Use gate. Runs after legal acceptance and
+    # before scope enforcement so a blocked tenant still sees the
+    # legal-acceptance 451 first; once accepted, the POU 412 surfaces
+    # for PHI-bound requests that forgot the X-Purpose-Of-Use header.
+    app.add_middleware(PurposeOfUseMiddleware, settings=s)
     app.add_middleware(ScopeEnforceMiddleware)
     app.add_middleware(RateLimitMiddleware, settings=s)
     # IP allowlist gates tenant-bound traffic. Health/metrics/docs stay
@@ -267,6 +273,10 @@ def create_app() -> FastAPI:
     app.include_router(well_known_deprecations_route.router)
     from adherence_api.routes import support_access as support_access_route
     app.include_router(support_access_route.router)
+    from adherence_api.routes import purpose_of_use as purpose_of_use_route
+    app.include_router(purpose_of_use_route.router)
+    from adherence_api.routes import phi_access as phi_access_route
+    app.include_router(phi_access_route.router)
     # Ensure quota + workspace tables exist before the first request.
     try:
         from adherence_common.db import init_db
