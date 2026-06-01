@@ -2,6 +2,40 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Per-workspace GDPR Article 30 record of processing activities
+
+GDPR Art. 30(2) requires every processor to keep a written record of all
+processing activities it carries out on behalf of each controller. Buyers in
+regulated industries ask to see this register during procurement and during
+their own audits. The new register is per-workspace, tenant-scoped at the
+query layer, admin and MFA gated on every mutation, and audit-logged through
+the existing admin audit chain. Entries are versioned on update and archived
+(never hard-deleted) so the historical record stays intact for regulators.
+
+### Try it
+
+```bash
+# in another shell
+uvicorn adherence_api.app:create_app --factory --port 7421
+pnpm --filter @adherence/web dev
+
+# open http://localhost:3000/settings/ropa
+
+# list the register
+curl -H "x-api-key: $ADHERENCE_API_KEY" \
+  http://localhost:7421/v1/admin/ropa
+
+# dry-run a new entry (no DB write, audit row still recorded)
+curl -X POST -H "x-api-key: $ADHERENCE_API_KEY" \
+  -H 'content-type: application/json' \
+  "http://localhost:7421/v1/admin/ropa?dry_run=true" \
+  -d '{"name":"Adherence risk scoring","purpose":"Compute adherence risk for clinician outreach.","lawful_basis":"contract"}'
+
+# download the register as CSV for a procurement pack
+curl -OJ -H "x-api-key: $ADHERENCE_API_KEY" \
+  http://localhost:7421/v1/admin/ropa/export.csv
+```
+
 ## Per-workspace customer-managed encryption key (CMEK / BYOK)
 
 Enterprise buyers in regulated verticals require evidence that workspace
@@ -54,6 +88,7 @@ curl -s -X POST http://localhost:8000/v1/workspace/cmek/rotate \
   -H "Content-Type: application/json" \
   -d '{"note":"SEC-1234 quarterly rotation"}' | jq
 ```
+
 
 ## Per-workspace password policy
 
