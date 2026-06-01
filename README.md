@@ -2,6 +2,34 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Catalog-aligned webhook subscriptions
+
+The published webhook event catalog already advertised six stable event types, but `POST /api/webhooks` and `POST /v1/webhooks` only validated two of them, so an enterprise integrator who pasted `intervention.recommended` from the procurement-facing catalog page got a 422. The dashboard checkbox list was hard-coded to the same two events, so customers could not subscribe to risk interventions, member invites, or API-key rotations even though the catalog promised those payloads.
+
+The webhook subscription surface now derives directly from `STABLE_EVENT_TYPES` in `apps/web/lib/webhook-catalog.ts`. Both the dashboard route (`/api/webhooks`) and the key-authenticated route (`/v1/webhooks`) accept every stable catalog event and reject every unknown or beta event with a 422. The `/workspace/webhooks` checkbox list shows the full set. Two existing routes now actually emit catalog events end-to-end: `POST /api/keys/{id}/rotate` fires `api_key.rotated`, and `POST /api/workspaces/{id}/invites` fires `member.invited`, with full HMAC signatures and the standard retry/replay pipeline.
+
+Proven by `apps/web/tests/webhook-event-catalog-subscribe.test.ts` (4 tests):
+
+- The subscribable surface equals the stable catalog exactly, so adding an event to the catalog opens it for subscription with no other change.
+- Subscribing to a newly-promoted event (`intervention.high_risk`, `api_key.rotated`) persists the subscription instead of falling back to a default.
+- Unknown event names are silently dropped from the persisted subscription so receivers never see a phantom event type they cannot decode.
+- Beta catalog events (`drift.detected`) are still rejected from the subscribable surface until promoted to stable.
+
+### Try it
+
+Local dashboard: <http://127.0.0.1:3000/workspace/webhooks>. Sign in at `/dashboard`, click **new endpoint**, tick `intervention.high_risk` and `api_key.rotated`, copy the one-time signing secret, then rotate any API key from `/keys` to watch the `api_key.rotated` delivery land in the deliveries table below.
+
+```bash
+# what the public catalog advertises
+curl -s http://127.0.0.1:3000/api/webhooks/event-catalog | jq '.stable_event_types'
+
+# subscribe an endpoint to a catalog event that used to be rejected
+curl -sS -X POST http://127.0.0.1:3000/api/webhooks \
+  -H 'content-type: application/json' \
+  --cookie 'adh_session=...' \
+  -d '{"name":"care-ops","url":"https://example.com/hook","events":["intervention.high_risk","api_key.rotated","member.invited"]}'
+```
+
 ## Workspace API-key max lifetime policy
 
 Workspace owners can now cap the maximum TTL of any API key issued or rotated for the deployment. SOC2 CC6.1 reviews routinely flag "keys that never expire" as a finding; this policy makes that impossible to ship by mistake. When the cap is set to N days, every `POST /api/keys` call must include `ttl_days` such that `0 < ttl_days <= N`. Requests that ask for no expiry or for a longer TTL are refused with HTTP 422 and a structured `code` (`api_key_ttl_required` or `api_key_ttl_exceeds_cap`). Key rotation re-stamps `expires_at` from "now", so periodic rotation IS the renewal action and a key can never outlive the cap.

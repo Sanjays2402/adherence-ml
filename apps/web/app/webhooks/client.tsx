@@ -40,7 +40,14 @@ type Endpoint = {
   id: string;
   name: string;
   url: string;
-  events: ("run.created" | "test.ping")[];
+  events: (
+    | "run.created"
+    | "test.ping"
+    | "intervention.recommended"
+    | "intervention.high_risk"
+    | "api_key.rotated"
+    | "member.invited"
+  )[];
   secret_prefix: string;
   secret_rotated_at: number | null;
   secondary_secret_prefix: string | null;

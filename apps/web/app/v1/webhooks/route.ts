@@ -32,12 +32,14 @@ import {
   createEndpoint,
   isValidUrl,
   listEndpoints,
+  type WebhookEvent,
 } from "@/lib/webhooks-store";
+import { STABLE_EVENT_TYPES } from "@/lib/webhook-catalog";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const ALLOWED_EVENTS = ["run.created", "test.ping"] as const;
+const ALLOWED_EVENTS = STABLE_EVENT_TYPES as unknown as [string, ...string[]];
 
 const CreateSchema = z.object({
   name: z.string().min(1).max(80),
@@ -184,7 +186,11 @@ export async function POST(req: NextRequest) {
     );
   }
   try {
-    const created = await createEndpoint(parsed.data);
+    const created = await createEndpoint({
+      name: parsed.data.name,
+      url: parsed.data.url,
+      events: parsed.data.events as WebhookEvent[] | undefined,
+    });
     logUsage(auth.key, "POST", 201, started);
     return NextResponse.json(
       {

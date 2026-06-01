@@ -24,8 +24,20 @@ import path from "node:path";
 import { randomBytes, createHash } from "node:crypto";
 import { preflightUrl } from "./webhook-ssrf";
 import { effectiveWebhookSsrfPolicy } from "./workspaces-store";
+import { STABLE_EVENT_TYPES } from "./webhook-catalog";
 
-export type WebhookEvent = "run.created" | "test.ping";
+/**
+ * Subscribable webhook event types. Kept aligned with the public
+ * `/api/webhooks/event-catalog` so the procurement-facing catalog and
+ * what customers can actually subscribe to never drift.
+ */
+export type WebhookEvent =
+  | "run.created"
+  | "test.ping"
+  | "intervention.recommended"
+  | "intervention.high_risk"
+  | "api_key.rotated"
+  | "member.invited";
 
 export interface WebhookEndpoint {
   id: string;
@@ -135,7 +147,7 @@ function sha256(s: string): string {
   return createHash("sha256").update(s).digest("hex");
 }
 
-const ALLOWED_EVENTS: readonly WebhookEvent[] = ["run.created", "test.ping"];
+const ALLOWED_EVENTS: readonly WebhookEvent[] = STABLE_EVENT_TYPES as readonly WebhookEvent[];
 
 export function isValidUrl(u: string): boolean {
   try {

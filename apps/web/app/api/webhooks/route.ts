@@ -4,7 +4,9 @@ import {
   createEndpoint,
   listEndpoints,
   isValidUrl,
+  type WebhookEvent,
 } from "@/lib/webhooks-store";
+import { STABLE_EVENT_TYPES } from "@/lib/webhook-catalog";
 import { auditAction, requireDashboardAuth } from "@/lib/dashboard-auth";
 
 export const runtime = "nodejs";
@@ -17,7 +19,9 @@ const PostSchema = z.object({
     .min(1)
     .max(500)
     .refine(isValidUrl, { message: "must be http(s) URL" }),
-  events: z.array(z.enum(["run.created", "test.ping"])).optional(),
+  events: z
+    .array(z.enum(STABLE_EVENT_TYPES as unknown as [string, ...string[]]))
+    .optional(),
 });
 
 export async function GET(req: NextRequest) {
@@ -87,7 +91,11 @@ export async function POST(req: NextRequest) {
     );
   }
   try {
-    const created = await createEndpoint(parsed.data);
+    const created = await createEndpoint({
+      name: parsed.data.name,
+      url: parsed.data.url,
+      events: parsed.data.events as WebhookEvent[] | undefined,
+    });
     await auditAction(req, auth.ctx, {
       action: "webhook.endpoint.create",
       target: `webhook_endpoint:${created.record.id}`,

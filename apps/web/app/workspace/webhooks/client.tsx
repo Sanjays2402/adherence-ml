@@ -32,7 +32,22 @@ import {
   Stat,
 } from "@/components/ui/primitives";
 
-type EventName = "run.created" | "test.ping";
+type EventName =
+  | "run.created"
+  | "test.ping"
+  | "intervention.recommended"
+  | "intervention.high_risk"
+  | "api_key.rotated"
+  | "member.invited";
+
+const SUBSCRIBABLE_EVENTS: readonly EventName[] = [
+  "run.created",
+  "test.ping",
+  "intervention.recommended",
+  "intervention.high_risk",
+  "api_key.rotated",
+  "member.invited",
+];
 
 type Endpoint = {
   id: string;
@@ -249,7 +264,7 @@ function CreateDialog({
             <div>
               <div className="block text-[11px] font-mono uppercase tracking-[0.14em] text-[var(--color-muted)] mb-1">events</div>
               <div className="flex flex-wrap gap-2">
-                {(["run.created", "test.ping"] as EventName[]).map((ev) => {
+                {SUBSCRIBABLE_EVENTS.map((ev) => {
                   const checked = events.includes(ev);
                   return (
                     <label

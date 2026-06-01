@@ -214,6 +214,21 @@ export const CATALOG_EVENTS: CatalogEvent[] = [
   },
 ];
 
+/**
+ * Event types customers may subscribe to from the webhook console and
+ * the `/v1/webhooks` API. Derived directly from the stable rows of
+ * `CATALOG_EVENTS` so publishing a new stable event in the catalog
+ * automatically opens it for subscription. Beta events are excluded
+ * to keep the subscription surface stable for procurement reviews.
+ */
+export const STABLE_EVENT_TYPES: readonly string[] = CATALOG_EVENTS.filter(
+  (e) => e.stability === "stable",
+).map((e) => e.event_type);
+
+export function isSubscribableEvent(s: string): boolean {
+  return STABLE_EVENT_TYPES.includes(s);
+}
+
 export function catalogSummary() {
   const stable = CATALOG_EVENTS.filter((e) => e.stability === "stable").length;
   const beta = CATALOG_EVENTS.filter((e) => e.stability === "beta").length;

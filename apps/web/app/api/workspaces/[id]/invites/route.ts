@@ -9,6 +9,7 @@ import {
   ROLES,
 } from "@/lib/workspaces-store";
 import { dryRunBody, isDryRun, withDryRunHeaders } from "@/lib/dry-run";
+import { emit } from "@/lib/webhook-dispatch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -51,6 +52,14 @@ export async function POST(
       parsed.data.role as "owner" | "editor" | "viewer",
     );
     const origin = req.nextUrl.origin;
+    void emit("member.invited", {
+      workspace_id: id,
+      invitee_email: invite.email,
+      role: invite.role,
+      invited_by: ctx.user.email ?? ctx.user.id,
+      invited_at: new Date().toISOString(),
+      expires_at: new Date(invite.expires_at).toISOString(),
+    });
     return NextResponse.json({
       invite: {
         id: invite.id,
