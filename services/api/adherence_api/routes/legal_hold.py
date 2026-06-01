@@ -24,6 +24,7 @@ from adherence_api.deps import current_tenant, require_admin, require_viewer
 from adherence_api.dry_run import dry_run_response
 from adherence_api.routes.admin_mfa import require_admin_mfa
 from adherence_common import legal_hold as lh_mod
+from adherence_common import dual_control as dc_mod
 from adherence_common.admin_audit import record_admin_action
 from adherence_common.logging import get_logger
 
@@ -272,6 +273,48 @@ def release_hold(
             tenant_id=tenant,
             hold_id=hold_id,
         )
+    # Dual-control gate: if this workspace requires four-eyes on
+    # legal-hold releases, a second admin must have approved a
+    # request whose payload hash matches exactly. Otherwise this
+    # branch is a no-op and the action proceeds in single-control.
+    approval = None
+    payload_for_approval = {
+        "hold_id": int(hold_id),
+        "release_reason": body.release_reason,
+    }
+    try:
+        approval = dc_mod.ensure_approved(
+            tenant_id=tenant,
+            action_type="legal_hold.release",
+            payload=payload_for_approval,
+            principal_id=caller,
+        )
+    except dc_mod.DualControlError as exc:
+        record_admin_action(
+            action="workspace.legal_hold.release",
+            principal=p,
+            target=str(hold_id),
+            details={
+                "reason": str(exc),
+                "required_payload_hash": dc_mod.compute_payload_hash(
+                    payload_for_approval
+                ),
+            },
+            ok=False,
+            error=str(exc),
+            request_id=_rid(request),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_428_PRECONDITION_REQUIRED,
+            detail={
+                "code": "dual_control_required",
+                "action_type": "legal_hold.release",
+                "payload_hash": dc_mod.compute_payload_hash(
+                    payload_for_approval
+                ),
+                "reason": str(exc),
+            },
+        ) from exc
     view = lh_mod.release_hold(
         tenant_id=tenant,
         hold_id=hold_id,
@@ -296,9 +339,24 @@ def release_hold(
         action="workspace.legal_hold.release",
         principal=p,
         target=str(hold_id),
-        details={"release_reason": body.release_reason},
+        details={
+            "release_reason": body.release_reason,
+            "dual_control_request_id": (approval.id if approval else None),
+        },
         request_id=_rid(request),
     )
+    if approval is not None:
+        try:
+            dc_mod.mark_executed(
+                tenant_id=tenant, request_id=approval.id
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            log.warning(
+                "dual_control_mark_executed_failed",
+                tenant=tenant,
+                request_id=approval.id,
+                error=str(exc),
+            )
     log.warning(
         "legal_hold_released",
         tenant=tenant,

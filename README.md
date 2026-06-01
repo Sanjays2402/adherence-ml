@@ -2,6 +2,23 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Per-workspace dual-control (four-eyes) approval workflow
+
+Regulated buyers (HIPAA, SOC 2 CC6.1, SOX, banking) require that
+specific high-impact admin actions cannot be executed by a single
+person. Each workspace can now opt action types into a four-eyes
+workflow: an admin opens a sensitive-action request, a different
+admin approves (self-approval is rejected at the model layer), and
+the route handler then executes. The approval is bound to a SHA-256
+hash of the exact request payload, so tampering between approval
+and execution invalidates the approval and the route returns HTTP
+428 ``dual_control_required``.
+
+The first action wired through the gate is ``legal_hold.release``
+(lifting a litigation preservation freeze). Cross-tenant isolation,
+admin role, MFA challenge, and the admin audit chain are all
+preserved.
+
 ## Per-workspace GDPR Article 35 data protection impact assessment register
 
 GDPR Art. 35 requires the controller to carry out a DPIA before any
@@ -11,13 +28,7 @@ construction) is on every supervisory authority's mandatory-DPIA list, so a
 regulated buyer cannot adopt the service in production without a DPIA on
 file for each high-risk activity. The new register is per-workspace,
 tenant-scoped at the query layer, admin and MFA gated on every mutation,
-and audit-logged through the existing admin audit chain. Each entry carries
-the Art. 35(7) fields (description, necessity, risks, mitigations, residual
-risk), tracks whether the DPO was consulted and whether Art. 36 prior
-consultation is required, and surfaces a `review_due_at` with an overdue
-count so the customer can keep the register current. Entries are versioned
-on update and archived (never hard-deleted) so the historical record stays
-intact for regulators.
+and audit-logged through the existing admin audit chain.
 
 ### Try it
 

@@ -287,6 +287,8 @@ def create_app() -> FastAPI:
     app.include_router(ropa_route.router)
     from adherence_api.routes import dpia as dpia_route
     app.include_router(dpia_route.router)
+    from adherence_api.routes import dual_control as dual_control_route
+    app.include_router(dual_control_route.router)
     # Ensure quota + workspace tables exist before the first request.
     try:
         from adherence_common.db import init_db
