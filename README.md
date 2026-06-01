@@ -2,6 +2,69 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Per-workspace HIPAA accounting of disclosures (45 CFR 164.528)
+
+A covered entity or business associate cannot sign the BAA without evidence that the vendor can produce, on demand, an accounting of every PHI disclosure made to external recipients for the prior six years, per patient, scoped to the workspace they are buying. The register lives in `adherence_common.disclosures`, is exposed at `/v1/admin/disclosures`, is admin-MFA gated, and is strictly tenant-scoped (no cross-tenant code path). Entries are append-only: corrections create a new row that references the prior id rather than mutating it, which is the immutability guarantee a regulator expects. Purpose categories follow the closed list in 164.528(a)(1) plus an `other` bucket. Every mutation writes an admin audit row. `GET /v1/admin/disclosures/subject/{subject_id}/accounting` returns the patient-ready accounting (default six year lookback). `GET /v1/admin/disclosures/export.csv` returns the full register for procurement packs.
+
+### Try it
+
+```bash
+# admin dashboard
+# open http://localhost:3000/settings/disclosures
+
+curl -H "x-api-key: $ADHERENCE_API_KEY" \
+  http://localhost:7421/v1/admin/disclosures
+
+curl -X POST -H "x-api-key: $ADHERENCE_API_KEY" \
+  -H 'content-type: application/json' \
+  -d '{"subject_id":"patient-1042","recipient_name":"State PHD","purpose":"public_health","phi_description":"lab result for reportable condition","requested_by":"compliance@acme","legal_basis":"45 CFR 164.512(b)"}' \
+  http://localhost:7421/v1/admin/disclosures
+
+curl -H "x-api-key: $ADHERENCE_API_KEY" \
+  http://localhost:7421/v1/admin/disclosures/subject/patient-1042/accounting
+
+curl -H "x-api-key: $ADHERENCE_API_KEY" \
+  http://localhost:7421/v1/admin/disclosures/export.csv
+```
+
+## Per-workspace AI transparency register
+
+Procurement teams reviewing an AI system under EU AI Act Article 13, NIST AI RMF, ISO/IEC 42001, FDA Good Machine Learning Practice, or HHS NPRM 1557 ask the same question: which models are deployed for *this* customer, what were they trained on, who owns them, are they cleared for PHI, when were they last validated, and was fairness assessed? Adherence-ml answers it with a per-workspace AI transparency register.
+
+Each record is a model card scoped to the calling tenant. Reads require `viewer`; mutations require `admin` and an active MFA challenge, are dry-run aware, and are written to the admin audit log with actor, IP, and request id. Registering a new card for an existing `(model_name, model_version)` automatically supersedes the prior active row with an immutable back-link.
+
+Endpoints under `/v1/admin/model-cards` (and a read-only `/v1/model-cards/active?model_name=...&model_version=...` for the caller's own tenant). CSV export at `/v1/admin/model-cards/export.csv`. UI at `/settings/model-cards`.
+
+### Try it
+
+Local dev runs the API at `http://127.0.0.1:8000` and the dashboard at `http://127.0.0.1:3000`. Open `http://127.0.0.1:3000/settings/model-cards` to register and review model cards. The same data over the API:
+
+```bash
+# List registered model cards for the calling tenant.
+curl -s -H "Authorization: Bearer $ADHERENCE_API_TOKEN" \
+  http://127.0.0.1:8000/v1/admin/model-cards | jq .
+
+# Register a card (admin scope + MFA challenge required).
+curl -s -X POST -H "Authorization: Bearer $ADHERENCE_API_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{
+    "model_name": "adherence-rf",
+    "model_version": "1.0.0",
+    "owner": "ml-platform@acme",
+    "intended_use": "Predict 30 day medication adherence risk.",
+    "training_data_sensitivity": "phi",
+    "phi_suitable": true,
+    "fairness_status": "assessed",
+    "last_validated_at": "2026-04-01T00:00:00Z",
+    "model_card_url": "https://docs.example/cards/adherence-rf-1.0.0"
+  }' \
+  http://127.0.0.1:8000/v1/admin/model-cards | jq .
+
+# Read the in-force card for a given (name, version) under the calling tenant.
+curl -s -H "Authorization: Bearer $ADHERENCE_API_TOKEN" \
+  "http://127.0.0.1:8000/v1/model-cards/active?model_name=adherence-rf&model_version=1.0.0" | jq .
+```
+
 ## Per-workspace SLA commitment register
 
 Enterprise procurement (MSA review, SOC 2 CC3.4, CAIQ STA-05 and STA-06) routinely asks the vendor to point at a single durable record of what was contractually committed to this specific customer: uptime percentage, severity response targets, RTO, RPO, and effective dates. The register lives in `adherence_common.sla_register`, is exposed at `/v1/admin/sla`, is admin-MFA gated, and is strictly tenant-scoped (no cross-tenant code path). Creating a new commitment automatically supersedes the prior active one and records the supersede reason on the archived row. `GET /v1/sla/current` returns the in-force commitment for the caller's own tenant.
