@@ -2,6 +2,49 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Per-subscription custom outbound webhook headers
+
+Enterprise customers wire our outbound webhooks into their own gateways,
+SIEMs, and clinic systems. Those endpoints usually demand a bearer token,
+a tenant correlation header, or both. Each outbound subscription can now
+carry a small set of operator-managed custom HTTP headers that ride
+along with every delivery (and every retry of that delivery), validated
+on write and merged in by the dispatcher before the HMAC signature
+headers so a tenant can never forge ``X-Adherence-Signature``,
+``X-Adherence-Timestamp``, or the framing headers. Sensitive header
+values (``Authorization``, tokens, secrets) are stored as written but
+redacted in the listing API and admin console, and the admin audit log
+records only header names so they do not leak via SOC2 evidence exports.
+
+Validation: at most ten headers, RFC 7230 token names, hop-by-hop and
+``X-Adherence-*`` names rejected, CR/LF/NUL stripped, values capped at
+1 KiB and 4 KiB combined. Tenant isolation: the management endpoints
+return 404 for a subscription owned by a different workspace.
+
+### Try it
+
+```bash
+# in another shell
+uvicorn adherence_api.app:create_app --factory --port 7421
+
+# create a subscription (replace $KEY with your admin api key)
+curl -sX PUT http://localhost:7421/v1/webhooks/outbound/subscriptions \
+  -H "x-api-key: $KEY" -H "content-type: application/json" \
+  -d '{"name":"clinic-1","url":"https://hooks.example.com/clinic","event_types":["intervention.recommended"],"active":true}'
+
+# attach the customer's bearer token + a correlation header
+curl -sX PUT http://localhost:7421/v1/webhooks/outbound/subscriptions/clinic-1/headers \
+  -H "x-api-key: $KEY" -H "content-type: application/json" \
+  -d '{"headers":{"Authorization":"Bearer customer-token","X-Customer-Tenant":"acme"}}'
+
+# read back (Authorization is masked, correlation header is visible)
+curl -s http://localhost:7421/v1/webhooks/outbound/subscriptions/clinic-1/headers \
+  -H "x-api-key: $KEY"
+```
+
+Pass ``?dry_run=true`` on the PUT to validate the proposed header set
+without persisting.
+
 ## Per-workspace dual-control (four-eyes) approval workflow
 
 Regulated buyers (HIPAA, SOC 2 CC6.1, SOX, banking) require that

@@ -35,6 +35,7 @@ from adherence_common.db import (
     WebhookDelivery, WebhookSubscription, init_db, session,
 )
 from adherence_common.logging import get_logger
+from adherence_common import outbound_headers
 from adherence_common import outbound_policy
 from adherence_common import webhook_events as _webhook_catalog
 
@@ -279,14 +280,39 @@ def dispatch(
             attempt_n = attempt
             if attempt > 1 and attempt - 1 < len(RETRY_BACKOFF_S):
                 time.sleep(RETRY_BACKOFF_S[attempt - 1])
-            headers = {
+            # Custom per-subscription headers (e.g. customer auth
+            # bearer or correlation id) are merged FIRST so the
+            # dispatcher's signature / framing headers always win.
+            # validate_headers already rejects any X-Adherence-* or
+            # framing override at admin time; we re-enforce here in
+            # case a row was hand-edited in the database.
+            headers: dict[str, str] = {}
+            try:
+                _extra = outbound_headers.decode(
+                    getattr(sub, "extra_headers_json", None),
+                )
+                for _nm, _vl in _extra.items():
+                    _lower = _nm.lower()
+                    if _lower.startswith("x-adherence-"):
+                        continue
+                    if _lower in outbound_headers.RESERVED_NAMES:
+                        continue
+                    if "\r" in _vl or "\n" in _vl or "\x00" in _vl:
+                        continue
+                    headers[_nm] = _vl
+            except Exception as _exc:  # pragma: no cover - defensive
+                log.warning(
+                    "webhook_extra_headers_skipped",
+                    subscription_id=sub.id, error=str(_exc),
+                )
+            headers.update({
                 "Content-Type": "application/json",
                 "X-Adherence-Signature": sig,
                 "X-Adherence-Signature-V2": sig_v2,
                 "X-Adherence-Timestamp": ts_str,
                 "X-Adherence-Event": event_type,
                 "X-Adherence-Attempt": str(attempt),
-            }
+            })
             if sig_prev:
                 # Receivers in the middle of rotating their stored secret
                 # can verify either header. Drop these headers once the

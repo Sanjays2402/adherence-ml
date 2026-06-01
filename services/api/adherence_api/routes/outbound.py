@@ -20,6 +20,7 @@ from adherence_api.deps import require_admin
 from adherence_api.dry_run import dry_run_response
 from adherence_api.routes.predict import _caller_id
 from adherence_common import outbound as outbound_mod
+from adherence_common import outbound_headers
 from adherence_common import outbound_policy
 from adherence_common import webhook_events as webhook_catalog
 from adherence_common.db import (
@@ -58,6 +59,12 @@ class SubscriptionOut(BaseModel):
     consecutive_failures: int = 0
     disabled_at: str | None = None
     disabled_reason: str | None = None
+    # Custom HTTP headers merged into every outbound delivery for this
+    # subscription. Sensitive values (Authorization, tokens, secrets)
+    # are masked with "***" in this response; the dispatcher still
+    # uses the unredacted value on the wire.
+    extra_headers: dict[str, str] = Field(default_factory=dict)
+    extra_headers_redacted_keys: list[str] = Field(default_factory=list)
 
 
 def _previous_active(row: WebhookSubscription) -> bool:
@@ -71,6 +78,14 @@ def _previous_active(row: WebhookSubscription) -> bool:
 def _row_to_out(row: WebhookSubscription) -> SubscriptionOut:
     exp = getattr(row, "secret_previous_expires_at", None)
     disabled_at = getattr(row, "disabled_at", None)
+    stored_headers = outbound_headers.decode(
+        getattr(row, "extra_headers_json", None),
+    )
+    visible_headers = outbound_headers.redact_for_display(stored_headers)
+    redacted_keys = sorted(
+        name for name in stored_headers
+        if outbound_headers.is_sensitive_name(name)
+    )
     return SubscriptionOut(
         id=row.id, name=row.name, url=row.url,
         event_types=[t for t in (row.event_types_csv or "").split(",") if t],
@@ -84,6 +99,8 @@ def _row_to_out(row: WebhookSubscription) -> SubscriptionOut:
         consecutive_failures=int(getattr(row, "consecutive_failures", 0) or 0),
         disabled_at=disabled_at.isoformat() if disabled_at else None,
         disabled_reason=getattr(row, "disabled_reason", None),
+        extra_headers=visible_headers,
+        extra_headers_redacted_keys=redacted_keys,
     )
 
 
@@ -777,3 +794,143 @@ def subscription_health(
         disabled_at=disabled_at.isoformat() if disabled_at else None,
         disabled_reason=disabled_reason,
     )
+
+
+# ---------------------------------------------------------------------------
+# Per-subscription custom HTTP headers
+# ---------------------------------------------------------------------------
+
+
+class HeadersIn(BaseModel):
+    """Replace the full custom-header map for a subscription.
+
+    Pass an empty object to clear all custom headers. Sensitive values
+    (Authorization, tokens, secrets) are stored as written but are
+    redacted in any subsequent listing response. The dispatcher never
+    lets these headers override the X-Adherence-* signature, timestamp,
+    event, or attempt headers.
+    """
+
+    headers: dict[str, str] = Field(default_factory=dict)
+
+
+class HeadersOut(BaseModel):
+    name: str
+    extra_headers: dict[str, str]
+    extra_headers_redacted_keys: list[str]
+    count: int
+
+
+def _validate_or_400(raw: dict[str, str]) -> dict[str, str]:
+    try:
+        return outbound_headers.validate_headers(raw)
+    except outbound_headers.HeaderValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": exc.code,
+                "reason": str(exc),
+                "field": exc.field,
+            },
+        )
+
+
+def _headers_out(row: WebhookSubscription) -> HeadersOut:
+    stored = outbound_headers.decode(getattr(row, "extra_headers_json", None))
+    return HeadersOut(
+        name=row.name,
+        extra_headers=outbound_headers.redact_for_display(stored),
+        extra_headers_redacted_keys=sorted(
+            n for n in stored if outbound_headers.is_sensitive_name(n)
+        ),
+        count=len(stored),
+    )
+
+
+@router.get(
+    "/subscriptions/{name}/headers",
+    response_model=HeadersOut,
+)
+def get_custom_headers(name: str, p=Depends(require_admin)) -> HeadersOut:
+    """Return the current custom-header map for ``name`` (sensitive
+    values redacted). Refuses to read across tenants."""
+    init_db()
+    tenant_id = str(p.get("tenant") or "default")
+    with session() as s:
+        row = s.execute(
+            select(WebhookSubscription).where(WebhookSubscription.name == name)
+        ).scalar_one_or_none()
+        if row is None or (getattr(row, "tenant_id", None) or "default") != tenant_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "not_found", "reason": "subscription not found"},
+            )
+        return _headers_out(row)
+
+
+@router.put(
+    "/subscriptions/{name}/headers",
+    response_model=HeadersOut,
+)
+def set_custom_headers(
+    name: str,
+    body: HeadersIn,
+    request: Request,
+    dry_run: bool = Query(
+        False,
+        description=(
+            "Validate the proposed header set without persisting it. "
+            "Returns the rendered (redacted) view that would be stored."
+        ),
+    ),
+    p=Depends(require_admin),
+) -> HeadersOut:
+    """Replace the custom-header map for ``name``. Pass ``{}`` to clear.
+
+    Validation: at most ten headers, names must be RFC 7230 tokens,
+    reserved framing and ``X-Adherence-*`` are rejected, values may
+    not contain CR/LF/NUL, each value <=1 KiB, total <=4 KiB.
+    """
+    init_db()
+    tenant_id = str(p.get("tenant") or "default")
+    caller = _caller_id(request, p)
+    cleaned = _validate_or_400(body.headers or {})
+    with session() as s:
+        row = s.execute(
+            select(WebhookSubscription).where(WebhookSubscription.name == name)
+        ).scalar_one_or_none()
+        if row is None or (getattr(row, "tenant_id", None) or "default") != tenant_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "not_found", "reason": "subscription not found"},
+            )
+        before = outbound_headers.decode(getattr(row, "extra_headers_json", None))
+        if dry_run:
+            preview = WebhookSubscription(
+                name=row.name,
+                extra_headers_json=outbound_headers.encode(cleaned),
+            )
+            return _headers_out(preview)
+        row.extra_headers_json = outbound_headers.encode(cleaned)
+        row.updated_at = datetime.utcnow()
+        s.commit()
+        s.refresh(row)
+        out = _headers_out(row)
+    try:
+        from adherence_common.admin_audit import record_admin_action
+        record_admin_action(
+            action="webhook.custom_headers.set",
+            principal=p if isinstance(p, dict) else None,
+            target=f"webhook_subscription:{name}",
+            details={
+                "actor": caller,
+                "before_names": sorted(before.keys()),
+                "after_names": sorted(cleaned.keys()),
+                "before_count": len(before),
+                "after_count": len(cleaned),
+            },
+            request_id=getattr(request.state, "request_id", None),
+        )
+    except Exception:
+        pass
+    return out

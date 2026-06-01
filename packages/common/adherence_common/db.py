@@ -271,6 +271,11 @@ class WebhookSubscription(Base):
     # per-tenant outbound host allowlist against this value so a tenant
     # narrowing its egress policy retroactively blocks its own old rows.
     tenant_id = Column(String(64), nullable=False, default="default", index=True)
+    # Per-subscription custom HTTP headers (JSON object) merged into
+    # every outbound delivery for this subscription. Validated by
+    # adherence_common.outbound_headers; cannot override X-Adherence-*
+    # signature/framing headers. NULL means no custom headers.
+    extra_headers_json = Column(Text, nullable=True)
     created_by = Column(String(64), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -680,6 +685,16 @@ def _ensure_tenant_columns(engine) -> None:
                     "ALTER TABLE webhook_subscriptions "
                     "ADD COLUMN disabled_reason VARCHAR(255)"
                 ))
+        # Per-subscription custom HTTP headers, stored as a JSON
+        # object. Validated on write by outbound_headers.validate; the
+        # dispatcher merges them in before stamping signature headers
+        # so a tenant cannot forge X-Adherence-* fields.
+        if "extra_headers_json" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE webhook_subscriptions "
+                    "ADD COLUMN extra_headers_json TEXT"
+                ))
     # Backfill dose_outcomes.tenant_id from prediction_audit on (user_id,
     # dose_id) so existing ground-truth rows participate in tenant-scoped
     # /v1/metrics/online the moment the upgraded code starts. Rows with
@@ -790,6 +805,7 @@ def init_db() -> None:
     from adherence_common import ropa as _ropa  # noqa: F401
     from adherence_common import dpia as _dpia  # noqa: F401
     from adherence_common import dual_control as _dc2  # noqa: F401
+    from adherence_common import maintenance as _maint  # noqa: F401
     engine = _engine()
     Base.metadata.create_all(engine)
     try:
