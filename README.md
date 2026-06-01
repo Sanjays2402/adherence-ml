@@ -2,6 +2,44 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## API key revocation with recorded reason
+
+Procurement and SOC2 reviewers ask the same question for every credential a vendor ever issued: why was it killed, when, and by whom? The previous revoke path flipped a boolean and walked away, so the audit log had no forensic record of compromise vs rotation vs offboarding. This release fixes that across the schema, the API, the UI, and the audit trail.
+
+- `DELETE /api/keys/{id}` now accepts an optional JSON body `{ "reason": "compromised" | "rotated" | "employee_offboarded" | "unused" | "vendor_offboarded" | "policy_violation" | "other", "note": "..." }`. Unknown reasons return 400; oversize notes (>280 chars) are rejected by zod.
+- A second revoke of the same key returns **409 Conflict** with the original `revoked_at` and `revoked_reason` instead of pretending the call succeeded, so SOAR playbooks can detect duplicate kill attempts.
+- Every outcome (success, denied, already_revoked, not_found) writes a tamper-evident entry to the dashboard audit log under action `api_key.revoke`, with actor email, IP, prefix, reason, note, and a before/after revoked flag.
+- `GET /api/keys` exposes `revoke_reasons` for the dashboard plus `revoked_reason`, `revoked_at`, `revoked_by_email`, and `revoked_note` on each key view.
+- The `/api-keys` page replaces the legacy `window.confirm` with an accessible modal (Escape to dismiss, focus-trapped buttons, character counter on the note). Revoked rows show the reason inline (`revoked: compromised`) and the full attribution on hover.
+- Legacy callers using `revokeKey(id)` keep the boolean contract; the new typed metadata flows through `revokeKeyDetailed(id, opts)`.
+
+Proven by `apps/web/tests/api-keys-revoke-reason.test.ts` (8 tests):
+
+- Reason, note, actor, and timestamp are persisted and round-trip through `publicView`.
+- Double-revoke returns `already_revoked` and never overwrites the first reason or timestamp.
+- The legacy `revokeKey(id)` boolean still returns `true` on first call and `false` on the second.
+- Notes longer than `REVOKE_NOTE_MAX` (280) are truncated, not silently rejected.
+- Off-enum reasons fall back to `unspecified` instead of polluting the audit log.
+- `SELECTABLE_REVOKE_REASONS` never advertises the legacy `unspecified` bucket to the dashboard.
+
+### Try the recorded revoke
+
+Web UI: <http://127.0.0.1:3000/api-keys>. Create a key, then click **revoke** to open the reason picker.
+
+```bash
+# Kill a leaked key and tell the audit log why.
+curl -s -X DELETE http://127.0.0.1:3000/api/keys/KEY_ID \
+  -H 'content-type: application/json' \
+  -b "adherence_session=$SESSION_COOKIE" \
+  -d '{"reason":"compromised","note":"posted in a public gist"}' | jq
+
+# A second attempt returns 409 with the original revoke metadata.
+curl -s -i -X DELETE http://127.0.0.1:3000/api/keys/KEY_ID \
+  -H 'content-type: application/json' \
+  -b "adherence_session=$SESSION_COOKIE" \
+  -d '{"reason":"rotated"}' | head -n 1
+```
+
 ## Catalog-aligned webhook subscriptions
 
 The published webhook event catalog already advertised six stable event types, but `POST /api/webhooks` and `POST /v1/webhooks` only validated two of them, so an enterprise integrator who pasted `intervention.recommended` from the procurement-facing catalog page got a 422. The dashboard checkbox list was hard-coded to the same two events, so customers could not subscribe to risk interventions, member invites, or API-key rotations even though the catalog promised those payloads.
