@@ -38,6 +38,69 @@ curl -s -i -X DELETE http://127.0.0.1:3000/api/keys/KEY_ID \
   -H 'content-type: application/json' \
   -b "adherence_session=$SESSION_COOKIE" \
   -d '{"reason":"rotated"}' | head -n 1
+## Step-up MFA for sensitive admin actions
+
+Long-lived dashboard sessions are convenient but a SOC2 CC6.1 reviewer flags them the moment they realise that one stolen laptop with an unlocked browser can issue API keys, rotate secrets, transfer workspace ownership, erase the operator account, and wipe every persisted row, all without ever proving a second factor. A signed session cookie is no longer enough for those actions.
+
+The dashboard now enforces a per-session step-up MFA window. When the caller has TOTP enrolled (or a workspace policy mandates MFA), sensitive routes require that the session was minted via 2FA or that the user has verified a TOTP code within the last 10 minutes. The check lives in `apps/web/lib/step-up.ts` and is wired through `requireDashboardAuth({ stepUp: true })` so adding it to a new route is one option flip.
+
+Gated routes:
+
+- `POST   /api/keys`               issue a new API key
+- `DELETE /api/keys/{id}`          revoke an API key
+- `POST   /api/keys/{id}/rotate`   rotate an API key secret
+- `POST   /api/workspaces/{id}/transfer-ownership`  hand the owner role over
+- `DELETE /api/auth/account`       hard-delete the caller's account
+- `POST   /api/settings/wipe`      irreversible workspace-wide data wipe
+
+Dry-run previews (`?dry_run=true`) intentionally do NOT require step-up: the whole point is to render the impact upfront so an operator can decide whether the action is worth the friction. Only the live, mutating call demands a fresh second factor.
+
+The gate returns HTTP 403 with a structured body so any UI can react:
+
+```json
+{
+  "error": "mfa_step_up_required",
+  "code": "mfa_step_up_required",
+  "detail": "this action requires a fresh second factor proof; enter your TOTP code to continue",
+  "step_up": {
+    "max_age_seconds": 600,
+    "last_mfa_at": null,
+    "totp_enrolled": true,
+    "policy_requires_mfa": false,
+    "verify_url": "/api/auth/2fa/step-up",
+    "reason": "no_recent_mfa"
+  }
+}
+```
+
+The dashboard mounts `<StepUpProvider />` (in `app/layout.tsx`) and any client that calls `stepUpFetch()` instead of `fetch()` gets a transparent retry: the dialog opens, the user enters a TOTP or recovery code, `POST /api/auth/2fa/step-up` stamps the session's `last_mfa_at`, and the original request is replayed once. The api-keys console already uses it, so issuing, rotating, and revoking a key prompts inline without bouncing the user back to `/login`. Every step-up attempt (success and failure) is appended to the existing tamper-evident dashboard audit log under `auth.step_up`, and every gated denial is logged under the original action name with `reason: "mfa_step_up_required"` so a CISO can see refused attempts on the same timeline as the actions themselves.
+
+Proven by `apps/web/tests/step-up.test.ts` (6 tests):
+
+- Users with no TOTP enrolled and no workspace MFA policy pass through, so single-user and pre-2FA deployments are never locked out of their own console.
+- TOTP-enrolled users whose session has no recent MFA proof are blocked with `no_recent_mfa`.
+- A session with `last_mfa_at` inside the 10-minute window clears the gate.
+- A session with `last_mfa_at` past the window is blocked again.
+- `markSessionMfa` persists the new timestamp on the per-session record so subsequent reads see it.
+- The denied response is HTTP 403 with `code: "mfa_step_up_required"` and the verify URL the client needs to call.
+
+### Try it
+
+Local dashboard: <http://127.0.0.1:3000/api-keys>. Enroll a TOTP authenticator at `/settings/security`, sign out and back in (so the session records a fresh `last_mfa_at`), then wait 10 minutes or open the browser devtools and `document.cookie`-clear the timestamp. Click "issue key" and the step-up dialog opens. Enter the current 6-digit code, the request retries automatically, and the key issues with the dialog dismissed.
+
+```bash
+# refresh the step-up window on the current session
+curl -sS -X POST http://127.0.0.1:3000/api/auth/2fa/step-up \
+  -H 'content-type: application/json' \
+  --cookie 'adh_session=...' \
+  -d '{"code":"123456"}'
+# => { "ok": true, "last_mfa_at": 1717100000000, "max_age_seconds": 600, ... }
+
+# without a fresh proof, issuing a key now refuses with 403 mfa_step_up_required
+curl -sS -X POST http://127.0.0.1:3000/api/keys \
+  -H 'content-type: application/json' \
+  --cookie 'adh_session=...' \
+  -d '{"name":"prod-readonly","scopes":["read:runs"],"ttl_days":30}'
 ```
 
 ## Catalog-aligned webhook subscriptions

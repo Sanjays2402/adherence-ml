@@ -14,6 +14,9 @@ import os from "node:os";
 
 const tmp = mkdtempSync(path.join(os.tmpdir(), "adh-dryrun-"));
 process.env.ADHERENCE_DATA_DIR = tmp;
+// Bypass signed-session auth so the route handler's dry-run + step-up
+// gates can be exercised with plain Request objects.
+process.env.ADHERENCE_DASHBOARD_OPEN = "1";
 
 const store = await import("../lib/api-keys-store");
 const route = await import("../app/api/keys/[id]/route");

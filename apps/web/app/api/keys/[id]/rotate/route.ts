@@ -15,6 +15,7 @@ export async function POST(
   const gate = await requireDashboardAuth(req, {
     action: "api_key.rotate.dashboard",
     target: id,
+    stepUp: true,
   });
   if (!gate.ok) return gate.response;
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { previewWipe, wipeAllData } from "@/lib/settings-store";
 import { dryRunBody, isDryRun, withDryRunHeaders } from "@/lib/dry-run";
+import { requireDashboardAuth, auditAction } from "@/lib/dashboard-auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -36,6 +37,13 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // The real wipe requires a signed session AND a fresh second factor.
+  const gate = await requireDashboardAuth(req, {
+    action: "workspace.data.wipe",
+    stepUp: true,
+  });
+  if (!gate.ok) return gate.response;
+
   let body: unknown;
   try {
     body = await req.json();
@@ -53,5 +61,10 @@ export async function POST(req: NextRequest) {
     );
   }
   const report = await wipeAllData();
+  await auditAction(req, gate.ctx, {
+    action: "workspace.data.wipe",
+    target: null,
+    metadata: { ...report },
+  });
   return NextResponse.json({ ok: true, ...report });
 }

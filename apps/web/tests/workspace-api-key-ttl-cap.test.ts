@@ -5,6 +5,10 @@ import path from "node:path";
 
 const tmp = mkdtempSync(path.join(tmpdir(), "kttl-"));
 process.env.ADHERENCE_DATA_DIR = tmp;
+// These tests exercise the route handlers directly with plain Request
+// objects; the dashboard-open flag bypasses the signed-session check so
+// the policy-validation logic under test still gets exercised.
+process.env.ADHERENCE_DASHBOARD_OPEN = "1";
 
 // import AFTER env is set so module-level DATA_DIR resolves to tmp
 const ws = await import("../lib/workspaces-store");

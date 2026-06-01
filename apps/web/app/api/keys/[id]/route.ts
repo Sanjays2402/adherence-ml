@@ -15,6 +15,7 @@ import {
 import { dryRunBody, isDryRun, withDryRunHeaders } from "@/lib/dry-run";
 import { recordAudit } from "@/lib/dashboard-audit";
 import { getSession } from "@/lib/session";
+import { requireDashboardAuth } from "@/lib/dashboard-auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -81,6 +82,12 @@ export async function DELETE(
   ctx: { params: Promise<{ id: string }> },
 ) {
   const { id } = await ctx.params;
+  const gate = await requireDashboardAuth(req, {
+    action: "api_key.revoke.dashboard",
+    target: id,
+    stepUp: true,
+  });
+  if (!gate.ok) return gate.response;
   // Peek without mutating so we can render dry-run previews AND return a
   // helpful 404 in the live path before touching the write queue.
   const keys = await listKeys();

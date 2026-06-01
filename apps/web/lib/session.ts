@@ -156,6 +156,7 @@ export function verifySession(raw: string | undefined): SessionPayload | null {
 export async function buildSession(
   user: UserRecord,
   ctx?: SessionRequestContext,
+  opts?: { mfaProvenAt?: number | null },
 ): Promise<{
   cookie: string;
   expires: Date;
@@ -182,6 +183,7 @@ export async function buildSession(
       ip: ctx?.ip ?? null,
       user_agent: ctx?.user_agent ?? null,
       label: ctx?.label ?? "session",
+      last_mfa_at: opts?.mfaProvenAt ?? null,
     });
     sid = rec.sid;
   } catch {
@@ -222,7 +224,24 @@ export interface SessionContext {
 export async function getSession(req?: NextRequest): Promise<SessionContext | null> {
   let raw: string | undefined;
   if (req) {
-    raw = req.cookies.get(SESSION_COOKIE)?.value;
+    // Plain Request objects don't have NextRequest's cookies helper. Fall
+    // back to parsing the Cookie header so unit tests that build a raw
+    // Request continue to work.
+    if (req.cookies && typeof (req.cookies as { get?: unknown }).get === "function") {
+      raw = req.cookies.get(SESSION_COOKIE)?.value;
+    } else {
+      const cookieHeader = req.headers?.get?.("cookie") ?? "";
+      const parts = cookieHeader.split(/;\s*/);
+      for (const p of parts) {
+        const eq = p.indexOf("=");
+        if (eq <= 0) continue;
+        const name = p.slice(0, eq);
+        if (name === SESSION_COOKIE) {
+          raw = decodeURIComponent(p.slice(eq + 1));
+          break;
+        }
+      }
+    }
   } else {
     const jar = await cookies();
     raw = jar.get(SESSION_COOKIE)?.value;

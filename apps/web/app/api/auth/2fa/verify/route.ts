@@ -155,6 +155,7 @@ export async function POST(req: NextRequest) {
   const { cookie, expires } = await buildSession(
     fresh,
     requestContextFromHeaders(req.headers, "2fa"),
+    { mfaProvenAt: Date.now() },
   );
   const nextDest =
     pending.payload.next && pending.payload.next.startsWith("/") && !pending.payload.next.startsWith("//")

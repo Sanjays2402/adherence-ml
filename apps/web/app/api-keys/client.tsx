@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 import useSWR from "swr";
+import { stepUpFetch } from "@/components/step-up-dialog";
 import {
   Key,
   Copy,
@@ -503,7 +504,7 @@ export default function KeysClient() {
       const cidrList = trimmedCidrs
         ? trimmedCidrs.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean)
         : null;
-      const res = await fetch("/api/keys", {
+      const res = await stepUpFetch("/api/keys", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -560,7 +561,7 @@ export default function KeysClient() {
     setRevokingId(revokeTarget.id);
     setRevokeErr(null);
     try {
-      const res = await fetch(`/api/keys/${revokeTarget.id}`, {
+      const res = await stepUpFetch(`/api/keys/${revokeTarget.id}`, {
         method: "DELETE",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -597,7 +598,7 @@ export default function KeysClient() {
       }
       setRotatingId(k.id);
       try {
-        const res = await fetch(`/api/keys/${k.id}/rotate`, { method: "POST" });
+        const res = await stepUpFetch(`/api/keys/${k.id}/rotate`, { method: "POST" });
         const json = await res.json();
         if (!res.ok) {
           alert(json?.detail ?? "rotate failed");

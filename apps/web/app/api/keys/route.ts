@@ -13,6 +13,7 @@ import {
   ttlToExpiresAt,
 } from "@/lib/api-keys-store";
 import { effectiveApiKeyMaxTtlDays } from "@/lib/workspaces-store";
+import { requireDashboardAuth, auditAction } from "@/lib/dashboard-auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -43,6 +44,11 @@ const CreateSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
+  const gate = await requireDashboardAuth(req, {
+    action: "api_key.create.dashboard",
+    stepUp: true,
+  });
+  if (!gate.ok) return gate.response;
   let body: unknown;
   try {
     body = await req.json();
@@ -104,6 +110,17 @@ export async function POST(req: NextRequest) {
     expiresAt,
     allowedCidrs,
   );
+  await auditAction(req, gate.ctx, {
+    action: "api_key.create.dashboard",
+    target: record.id,
+    metadata: {
+      name: record.name,
+      prefix: record.prefix,
+      scopes,
+      expires_at: expiresAt,
+      allowed_cidr_count: allowedCidrs?.length ?? 0,
+    },
+  });
   return NextResponse.json({
     ...publicView(record),
     key: plaintext, // shown exactly once

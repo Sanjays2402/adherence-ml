@@ -11,6 +11,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession, type SessionContext } from "./session";
 import { recordAudit, type AuditOutcome } from "./dashboard-audit";
+import { evaluateStepUp, stepUpDeniedResponse } from "./step-up";
 
 export interface AuthContext {
   session: SessionContext | null;
@@ -23,10 +24,41 @@ export function isDashboardOpen(): boolean {
 
 export async function requireDashboardAuth(
   req: NextRequest,
-  opts: { action: string; target?: string | null } = { action: "auth.required" },
+  opts: {
+    action: string;
+    target?: string | null;
+    /**
+     * When true, the caller must have proven a second factor recently
+     * (see lib/step-up.ts). Used by destructive / trust-altering routes.
+     */
+    stepUp?: boolean;
+    stepUpMaxAgeMs?: number;
+  } = { action: "auth.required" },
 ): Promise<{ ok: true; ctx: AuthContext } | { ok: false; response: NextResponse }> {
   const session = await getSession(req);
-  if (session) return { ok: true, ctx: { session, bypassed: false } };
+  if (session) {
+    if (opts.stepUp) {
+      const decision = await evaluateStepUp(session, { maxAgeMs: opts.stepUpMaxAgeMs });
+      if (!decision.ok) {
+        await recordAudit({
+          action: opts.action,
+          target: opts.target ?? null,
+          outcome: "denied",
+          metadata: {
+            reason: "mfa_step_up_required",
+            step_up_reason: decision.reason ?? null,
+          },
+          actor: { user_id: session.user.id, email: session.user.email },
+          request: req,
+        });
+        return {
+          ok: false,
+          response: stepUpDeniedResponse(decision, { maxAgeMs: opts.stepUpMaxAgeMs }),
+        };
+      }
+    }
+    return { ok: true, ctx: { session, bypassed: false } };
+  }
   if (isDashboardOpen())
     return { ok: true, ctx: { session: null, bypassed: true } };
   await recordAudit({

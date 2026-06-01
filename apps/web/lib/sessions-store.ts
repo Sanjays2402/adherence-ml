@@ -33,6 +33,14 @@ export interface SessionRecord {
   label: string;
   revoked: boolean;
   revoked_at: number | null;
+  /**
+   * Last time this session proved possession of a second factor (TOTP or
+   * recovery code). Set at login when 2FA was used, refreshed by the
+   * step-up endpoint. Sensitive actions (api key issue/rotate/revoke,
+   * ownership transfer, account erasure, data wipe) require this to be
+   * within STEP_UP_MAX_AGE_MS. null means "never proved on this session".
+   */
+  last_mfa_at?: number | null;
 }
 
 interface Store {
@@ -89,6 +97,8 @@ export interface CreateSessionInput {
   ip?: string | null;
   user_agent?: string | null;
   label?: string;
+  /** When non-null, the session is born with a proven 2FA timestamp. */
+  last_mfa_at?: number | null;
 }
 
 /** Mint and persist a new session record; returns the freshly-issued sid. */
@@ -105,6 +115,7 @@ export async function createSession(input: CreateSessionInput): Promise<SessionR
     label: input.label && input.label.length > 0 ? input.label.slice(0, 32) : "session",
     revoked: false,
     revoked_at: null,
+    last_mfa_at: input.last_mfa_at ?? null,
   };
   const store = await readStore();
   store.sessions.push(rec);
@@ -121,6 +132,25 @@ export async function getSessionRecord(sid: string): Promise<SessionRecord | nul
   if (!rec) return null;
   if (rec.expires_at < Date.now()) return null;
   if (rec.revoked) return null;
+  return rec;
+}
+
+/**
+ * Stamp the session's last_mfa_at to `now` (or supplied timestamp). Used by
+ * the 2FA step-up endpoint to renew the step-up window after a fresh TOTP.
+ * Returns the updated record, or null if the session was not found / revoked.
+ */
+export async function markSessionMfa(
+  sid: string,
+  at: number = Date.now(),
+): Promise<SessionRecord | null> {
+  if (!sid) return null;
+  const store = await readStore();
+  const rec = store.sessions.find((s) => s.sid === sid);
+  if (!rec || rec.revoked) return null;
+  if (rec.expires_at < Date.now()) return null;
+  rec.last_mfa_at = at;
+  await writeStore(store);
   return rec;
 }
 

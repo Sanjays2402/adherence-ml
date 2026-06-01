@@ -5,6 +5,7 @@ import Sidebar from "@/components/layout/sidebar";
 import InstallPrompt from "@/components/layout/install-prompt";
 import OnboardingBanner from "@/components/layout/onboarding-banner";
 import SwRegister from "@/components/layout/sw-register";
+import { StepUpProvider } from "@/components/step-up-dialog";
 
 const plexSans = IBM_Plex_Sans({
   subsets: ["latin"],
@@ -54,6 +55,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </div>
         <InstallPrompt />
         <SwRegister />
+        <StepUpProvider />
       </body>
     </html>
   );

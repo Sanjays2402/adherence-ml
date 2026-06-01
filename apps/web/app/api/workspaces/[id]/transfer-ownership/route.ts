@@ -18,6 +18,7 @@ import {
 } from "@/lib/workspaces-store";
 import { dryRunBody, isDryRun, withDryRunHeaders } from "@/lib/dry-run";
 import { recordAudit } from "@/lib/dashboard-audit";
+import { requireRecentMfa } from "@/lib/step-up";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -49,6 +50,27 @@ export async function POST(
       metadata: { reason: "not_owner", caller_role: ws.role },
     });
     return NextResponse.json({ detail: "owner only" }, { status: 403 });
+  }
+
+  // Transferring ownership permanently changes the workspace control plane.
+  // Require a fresh second factor when the caller has one. Dry-run is
+  // allowed without step-up so owners can preview the impact.
+  if (!isDryRun(req)) {
+    const step = await requireRecentMfa(req, ctx);
+    if (!step.ok) {
+      await recordAudit({
+        action: "workspace.ownership.transfer",
+        target: id,
+        outcome: "denied",
+        actor: { user_id: ctx.user.id, email: ctx.user.email ?? null },
+        request: req,
+        metadata: {
+          reason: "mfa_step_up_required",
+          step_up_reason: step.decision.reason ?? null,
+        },
+      });
+      return step.response;
+    }
   }
 
   let body: unknown;

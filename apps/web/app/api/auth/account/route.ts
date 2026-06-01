@@ -17,6 +17,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getSession, SESSION_COOKIE } from "@/lib/session";
+import { requireRecentMfa } from "@/lib/step-up";
 import { recordAudit } from "@/lib/dashboard-audit";
 import { isDryRun, withDryRunHeaders, dryRunBody } from "@/lib/dry-run";
 import {
@@ -55,6 +56,27 @@ export async function DELETE(req: NextRequest) {
       { detail: "auth required" },
       { status: 401 },
     );
+  }
+
+  // Step-up MFA: erasing an account is irreversible and must require a
+  // fresh second factor when the user has one (or when policy mandates).
+  // Dry-run previews are exempt so the UI can render the impact upfront.
+  if (!isDryRun(req)) {
+    const step = await requireRecentMfa(req, sess);
+    if (!step.ok) {
+      await recordAudit({
+        action: "account.delete",
+        target: `user:${sess.user.id}`,
+        outcome: "denied",
+        actor: { user_id: sess.user.id, email: sess.user.email },
+        metadata: {
+          reason: "mfa_step_up_required",
+          step_up_reason: step.decision.reason ?? null,
+        },
+        request: req,
+      });
+      return step.response;
+    }
   }
 
   if (isDryRun(req)) {
