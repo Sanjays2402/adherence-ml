@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   ALL_SCOPES,
   MAX_KEY_CIDRS,
+  SELECTABLE_REVOKE_REASONS,
   createKey,
   listKeys,
   normalizeAllowedCidrs,
@@ -25,6 +26,7 @@ export async function GET() {
     available_scopes: ALL_SCOPES,
     ttl_presets_days: presets.length ? presets : (cap !== null ? [cap] : [7, 30, 90, 365]),
     api_key_max_ttl_days: cap,
+    revoke_reasons: SELECTABLE_REVOKE_REASONS,
   });
 }
 

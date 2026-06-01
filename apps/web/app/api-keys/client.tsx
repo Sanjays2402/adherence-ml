@@ -45,9 +45,53 @@ type KeyRow = {
   allowed_cidrs: string[] | null;
   last_used_ip?: string | null;
   last_used_user_agent?: string | null;
+  revoked_reason?: RevokeReason | null;
+  revoked_note?: string | null;
+  revoked_at?: number | null;
+  revoked_by_email?: string | null;
 };
 
-type ListResp = { keys: KeyRow[]; available_scopes: Scope[]; ttl_presets_days: number[] };
+type RevokeReason =
+  | "compromised"
+  | "rotated"
+  | "employee_offboarded"
+  | "unused"
+  | "vendor_offboarded"
+  | "policy_violation"
+  | "other"
+  | "unspecified";
+
+const REVOKE_REASON_LABELS: Record<RevokeReason, string> = {
+  compromised: "Compromised / leaked",
+  rotated: "Rotated to new key",
+  employee_offboarded: "Employee offboarded",
+  unused: "No longer used",
+  vendor_offboarded: "Vendor offboarded",
+  policy_violation: "Policy violation",
+  other: "Other (see note)",
+  unspecified: "Unspecified",
+};
+
+const DEFAULT_SELECTABLE_REASONS: RevokeReason[] = [
+  "compromised",
+  "rotated",
+  "employee_offboarded",
+  "unused",
+  "vendor_offboarded",
+  "policy_violation",
+  "other",
+];
+
+const REVOKE_NOTE_MAX = 280;
+
+type RevokeTarget = { id: string; name: string; prefix: string; summary: string };
+
+type ListResp = {
+  keys: KeyRow[];
+  available_scopes: Scope[];
+  ttl_presets_days: number[];
+  revoke_reasons?: RevokeReason[];
+};
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -437,6 +481,10 @@ export default function KeysClient() {
   const [createErr, setCreateErr] = useState<string | null>(null);
   const [issued, setIssued] = useState<{ name: string; key: string; scopes?: Scope[]; rotated?: boolean } | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [revokeTarget, setRevokeTarget] = useState<RevokeTarget | null>(null);
+  const [revokeReason, setRevokeReason] = useState<RevokeReason>("compromised");
+  const [revokeNote, setRevokeNote] = useState("");
+  const [revokeErr, setRevokeErr] = useState<string | null>(null);
   const [rotatingId, setRotatingId] = useState<string | null>(null);
 
   const onCreate = useCallback(async () => {
@@ -483,34 +531,60 @@ export default function KeysClient() {
 
   const onRevoke = useCallback(
     async (id: string) => {
-      setRevokingId(id);
+      const k = (data?.keys ?? []).find((kk) => kk.id === id);
+      if (!k) return;
+      // Build a server-authored summary first; falls back to a local one if
+      // the dry-run endpoint is unreachable for any reason.
+      let summary = `This will immediately invalidate ${k.name} (prefix ${k.prefix}).`;
       try {
-        // Enterprise dry-run: ask the API what would happen before we commit.
-        // This proves the destructive call is reviewable and gives the
-        // operator a final, server-authored summary to confirm against.
-        let summary = "This will immediately invalidate the key.";
-        try {
-          const previewRes = await fetch(`/api/keys/${id}?dry_run=true`, {
-            method: "DELETE",
-          });
-          if (previewRes.ok) {
-            const preview = await previewRes.json();
-            if (preview?.preview?.summary) summary = preview.preview.summary;
-          }
-        } catch {
-          /* preview is advisory; fall through to confirmation */
+        const previewRes = await fetch(`/api/keys/${id}?dry_run=true`, {
+          method: "DELETE",
+        });
+        if (previewRes.ok) {
+          const preview = await previewRes.json();
+          if (preview?.preview?.summary) summary = preview.preview.summary;
         }
-        if (!confirm(`Revoke this key?\n\n${summary}`)) {
-          return;
-        }
-        await fetch(`/api/keys/${id}`, { method: "DELETE" });
-        mutate();
-      } finally {
-        setRevokingId(null);
+      } catch {
+        /* preview is advisory; modal still opens */
       }
+      setRevokeTarget({ id, name: k.name, prefix: k.prefix, summary });
+      setRevokeReason("compromised");
+      setRevokeNote("");
+      setRevokeErr(null);
     },
-    [mutate],
+    [data],
   );
+
+  const confirmRevoke = useCallback(async () => {
+    if (!revokeTarget) return;
+    setRevokingId(revokeTarget.id);
+    setRevokeErr(null);
+    try {
+      const res = await fetch(`/api/keys/${revokeTarget.id}`, {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          reason: revokeReason,
+          note: revokeNote.trim() ? revokeNote.trim().slice(0, REVOKE_NOTE_MAX) : undefined,
+        }),
+      });
+      if (!res.ok) {
+        let detail = `revoke failed (${res.status})`;
+        try {
+          const j = await res.json();
+          if (j?.detail) detail = j.detail;
+        } catch {
+          /* keep status text */
+        }
+        setRevokeErr(detail);
+        return;
+      }
+      setRevokeTarget(null);
+      mutate();
+    } finally {
+      setRevokingId(null);
+    }
+  }, [revokeTarget, revokeReason, revokeNote, mutate]);
 
   const onRotate = useCallback(
     async (k: KeyRow) => {
@@ -540,6 +614,9 @@ export default function KeysClient() {
 
   const keys = data?.keys ?? [];
   const active = keys.filter((k) => !k.revoked).length;
+  const selectableReasons: RevokeReason[] = data?.revoke_reasons?.length
+    ? data.revoke_reasons
+    : DEFAULT_SELECTABLE_REASONS;
 
   const sampleKey = issued?.key ?? "adh_YOUR_KEY_HERE";
   const curlRuns = `curl http://localhost:3000/v1/runs?limit=10 \\
@@ -877,7 +954,20 @@ export default function KeysClient() {
                       </td>
                       <td className="px-4 py-2">
                         {k.revoked ? (
-                          <Badge tone="danger">revoked</Badge>
+                          <span
+                            title={
+                              k.revoked_reason
+                                ? `${REVOKE_REASON_LABELS[k.revoked_reason] ?? k.revoked_reason}` +
+                                  (k.revoked_at ? ` on ${fmt(k.revoked_at)}` : "") +
+                                  (k.revoked_by_email ? ` by ${k.revoked_by_email}` : "") +
+                                  (k.revoked_note ? ` - ${k.revoked_note}` : "")
+                                : "Revoked"
+                            }
+                          >
+                            <Badge tone="danger">
+                              revoked{k.revoked_reason && k.revoked_reason !== "unspecified" ? `: ${k.revoked_reason.replace(/_/g, " ")}` : ""}
+                            </Badge>
+                          </span>
                         ) : k.expired ? (
                           <Badge tone="danger">expired</Badge>
                         ) : (
@@ -1011,6 +1101,79 @@ export default function KeysClient() {
           </p>
         </div>
       </Card>
+      {revokeTarget ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="revoke-key-title"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setRevokeTarget(null);
+          }}
+        >
+          <div className="w-full max-w-md rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-5 shadow-xl">
+            <div className="flex items-start gap-3">
+              <Warning weight="duotone" size={22} className="text-[var(--color-high)] mt-0.5" />
+              <div className="flex-1">
+                <h2 id="revoke-key-title" className="text-sm font-medium">
+                  Revoke {revokeTarget.name}
+                </h2>
+                <p className="mt-1 text-[12px] text-[var(--color-muted)]">{revokeTarget.summary}</p>
+              </div>
+            </div>
+            <label className="mt-4 block text-[11px] uppercase tracking-wide text-[var(--color-muted)]">
+              Reason
+            </label>
+            <select
+              value={revokeReason}
+              onChange={(e) => setRevokeReason(e.target.value as RevokeReason)}
+              className="mt-1 w-full rounded border border-[var(--color-border)] bg-transparent px-2 py-1.5 text-[12px] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
+              aria-label="revocation reason"
+            >
+              {selectableReasons.map((r) => (
+                <option key={r} value={r}>
+                  {REVOKE_REASON_LABELS[r] ?? r}
+                </option>
+              ))}
+            </select>
+            <label className="mt-3 block text-[11px] uppercase tracking-wide text-[var(--color-muted)]">
+              Note <span className="normal-case">(optional, {REVOKE_NOTE_MAX} chars max)</span>
+            </label>
+            <textarea
+              value={revokeNote}
+              onChange={(e) => setRevokeNote(e.target.value.slice(0, REVOKE_NOTE_MAX))}
+              rows={3}
+              placeholder="e.g. found in a public gist, rotating to new vendor account"
+              className="mt-1 w-full rounded border border-[var(--color-border)] bg-transparent px-2 py-1.5 text-[12px] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
+              aria-label="revocation note"
+            />
+            <div className="mt-1 text-right text-[10px] text-[var(--color-muted)]">
+              {revokeNote.length}/{REVOKE_NOTE_MAX}
+            </div>
+            {revokeErr ? (
+              <div className="mt-2 text-[12px] text-[var(--color-high)]">{revokeErr}</div>
+            ) : null}
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setRevokeTarget(null)}
+                disabled={revokingId === revokeTarget.id}
+                className="text-[12px] px-3 py-1.5 rounded border border-[var(--color-border)] hover:bg-[var(--color-surface)] disabled:opacity-50"
+              >
+                cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmRevoke}
+                disabled={revokingId === revokeTarget.id}
+                className="text-[12px] px-3 py-1.5 rounded bg-[var(--color-high)] text-white hover:opacity-90 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)] disabled:opacity-50"
+              >
+                {revokingId === revokeTarget.id ? "revoking..." : "revoke key"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -263,6 +263,61 @@ export interface ApiKeyRecord {
    */
   last_used_ip?: string | null;
   last_used_user_agent?: string | null;
+  /**
+   * Why this key was revoked, captured at revocation time. Forensics and
+   * SOC2 CC6.1 / ISO 27001 A.9.2.6 want a recorded justification for every
+   * credential lifecycle change, not just a boolean flag. `null` on keys
+   * revoked before this field existed (treat as `unspecified` in the UI).
+   */
+  revoked_reason?: RevokeReason | null;
+  /** Free-text operator note (max 280 chars), optional context for the reason. */
+  revoked_note?: string | null;
+  /** Epoch ms when revocation happened. */
+  revoked_at?: number | null;
+  /** Dashboard user id that triggered the revoke. `null` for system/CLI paths. */
+  revoked_by_user_id?: string | null;
+  /** Email at revoke time, snapshotted so a later user-rename does not lose attribution. */
+  revoked_by_email?: string | null;
+}
+
+/**
+ * Reasons an operator can give when revoking an API key. The set is
+ * intentionally small so dashboards, exports, and audit queries can pivot
+ * cleanly. `unspecified` exists for legacy rows and scripted/CLI revokes
+ * that pre-date this field; the dashboard requires an explicit choice.
+ */
+export const REVOKE_REASONS = [
+  "compromised",
+  "rotated",
+  "employee_offboarded",
+  "unused",
+  "vendor_offboarded",
+  "policy_violation",
+  "other",
+  "unspecified",
+] as const;
+export type RevokeReason = (typeof REVOKE_REASONS)[number];
+
+/** Reasons a human operator is allowed to pick from the UI / API. */
+export const SELECTABLE_REVOKE_REASONS: ReadonlyArray<RevokeReason> = REVOKE_REASONS.filter(
+  (r) => r !== "unspecified",
+);
+
+/** Cap on the free-text note attached to a revoke. */
+export const REVOKE_NOTE_MAX = 280;
+
+export interface RevokeOptions {
+  reason?: RevokeReason | null;
+  note?: string | null;
+  actor?: { user_id: string | null; email: string | null } | null;
+}
+
+export interface RevokeResult {
+  ok: boolean;
+  /** `already_revoked` lets the route return 409 instead of pretending it worked. */
+  status: "revoked" | "already_revoked" | "not_found";
+  before: ApiKeyRecord | null;
+  after: ApiKeyRecord | null;
 }
 
 /** Normalize a user-supplied daily quota value into a stored field. */
@@ -393,7 +448,20 @@ export function publicView(k: ApiKeyRecord) {
     allowed_cidrs: Array.isArray(k.allowed_cidrs) ? [...k.allowed_cidrs] : null,
     last_used_ip: k.last_used_ip ?? null,
     last_used_user_agent: k.last_used_user_agent ?? null,
+    revoked_reason: k.revoked_reason ?? (k.revoked ? "unspecified" : null),
+    revoked_note: k.revoked_note ?? null,
+    revoked_at: k.revoked_at ?? null,
+    revoked_by_email: k.revoked_by_email ?? null,
   };
+}
+
+/** Normalize and validate a user-supplied revoke note. Returns null if empty. */
+export function normalizeRevokeNote(raw: unknown): string | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, REVOKE_NOTE_MAX);
 }
 
 /**
@@ -566,18 +634,55 @@ export async function rotateKey(
   return issued;
 }
 
-export async function revokeKey(id: string): Promise<boolean> {
-  let ok = false;
+/**
+ * Revoke an API key.
+ *
+ * Backwards compatible: `await revokeKey(id)` still returns `boolean`.
+ * Pass `opts` to capture forensic metadata (reason, note, acting user).
+ * Already-revoked keys are NOT flipped a second time, and the function
+ * returns `false` so callers can distinguish first-revoke from no-op.
+ */
+export async function revokeKey(
+  id: string,
+  opts: RevokeOptions = {},
+): Promise<boolean> {
+  const result = await revokeKeyDetailed(id, opts);
+  return result.status === "revoked";
+}
+
+/**
+ * Like `revokeKey` but returns the full transition so the API layer can
+ * write a meaningful audit entry (before/after diff) and return 404 vs
+ * 409 vs 200 correctly.
+ */
+export async function revokeKeyDetailed(
+  id: string,
+  opts: RevokeOptions = {},
+): Promise<RevokeResult> {
+  let result: RevokeResult = { ok: false, status: "not_found", before: null, after: null };
   writeQueue = writeQueue.then(async () => {
     const s = await readStore();
     const k = s.keys.find((k) => k.id === id);
     if (!k) return;
+    const before: ApiKeyRecord = { ...k };
+    if (k.revoked) {
+      result = { ok: false, status: "already_revoked", before, after: { ...k } };
+      return;
+    }
+    const reason: RevokeReason = opts.reason && REVOKE_REASONS.includes(opts.reason)
+      ? opts.reason
+      : "unspecified";
     k.revoked = true;
-    ok = true;
+    k.revoked_reason = reason;
+    k.revoked_note = normalizeRevokeNote(opts.note);
+    k.revoked_at = Date.now();
+    k.revoked_by_user_id = opts.actor?.user_id ?? null;
+    k.revoked_by_email = opts.actor?.email ?? null;
     await writeStore(s);
+    result = { ok: true, status: "revoked", before, after: { ...k } };
   });
   await writeQueue;
-  return ok;
+  return result;
 }
 
 /**
