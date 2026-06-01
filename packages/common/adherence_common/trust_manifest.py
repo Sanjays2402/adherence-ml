@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from adherence_common.sbom import sbom_summary
 from adherence_common.version import __version__
 
 # Bump when a required key is removed or renamed. Additive changes do
@@ -96,6 +97,11 @@ _CONTROLS: list[dict[str, Any]] = [
         "evidence": f"{_TRUST_CENTER}#sso",
     },
     {
+        "id": "sbom",
+        "label": "CycloneDX 1.5 SBOM published at /.well-known/sbom.json",
+        "evidence": f"{_REPO}/blob/main/packages/common/adherence_common/sbom.py",
+    },
+    {
         "id": "mfa",
         "label": "TOTP step-up for sensitive admin actions",
         "evidence": f"{_TRUST_CENTER}#mfa",
@@ -143,6 +149,36 @@ _CONTROLS: list[dict[str, Any]] = [
 ]
 
 
+def _sbom_manifest_block(api_base: str) -> dict[str, Any]:
+    """Inline SBOM summary + canonical URL for procurement scanners.
+
+    Wrapped in a try/except so a malformed lockfile in a downstream
+    deployment can never take the trust manifest down. Buyers must
+    always be able to read the manifest; the SBOM degrades gracefully.
+    """
+    block: dict[str, Any] = {
+        "format": "CycloneDX",
+        "spec_version": "1.5",
+        "url": f"{api_base.rstrip('/')}/.well-known/sbom.json",
+        "content_type": "application/vnd.cyclonedx+json",
+    }
+    try:
+        summary = sbom_summary()
+        block.update(
+            {
+                "schema_version": summary["schema_version"],
+                "serial_number": summary["serial_number"],
+                "total_components": summary["total_components"],
+                "components_by_ecosystem": summary["components_by_ecosystem"],
+                "generated_at": summary["generated_at"],
+            }
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        block["status"] = "unavailable"
+        block["detail"] = type(exc).__name__
+    return block
+
+
 def build_manifest(
     *,
     api_base: str | None = None,
@@ -175,6 +211,7 @@ def build_manifest(
             "data_subject_requests": _DATA_SUBJECT_CONTACT,
             "security_txt": f"{web}/.well-known/security.txt",
             "security_txt_api": f"{api}/.well-known/security.txt",
+            "sbom": f"{api}/.well-known/sbom.json",
         },
         "data_residency": {
             "primary_region": _PRIMARY_REGION,
@@ -188,6 +225,7 @@ def build_manifest(
         },
         "subprocessors": list(_SUBPROCESSORS),
         "controls": list(_CONTROLS),
+        "sbom": _sbom_manifest_block(api),
         "incident_response": {
             "notification_sla_hours": 72,
             "status_page": _STATUS_PAGE,

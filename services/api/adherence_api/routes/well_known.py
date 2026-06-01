@@ -10,6 +10,7 @@ security reviewer.
 
 * ``GET /.well-known/security.txt`` (RFC 9116)
 * ``GET /.well-known/security.json`` (machine-readable trust manifest)
+* ``GET /.well-known/sbom.json`` (CycloneDX 1.5 software bill of materials)
 
 Both endpoints set ``Cache-Control: public, max-age=300`` so an
 external scanner that pulls them repeatedly does not generate noise in
@@ -21,6 +22,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from adherence_common.settings import get_settings
+from adherence_common.sbom import cached_sbom
 from adherence_common.trust_manifest import build_manifest
 
 router = APIRouter(prefix="/.well-known", tags=["well-known"])
@@ -65,6 +67,32 @@ def security_json(request: Request) -> JSONResponse:
     resp.headers["Cache-Control"] = "public, max-age=300"
     # Echo the request id so a scanner can correlate the response with
     # their own probe log without us writing an audit row.
+    rid = getattr(request.state, "request_id", None)
+    if rid:
+        resp.headers["X-Request-Id"] = rid
+    return resp
+
+
+@router.get(
+    "/sbom.json",
+    summary="CycloneDX 1.5 software bill of materials",
+    include_in_schema=True,
+)
+def sbom_json(request: Request) -> JSONResponse:
+    """Public CycloneDX 1.5 SBOM.
+
+    Generated deterministically from ``uv.lock`` and
+    ``apps/web/package.json``. The same build of the application
+    always produces a byte-identical document; the ``serialNumber``
+    is a content hash so buyers can diff revisions without diffing
+    timestamps.
+
+    Unauthenticated by design. Buyers must be able to retrieve this
+    during procurement, before any contract or credential exists.
+    """
+    bom = cached_sbom()
+    resp = JSONResponse(bom, media_type="application/vnd.cyclonedx+json")
+    resp.headers["Cache-Control"] = "public, max-age=300"
     rid = getattr(request.state, "request_id", None)
     if rid:
         resp.headers["X-Request-Id"] = rid

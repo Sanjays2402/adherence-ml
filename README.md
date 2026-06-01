@@ -82,6 +82,36 @@ curl -si -X POST http://127.0.0.1:8000/v1/predict \
   -d '{"user_id":"u_1","schedule":[{"dose_id":"d1","scheduled_at":"2026-03-05T08:00:00Z","dose_class":"cardio","dose_strength_mg":10}],"top_k_reasons":2}'
 ```
 
+## CycloneDX software bill of materials
+
+A public CycloneDX 1.5 SBOM is generated deterministically from
+`uv.lock` and `apps/web/package.json` and served at
+`/.well-known/sbom.json` with `Content-Type:
+application/vnd.cyclonedx+json`. The `serialNumber` is a content hash
+of the lock files, so the same build always produces a byte-identical
+SBOM and procurement teams can diff revisions across releases without
+diffing timestamps. The endpoint is unauthenticated by design so a
+buyer can pull it during procurement, before any contract or
+credential exists.
+
+- Module: `packages/common/adherence_common/sbom.py`
+- Route: `services/api/adherence_api/routes/well_known.py` (`/.well-known/sbom.json`)
+- Trust manifest: surfaced under `contacts.sbom` and the top-level `sbom` block in `/.well-known/security.json`
+- UI: `/trust#sbom` (component counts by ecosystem, serial number, download button)
+- Test: `tests/unit/test_sbom.py` (parser, determinism, live cache, public reachability)
+
+### Try the SBOM
+
+```bash
+uv run uvicorn adherence_api.app:create_app --factory --port 8080
+
+curl -s http://127.0.0.1:8080/.well-known/sbom.json \
+  | jq '{format: .bomFormat, spec: .specVersion, count: (.components | length), serial: .serialNumber}'
+```
+
+Then open `http://localhost:3000/trust#sbom` to see component counts
+by ecosystem and download the SBOM as `adherence-ml-sbom.cdx.json`.
+
 ## Tamper-evident admin audit chain
 
 Every row in `admin_audit_log` is now linked to its predecessor by a sha256

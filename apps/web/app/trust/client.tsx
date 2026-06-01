@@ -25,6 +25,7 @@ import {
   Eye,
   Download,
   Code,
+  Package,
 } from "@phosphor-icons/react";
 import {
   PageHeader,
@@ -437,6 +438,16 @@ export default function TrustClient() {
         </Card>
       </div>
 
+      <div id="sbom" className="px-4 md:px-6 pb-6">
+        <Card>
+          <CardHeader
+            title="Software bill of materials"
+            hint="CycloneDX 1.5, generated from uv.lock and apps/web/package.json"
+          />
+          <SbomCard />
+        </Card>
+      </div>
+
       <div id="manifest" className="px-4 md:px-6 pb-6">
         <Card>
           <CardHeader
@@ -498,3 +509,100 @@ export default function TrustClient() {
     </div>
   );
 }
+
+type SbomManifestBlock = {
+  format?: string;
+  spec_version?: string;
+  url?: string;
+  serial_number?: string;
+  total_components?: number;
+  components_by_ecosystem?: Record<string, number>;
+  generated_at?: string;
+  status?: string;
+};
+
+type TrustManifest = {
+  sbom?: SbomManifestBlock;
+};
+
+function SbomCard() {
+  const { data, error, isLoading } = useSWR<TrustManifest>(
+    "/api/well-known/security.json",
+    fetcher,
+    { revalidateOnFocus: false },
+  );
+
+  if (isLoading) {
+    return (
+      <div className="p-4 space-y-2">
+        <Skeleton className="h-4 w-48" />
+        <Skeleton className="h-4 w-72" />
+        <Skeleton className="h-8 w-64" />
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="p-4">
+        <ErrorBox message="Could not load SBOM summary." />
+      </div>
+    );
+  }
+  const sbom = data?.sbom;
+  if (!sbom || sbom.status === "unavailable") {
+    return (
+      <div className="p-4 text-[13px] text-[var(--color-muted)]">
+        SBOM is not available on this build.
+      </div>
+    );
+  }
+  const total = sbom.total_components ?? 0;
+  const counts = sbom.components_by_ecosystem ?? {};
+  const ecosystems = Object.entries(counts).sort(([a], [b]) => a.localeCompare(b));
+  return (
+    <div className="p-4 space-y-3 text-[13px] text-[var(--color-muted)]">
+      <p>
+        Procurement teams can ingest this CycloneDX 1.5 document directly into their
+        vulnerability and license pipelines. The serial number is a content hash of the
+        lock files, so the same build always produces a byte-identical SBOM.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge tone="neutral">{sbom.format ?? "CycloneDX"} {sbom.spec_version ?? "1.5"}</Badge>
+        <Badge tone="neutral">{total} components</Badge>
+        {ecosystems.map(([eco, n]) => (
+          <Badge key={eco} tone="neutral">{eco}: {n}</Badge>
+        ))}
+      </div>
+      {sbom.serial_number ? (
+        <div className="flex items-center gap-2">
+          <span className="text-[12px]">serial</span>
+          <MonoChip>{sbom.serial_number}</MonoChip>
+        </div>
+      ) : null}
+      <div className="flex flex-wrap items-center gap-2">
+        <a
+          href="/api/well-known/sbom.json"
+          download="adherence-ml-sbom.cdx.json"
+          className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--color-fg)] hover:bg-[var(--color-bg-subtle)]"
+        >
+          <Download size={14} weight="duotone" />
+          Download sbom.cdx.json
+        </a>
+        <a
+          href="/api/well-known/sbom.json"
+          target="_blank"
+          rel="noopener"
+          className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--color-fg)] hover:bg-[var(--color-bg-subtle)]"
+        >
+          <Package size={14} weight="duotone" />
+          View raw SBOM
+        </a>
+      </div>
+      <pre className="text-[11.5px] leading-relaxed font-mono bg-[var(--color-bg-subtle)] border border-[var(--color-border)] rounded-md p-3 overflow-x-auto">
+{`curl -s https://api.adherence.ml/.well-known/sbom.json \\
+  | jq '{format: .bomFormat, spec: .specVersion, count: (.components | length)}'`}
+      </pre>
+    </div>
+  );
+}
+
