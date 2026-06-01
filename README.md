@@ -2,6 +2,43 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Tamper-evident admin audit chain
+
+Every row in `admin_audit_log` is now linked to its predecessor by a sha256
+`row_hash` over `(id, tenant_id, request_id, action, target, caller,
+caller_role, ok, error, details, created_at, prev_hash)`. The chain is
+global, append-only, and verified end-to-end. Edits, deletions, and
+reorderings break the chain at the first divergence and are reported
+with the offending row id and reason. SOC2 CC7.2 / ISO 27001 A.12.4.2
+evidence on demand.
+
+- Library: `packages/common/adherence_common/admin_audit_chain.py`
+- Endpoint: `GET /v1/admin/audit/chain/verify?tenant=...&limit=...`
+- UI: `/settings/audit-integrity` (admin)
+- Test: `tests/unit/test_admin_audit_chain.py` (covers field tampering
+  detection and middle-row deletion detection)
+
+The verification call is itself recorded as an audit event
+(`audit.chain.verify`), so an auditor can prove a check was run, by whom,
+and what it found. Pre-existing rows from before the chain shipped retain
+NULL `row_hash` / `prev_hash`; the verifier tolerates the gap and the
+chain restarts at the first newly recorded row.
+
+### Try the chain verifier
+
+```bash
+uv run uvicorn adherence_api.app:app --reload --port 8000
+# in another shell
+TOKEN=$(curl -s -X POST localhost:8000/v1/admin/token \
+  -H 'content-type: application/json' \
+  -d '{"role":"admin","tenant":"default"}' | jq -r .access_token)
+curl -s -H "authorization: bearer $TOKEN" \
+  localhost:8000/v1/admin/audit/chain/verify | jq .
+```
+
+Then open `http://localhost:3000/settings/audit-integrity` to verify
+from the dashboard.
+
 ## Per-workspace data classification
 
 Procurement, HIPAA, and EU healthcare reviewers want to see a concrete per-tenant sensitivity tier they can map to their own DLP, encryption, and breach-notification playbooks. This release adds that as a first-class, audit-logged workspace setting wired across the API surface.

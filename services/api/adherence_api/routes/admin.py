@@ -896,3 +896,73 @@ def put_api_key_rate_limit(
         refill_per_sec=refill,
         inherited=(cap is None),
     )
+
+
+# ---- Admin audit hash chain verifier -------------------------------------
+
+class AuditChainBreak(BaseModel):
+    row_id: int
+    reason: str
+    expected: str | None
+    actual: str | None
+
+
+class AuditChainVerifyOut(BaseModel):
+    n_rows: int
+    n_hashed: int
+    ok: bool
+    head_hash: str | None
+    breaks: list[AuditChainBreak]
+    tenant: str
+
+
+@router.get("/audit/chain/verify", response_model=AuditChainVerifyOut)
+def verify_audit_chain(
+    request: Request,
+    p=Depends(require_admin),
+    tenant: str | None = None,
+    limit: int | None = None,
+) -> AuditChainVerifyOut:
+    """Verify the tamper-evident hash chain on ``admin_audit_log``.
+
+    Walks the table in id order, recomputes each row's sha256 over its
+    canonical field tuple plus the previous row's ``row_hash``, and
+    reports any rows whose stored ``row_hash`` or ``prev_hash`` does
+    not match. Admins may pass ``tenant=*`` to verify across tenants;
+    anything else is restricted to the caller's tenant unless they hold
+    the admin role on the deployment default tenant.
+    """
+    from adherence_common.admin_audit_chain import verify_chain
+    caller_tenant = p.get("tenant") or "default"
+    if tenant is None:
+        scope: str | None = caller_tenant
+    elif tenant == "*":
+        scope = "*"
+    else:
+        if tenant != caller_tenant and p.get("role") != "admin":
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
+        scope = tenant
+    capped: int | None = None
+    if limit is not None:
+        try:
+            capped = max(1, min(int(limit), 100_000))
+        except (TypeError, ValueError):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="bad limit")
+    result = verify_chain(tenant_id=scope, limit=capped)
+    record_admin_action(
+        action="audit.chain.verify",
+        principal=p,
+        target=scope,
+        details={"tenant": scope, "limit": capped, "ok": result.ok, "breaks": len(result.breaks)},
+        ok=True,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    d = result.to_dict()
+    return AuditChainVerifyOut(
+        n_rows=d["n_rows"],
+        n_hashed=d["n_hashed"],
+        ok=d["ok"],
+        head_hash=d["head_hash"],
+        breaks=[AuditChainBreak(**b) for b in d["breaks"]],
+        tenant=scope or "default",
+    )

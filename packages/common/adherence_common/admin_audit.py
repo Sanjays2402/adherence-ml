@@ -103,6 +103,10 @@ def record_admin_action(
         except Exception as exc:  # pragma: no cover - defensive
             log.warning("admin_audit_pii_scrub_failed", error=str(exc))
     try:
+        from adherence_common.admin_audit_chain import (
+            assign_chain,
+            latest_chain_hash_in_session,
+        )
         with session() as s:
             row = AdminAuditLog(
                 tenant_id=tid,
@@ -116,6 +120,11 @@ def record_admin_action(
                 details=redacted,
             )
             s.add(row)
+            # Flush so the row has an id (id is part of the hashed
+            # canonical tuple) but commit only once at the end.
+            s.flush()
+            prev = latest_chain_hash_in_session(s, exclude_id=int(row.id))
+            assign_chain(row, prev)
             s.commit()
             return int(row.id)
     except SQLAlchemyError as exc:

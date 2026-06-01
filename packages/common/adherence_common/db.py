@@ -99,6 +99,13 @@ class AdminAuditLog(Base):
     error = Column(Text, nullable=True)
     details = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    # Tamper-evident hash chain for admin-plane actions. ``row_hash`` is
+    # sha256 over a canonical tuple of immutable row fields plus the
+    # previous chained row's ``row_hash``. NULL ``prev_hash`` marks the
+    # genesis row. See :mod:`adherence_common.admin_audit_chain` for the
+    # write path (``assign_chain``) and verifier (``verify_chain``).
+    prev_hash = Column(String(64), nullable=True)
+    row_hash = Column(String(64), nullable=True, index=True)
 
 
 class DoseOutcome(Base):
@@ -501,6 +508,27 @@ def _ensure_tenant_columns(engine) -> None:
         )
         with engine.begin() as conn:
             conn.execute(text(ddl))
+    # Tamper-evident hash chain on admin_audit_log (SOC2 CC7.2 /
+    # ISO 27001 A.12.4.2). Existing rows are left with NULL hashes and
+    # treated as the legacy prefix; the chain starts fresh from the
+    # first row written after the migration runs.
+    if "admin_audit_log" in existing_tables:
+        cols = {c["name"] for c in insp.get_columns("admin_audit_log")}
+        if "prev_hash" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE admin_audit_log ADD COLUMN prev_hash VARCHAR(64)"
+                ))
+        if "row_hash" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE admin_audit_log ADD COLUMN row_hash VARCHAR(64)"
+                ))
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_admin_audit_log_row_hash "
+                    "ON admin_audit_log(row_hash)"
+                ))
     # Per-key IP/CIDR allowlist: nullable text column on api_key_records.
     if "api_key_records" in existing_tables:
         cols = {c["name"] for c in insp.get_columns("api_key_records")}
