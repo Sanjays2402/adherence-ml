@@ -12,11 +12,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from adherence_api.body_size_middleware import BodySizeLimitMiddleware
 from adherence_api.middleware import RequestIdMiddleware
 from adherence_api.ip_allowlist_middleware import IpAllowlistMiddleware
+from adherence_api.origin_allowlist_middleware import OriginAllowlistMiddleware
 from adherence_api.legal_acceptance_middleware import LegalAcceptanceMiddleware
 from adherence_api.ratelimit_middleware import RateLimitMiddleware
 from adherence_api.scope_enforce_middleware import ScopeEnforceMiddleware
 from adherence_api.routes import auth_scopes as auth_scopes_route
 from adherence_api.routes import ip_allowlist as ip_allowlist_route
+from adherence_api.routes import origin_allowlist as origin_allowlist_route
 from adherence_api.routes import siem as siem_route
 from adherence_api.routes import quota as quota_route
 from adherence_api.routes import sso as sso_route
@@ -150,6 +152,21 @@ def create_app() -> FastAPI:
     app.add_middleware(RateLimitMiddleware, settings=s)
     # IP allowlist gates tenant-bound traffic. Health/metrics/docs stay
     # exempt so locking down a tenant never bricks operator probes.
+    # Per-tenant browser Origin allowlist. Runs alongside the IP
+    # allowlist with the same exempt set: probe and trust surfaces stay
+    # reachable; SSO and SCIM are excluded because they are reached by
+    # IdP servers that never set a meaningful Origin.
+    app.add_middleware(
+        OriginAllowlistMiddleware,
+        settings=s,
+        exempt_prefixes=(
+            "/v1/health", "/healthz", "/readyz", "/metrics",
+            "/openapi.json", "/docs", "/redoc",
+            "/.well-known",
+            "/v1/admin/sso",
+            "/scim/v2",
+        ),
+    )
     app.add_middleware(
         IpAllowlistMiddleware,
         settings=s,
@@ -205,6 +222,7 @@ def create_app() -> FastAPI:
     app.include_router(mutes_route.router)
     app.include_router(gdpr_route.router)
     app.include_router(ip_allowlist_route.router)
+    app.include_router(origin_allowlist_route.router)
     app.include_router(sso_route.router)
     app.include_router(admin_mfa_route.router)
     app.include_router(admin_sessions_route.router)

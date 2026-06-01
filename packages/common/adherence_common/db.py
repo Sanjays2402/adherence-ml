@@ -401,6 +401,38 @@ class TenantIpAllowlist(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class TenantOriginAllowlist(Base):
+    """Per-tenant browser Origin / hostname allowlist for the JSON API.
+
+    Buyers commonly need to lock browser-issued API traffic (XHR/fetch
+    from a SaaS dashboard, a Retool app, a partner portal) to a known
+    set of origins they control. This is independent of the deployment
+    wide CORS allowlist: the deployment may publish wide CORS so any
+    customer dashboard works out of the box, while individual
+    workspaces can narrow browser callers to a small set of origins.
+
+    Empty list = gate off for that tenant. When at least one row
+    exists, any tenant-bound request that carries an ``Origin`` header
+    (i.e. came from a browser fetch) must match a row, otherwise the
+    request is rejected with HTTP 403.
+
+    Match semantics:
+    * ``https://app.example.com`` matches that scheme+host(+port) exactly.
+    * ``https://*.example.com`` matches any subdomain of example.com but
+      not the bare apex.
+    * Server to server callers (no ``Origin`` header, e.g. curl, a
+      backend job, the worker) are unaffected. Use the IP allowlist
+      and API key scopes for those.
+    """
+    __tablename__ = "tenant_origin_allowlist"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(String(64), index=True, nullable=False, default="default")
+    origin = Column(String(255), nullable=False)
+    label = Column(String(128), nullable=True)
+    created_by = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class TenantOutboundHostAllowlist(Base):
     """Per-tenant allowlist of permitted outbound webhook destination hosts.
 

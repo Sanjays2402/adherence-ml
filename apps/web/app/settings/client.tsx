@@ -456,6 +456,36 @@ export default function SettingsClient() {
             />
           </a>
           <a
+            href="/settings/origin-allowlist"
+            className="flex items-center justify-between gap-3 px-4 py-3 border-t border-[var(--color-border)] hover:bg-[var(--color-border)]/30 transition-colors group"
+          >
+            <div className="min-w-0">
+              <div className="text-[13px]">Browser origin allowlist</div>
+              <div className="text-[11px] text-[var(--color-muted)] mt-0.5">
+                Restrict browser API traffic for this workspace to approved origins. Server to server callers are unaffected.
+              </div>
+            </div>
+            <CaretRight
+              size={14}
+              className="text-[var(--color-muted)] group-hover:text-[var(--color-text)] shrink-0"
+            />
+          </a>
+          <a
+            href="/settings/origin-allowlist"
+            className="flex items-center justify-between gap-3 px-4 py-3 border-t border-[var(--color-border)] hover:bg-[var(--color-border)]/30 transition-colors group"
+          >
+            <div className="min-w-0">
+              <div className="text-[13px]">Origin allowlist</div>
+              <div className="text-[11px] text-[var(--color-muted)] mt-0.5">
+                Restrict workspace browser API traffic to a list of trusted Origins.
+              </div>
+            </div>
+            <CaretRight
+              size={14}
+              className="text-[var(--color-muted)] group-hover:text-[var(--color-text)] shrink-0"
+            />
+          </a>
+          <a
             href="/settings/outbound-host-allowlist"
             className="flex items-center justify-between gap-3 px-4 py-3 border-t border-[var(--color-border)] hover:bg-[var(--color-border)]/30 transition-colors group"
           >

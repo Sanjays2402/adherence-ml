@@ -3151,6 +3151,40 @@ curl -s -X POST http://localhost:8000/v1/admin/ip-allowlist \
 Health, metrics, and OpenAPI endpoints stay exempt so operator probes
 keep working even when a tenant is fully locked down.
 
+## Browser origin allowlist
+
+Workspace admins can also restrict browser-issued API traffic to a list
+of trusted origins. The deployment-wide CORS policy stays as-is so any
+customer dashboard works out of the box; the per-workspace gate then
+narrows browser callers to exactly the origins that workspace owns
+(its SaaS dashboard, a Retool app, a partner portal). When zero entries
+exist the gate is off; once one row is added, any browser request whose
+`Origin` header is not in the list is rejected with HTTP 403
+`origin_not_allowed`. Server to server callers (curl, internal jobs,
+the inference worker) never send `Origin` and are unaffected. Every
+add or remove is recorded in the admin audit log.
+
+Patterns accepted: exact (`https://app.example.com`), wildcarded
+leftmost label (`https://*.example.com`, matches subdomains but not
+the apex), and dev hosts with a port (`http://localhost:3000`).
+
+Try it:
+
+```bash
+# UI
+open http://localhost:3000/settings/origin-allowlist
+
+# API
+curl -s http://localhost:8000/v1/admin/origin-allowlist | jq
+curl -s -X POST http://localhost:8000/v1/admin/origin-allowlist \
+  -H 'content-type: application/json' \
+  -d '{"origin":"https://app.example.com","label":"customer dashboard"}'
+
+# Verify enforcement: a browser-style request from a disallowed origin
+curl -i -H 'origin: https://evil.example.com' http://localhost:8000/v1/predict
+# -> HTTP/1.1 403 Forbidden  {"error":"origin_not_allowed", ...}
+```
+
 ## What it does
 
 The service ingests scheduled-dose events from a med-tracker source, builds
@@ -3183,6 +3217,39 @@ curl -s http://127.0.0.1:8000/v1/admin/ip-allowlist -H 'x-api-key: dev-admin-key
 curl -s -X POST http://127.0.0.1:8000/v1/admin/ip-allowlist \
   -H 'x-api-key: dev-admin-key' -H 'content-type: application/json' \
   -d '{"cidr":"10.0.0.0/24","label":"office"}'
+```
+
+## Per-tenant browser Origin allowlist
+
+A workspace admin can restrict browser-issued API traffic (XHR/fetch from
+a SaaS dashboard, a Retool app, a partner portal) to a known list of
+Origins, independent of the deployment-wide CORS policy. Empty list per
+tenant means the gate is OFF; when at least one entry exists, requests
+bound to that tenant that carry an `Origin` header must match a row.
+Server-to-server callers (curl, internal jobs, the inference worker)
+never send `Origin` and are unaffected. Lock those down with the IP
+allowlist and API key scopes.
+
+Match rules:
+
+- `https://app.example.com` matches that scheme+host(+port) exactly.
+- `https://*.example.com` matches any subdomain but not the bare apex.
+- Paths, query strings, fragments, and userinfo are rejected at write
+  time, so a stored entry can never silently widen.
+
+Blocked requests return HTTP 403 with `error: origin_not_allowed`. Add,
+remove (including `?dry_run=true`), and bad-input attempts all write to
+the admin audit log. SSO and SCIM endpoints are exempt because IdP
+servers do not set a meaningful Origin.
+
+Manage the list from `/settings/origin-allowlist` in the dashboard, or
+via the API:
+
+```bash
+curl -s http://127.0.0.1:8000/v1/admin/origin-allowlist -H 'x-api-key: dev-admin-key'
+curl -s -X POST http://127.0.0.1:8000/v1/admin/origin-allowlist \
+  -H 'x-api-key: dev-admin-key' -H 'content-type: application/json' \
+  -d '{"origin":"https://app.example.com","label":"customer portal"}'
 ```
 
 ### Weekly digest
