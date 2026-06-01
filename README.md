@@ -2,6 +2,40 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Inbound webhook posture dashboard
+
+Partner systems (Med-Tracker and similar) POST dose-outcome events
+to `/v1/webhooks/<source>/...`. Each source can be HMAC signed and
+IP restricted independently. The admin dashboard now exposes that
+posture at `/webhooks/inbound` so an operator (or a procurement
+reviewer) can audit at a glance which production sources are
+hardened, which are unsigned, and what the configured clock-skew
+tolerance is, without grepping environment variables on the API
+box.
+
+The route is gated on a signed dashboard session and lands a
+`webhooks.inbound.config.read` row in the dashboard audit chain on
+every denial. Secrets themselves are never echoed back to the
+browser.
+
+### Try the inbound posture page
+
+```bash
+# Terminal 1: API
+ADHERENCE_INBOUND_WEBHOOK_REQUIRE_SIGNED=1 \
+ADHERENCE_INBOUND_WEBHOOK_SECRETS="medtracker:hunter2" \
+ADHERENCE_INBOUND_WEBHOOK_IP_ALLOWLIST="medtracker:203.0.113.0/24" \
+  uv run uvicorn adherence_api.app:app --port 7421
+
+# Terminal 2: dashboard (dev bypass)
+cd apps/web && ADHERENCE_DASHBOARD_OPEN=1 pnpm dev
+
+# Open http://localhost:3000/webhooks/inbound
+
+# Or curl the JSON directly:
+curl -s http://localhost:3000/api/webhooks/inbound-config | jq
+```
+
 ## Sub-processor registry with per-workspace acknowledgment
 
 GDPR Art. 28(2) and most enterprise DPAs require advance notice of
