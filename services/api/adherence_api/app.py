@@ -37,6 +37,7 @@ from adherence_api.routes import pii_policy as pii_policy_route
 from adherence_api.routes import residency as residency_route
 from adherence_api.routes import data_classification as data_classification_route
 from adherence_api.routes import api_key_policy as api_key_policy_route
+from adherence_api.routes import cmek as cmek_route
 from adherence_api.routes import api_key_usage as api_key_usage_route
 from adherence_api.routes import retention_policy as retention_policy_route
 from adherence_api.routes import break_glass as break_glass_route
@@ -253,6 +254,7 @@ def create_app() -> FastAPI:
     app.include_router(residency_route.router)
     app.include_router(data_classification_route.router)
     app.include_router(api_key_policy_route.router)
+    app.include_router(cmek_route.router)
     app.include_router(retention_policy_route.router)
     app.include_router(break_glass_route.router)
     app.include_router(legal_hold_route.router)

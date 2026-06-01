@@ -2,6 +2,59 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Per-workspace customer-managed encryption key (CMEK / BYOK)
+
+Enterprise buyers in regulated verticals require evidence that workspace
+data is encrypted under a key the customer controls and can rotate,
+audit, or revoke. Each workspace can now register the customer-supplied
+KMS key reference used for tenant-scoped envelope encryption: pick the
+provider (AWS KMS, Google Cloud KMS, Azure Key Vault, HashiCorp Vault,
+or `other`), paste the resource id (ARN, resource name, or vault URI),
+declare a contractual rotation cadence in days, and move the record
+through `pending` -> `active` -> `retired`. The registry computes the
+next rotation due date and flags any active registration that has gone
+past it. A dedicated `POST /rotate` endpoint stamps each rotation event
+against the audit log and optionally swaps in the new key id.
+
+The registry is purely declarative; it does not itself encrypt data. Its
+job is to give procurement, audit, and incident-response teams one place
+to answer "is BYOK on for this workspace, when was it last rotated, and
+who signed it off?". Every mutation is admin-only, MFA-gated, supports
+`?dry_run=true`, is written to the tamper-evident admin audit log, and
+is strictly tenant scoped: a registration in workspace `acme` is
+unreadable from workspace `globex`.
+
+### Try it
+
+```bash
+cd apps/web && pnpm dev   # http://localhost:3000/settings/cmek
+
+# read the current registration
+curl -s http://localhost:8000/v1/workspace/cmek \
+  -H "Authorization: Bearer $TOKEN" | jq
+
+# declare a key (admin, MFA-gated)
+curl -s -X PUT http://localhost:8000/v1/workspace/cmek \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-MFA-Code: 123456" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "aws_kms",
+    "key_reference": "arn:aws:kms:us-east-1:111122223333:key/abcd-...",
+    "rotation_period_days": 90,
+    "state": "active",
+    "description": "prod envelope key",
+    "contact": "security@your-org.example"
+  }' | jq
+
+# record a rotation
+curl -s -X POST http://localhost:8000/v1/workspace/cmek/rotate \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-MFA-Code: 123456" \
+  -H "Content-Type: application/json" \
+  -d '{"note":"SEC-1234 quarterly rotation"}' | jq
+```
+
 ## Per-workspace password policy
 
 Even when a tenant federates through SSO, enterprise procurement and SOC2
