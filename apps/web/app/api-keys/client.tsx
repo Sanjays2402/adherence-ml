@@ -12,6 +12,7 @@ import {
   Warning,
   ShieldCheck,
   ArrowsClockwise,
+  Hourglass,
 } from "@phosphor-icons/react";
 import {
   PageHeader,
@@ -314,6 +315,115 @@ function CidrsCell({
   );
 }
 
+type ExpiringKeyRow = {
+  id: string;
+  name: string;
+  prefix: string;
+  scopes: Scope[];
+  expires_at: number;
+  days_remaining: number;
+  last_used_at: number | null;
+  last_used_ip: string | null;
+};
+
+type ExpiringResp = {
+  now: number;
+  within_days: number;
+  count: number;
+  keys: ExpiringKeyRow[];
+};
+
+function ExpiringSoonBanner() {
+  const { data, error, isLoading } = useSWR<ExpiringResp>(
+    "/api/keys/expiring?within=14",
+    fetcher,
+    { refreshInterval: 0 },
+  );
+
+  if (isLoading) {
+    return (
+      <Card aria-busy>
+        <CardHeader
+          title="Expiring soon"
+          hint="Checking which keys cross their TTL in the next 14 days."
+          right={<Hourglass weight="duotone" size={16} />}
+        />
+        <div className="p-4 pt-2 space-y-2">
+          <Skeleton className="h-4 w-2/3" />
+          <Skeleton className="h-4 w-1/2" />
+        </div>
+      </Card>
+    );
+  }
+
+  if (error) {
+    return (
+      <Card>
+        <CardHeader
+          title="Expiring soon"
+          hint="Could not load the upcoming expiry list. Other key operations still work."
+          right={<Warning weight="duotone" size={16} className="text-[var(--color-high)]" />}
+        />
+        <div className="p-4 pt-2">
+          <ErrorBox message="Failed to fetch /api/keys/expiring" />
+        </div>
+      </Card>
+    );
+  }
+
+  const keys = data?.keys ?? [];
+  const within = data?.within_days ?? 14;
+
+  if (keys.length === 0) {
+    return (
+      <Card>
+        <CardHeader
+          title="Expiring soon"
+          hint={`No keys expire in the next ${within} days. You will be warned here before any silent 401.`}
+          right={<Hourglass weight="duotone" size={16} className="text-[var(--color-muted)]" />}
+        />
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="border-[var(--color-warn)]/40">
+      <CardHeader
+        title={`${keys.length} key${keys.length === 1 ? "" : "s"} expire within ${within} days`}
+        hint="Rotate before the TTL boundary or your integrations will start failing with 401 unauthorized."
+        right={<Hourglass weight="duotone" size={16} className="text-[var(--color-warn)]" />}
+      />
+      <ul className="p-4 pt-2 space-y-2" role="list">
+        {keys.map((k) => {
+          const urgent = k.days_remaining <= 3;
+          return (
+            <li
+              key={k.id}
+              className="flex flex-wrap items-center gap-2 text-[12px]"
+            >
+              <Badge tone={urgent ? "danger" : "warn"}>
+                {k.days_remaining === 0
+                  ? "<1d"
+                  : `${k.days_remaining}d`}
+              </Badge>
+              <span className="font-medium text-[var(--color-fg)]">
+                {k.name}
+              </span>
+              <MonoChip>{k.prefix}</MonoChip>
+              <span className="text-[var(--color-muted)]">
+                expires {fmt(k.expires_at)}
+              </span>
+              <span className="text-[var(--color-muted)]">
+                last used {k.last_used_at ? relativeFromNow(k.last_used_at) : "never"}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </Card>
+  );
+}
+
 export default function KeysClient() {
   const { data, error, isLoading, mutate } = useSWR<ListResp>("/api/keys", fetcher, {
     refreshInterval: 0,
@@ -490,6 +600,8 @@ export default function KeysClient() {
         title="API keys"
         description="Programmatic access to /v1: predict, create, read, rename, retag, share, and delete runs. Each key is shown once at creation."
       />
+
+      <ExpiringSoonBanner />
 
       {issued ? (
         <Card className="border-[var(--color-accent)]/40">

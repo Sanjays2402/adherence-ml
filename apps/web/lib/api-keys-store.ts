@@ -283,6 +283,79 @@ export function isExpired(
 }
 
 /**
+ * Maximum lookahead window the expiring-soon endpoint will honour.
+ * 365 days lets operators run a yearly compliance review without
+ * needing to widen it further; anything beyond just leaks every key.
+ */
+export const MAX_EXPIRING_SOON_WINDOW_DAYS = 365;
+
+/**
+ * Default lookahead used by the UI banner. Two weeks is what most
+ * SREs say is the smallest window that lets them schedule a rotation
+ * change-management window without firefighting.
+ */
+export const DEFAULT_EXPIRING_SOON_WINDOW_DAYS = 14;
+
+export interface ExpiringKey {
+  id: string;
+  name: string;
+  prefix: string;
+  scopes: KeyScope[];
+  expires_at: number;
+  days_remaining: number;
+  last_used_at: number | null;
+  last_used_ip: string | null;
+}
+
+/**
+ * Return all live (not revoked, not already expired) keys whose
+ * `expires_at` falls within `windowDays` from `now`, sorted by the
+ * key nearest to expiry first. Revoked keys and keys with no
+ * `expires_at` are skipped: only active keys that will silently
+ * stop working soon are reported.
+ */
+export function pickExpiringSoon(
+  keys: ApiKeyRecord[],
+  windowDays: number,
+  now: number = Date.now(),
+): ExpiringKey[] {
+  const w = Math.max(
+    1,
+    Math.min(MAX_EXPIRING_SOON_WINDOW_DAYS, Math.floor(windowDays)),
+  );
+  const horizon = now + w * 24 * 60 * 60 * 1000;
+  const dayMs = 24 * 60 * 60 * 1000;
+  const out: ExpiringKey[] = [];
+  for (const k of keys) {
+    if (k.revoked) continue;
+    if (typeof k.expires_at !== "number" || k.expires_at <= 0) continue;
+    if (k.expires_at <= now) continue; // already expired, not "soon"
+    if (k.expires_at > horizon) continue;
+    out.push({
+      id: k.id,
+      name: k.name,
+      prefix: k.prefix,
+      scopes: scopesOf(k),
+      expires_at: k.expires_at,
+      days_remaining: Math.max(0, Math.ceil((k.expires_at - now) / dayMs)),
+      last_used_at: k.last_used_at,
+      last_used_ip: k.last_used_ip ?? null,
+    });
+  }
+  out.sort((a, b) => a.expires_at - b.expires_at);
+  return out;
+}
+
+/** Convenience: load keys from disk then run pickExpiringSoon. */
+export async function findExpiringSoon(
+  windowDays: number = DEFAULT_EXPIRING_SOON_WINDOW_DAYS,
+  now: number = Date.now(),
+): Promise<ExpiringKey[]> {
+  const keys = await listKeys();
+  return pickExpiringSoon(keys, windowDays, now);
+}
+
+/**
  * Convert a TTL in days into an absolute `expires_at` epoch-ms value.
  * `null`, `0`, negatives, or non-finite inputs map to `null` (never expires).
  * Capped at 10 years to avoid accidental Number.MAX_VALUE rows.
