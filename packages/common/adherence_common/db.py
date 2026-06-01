@@ -720,6 +720,7 @@ def init_db() -> None:
     from adherence_common import scim as _scim  # noqa: F401
     from adherence_common import access_reviews as _ar  # noqa: F401
     from adherence_common import legal_acceptance as _legal  # noqa: F401
+    from adherence_common import model_approval as _ma  # noqa: F401
     engine = _engine()
     Base.metadata.create_all(engine)
     try:

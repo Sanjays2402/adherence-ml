@@ -38,6 +38,7 @@ from adherence_api.routes import legal_hold as legal_hold_route
 from adherence_api.routes import access_reviews as access_reviews_route
 from adherence_api.routes import legal as legal_route
 from adherence_api.routes import well_known as well_known_route
+from adherence_api.routes import model_approval as model_approval_route
 from adherence_api.routes import (
     admin,
     cohort,
@@ -225,6 +226,7 @@ def create_app() -> FastAPI:
     app.include_router(siem_route.router)
     app.include_router(legal_route.router)
     app.include_router(well_known_route.router)
+    app.include_router(model_approval_route.router)
     # Ensure quota + workspace tables exist before the first request.
     try:
         from adherence_common.db import init_db

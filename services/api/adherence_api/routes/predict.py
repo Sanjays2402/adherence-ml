@@ -10,7 +10,9 @@ from pydantic import BaseModel, Field
 from adherence_api.deps import current_principal, require_service
 from adherence_api.quota_enforce import enforce_prediction_quota
 from adherence_common.audit import record as audit_record
+from adherence_common.admin_audit import record_admin_action
 from adherence_common.errors import ModelNotFoundError
+from adherence_common import model_approval as model_approval_mod
 from adherence_common.idempotency import (
     IdempotencyConflict,
     hash_body,
@@ -108,6 +110,63 @@ def predict(
         )
         shadow_version: str | None = None
         shadow_div: float | None = None
+        # ---- model approval gate (per-workspace governance) ----
+        # Run after the registry resolved the real version so we evaluate
+        # what would actually score, not just the requested name.
+        resolved_version = str(res.get("model_version", ""))
+        decision = model_approval_mod.evaluate(
+            p.get("tenant", "default"),
+            model_name=model_name,
+            model_version=resolved_version,
+        )
+        response.headers["X-Model-Approval"] = (
+            "approved" if decision.approved else (
+                "blocked" if not decision.allowed else "unapproved"
+            )
+        )
+        response.headers["X-Model-Approval-Mode"] = decision.mode
+        if not decision.allowed:
+            dt = (time.perf_counter() - t0) * 1000.0
+            audit_record(
+                request_id=rid, route="/v1/predict", user_id=req.user_id,
+                tenant_id=p.get("tenant", "default"),
+                caller=caller, caller_role=p.get("role", "service"),
+                model_name=model_name, model_version=resolved_version,
+                n_doses=len(req.schedule), latency_ms=dt, ok=False,
+                error=f"model_approval:{decision.reason}",
+            )
+            record_admin_action(
+                action="workspace.model_approval.predict.blocked",
+                principal=p,
+                target=f"{model_name}@{resolved_version}",
+                details={"route": "/v1/predict", "reason": decision.reason},
+                request_id=rid,
+                tenant_id=p.get("tenant", "default"),
+                ok=False, error=decision.reason,
+            )
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error": "model_version_not_approved",
+                    "model_name": model_name,
+                    "model_version": resolved_version,
+                    "mode": decision.mode,
+                    "reason": decision.reason,
+                },
+                headers={
+                    "X-Model-Approval": "blocked",
+                    "X-Model-Approval-Mode": decision.mode,
+                },
+            )
+        if decision.mode == "audit" and not decision.approved:
+            record_admin_action(
+                action="workspace.model_approval.predict.unapproved",
+                principal=p,
+                target=f"{model_name}@{resolved_version}",
+                details={"route": "/v1/predict", "mode": decision.mode},
+                request_id=rid,
+                tenant_id=p.get("tenant", "default"),
+            )
         if shadow and shadow != model_name:
             try:
                 shadow_res = predict_doses(
@@ -211,6 +270,62 @@ def predict_batch(
         art, _model, _explainer = load_model(model_name)
     except ModelNotFoundError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+
+    # Per-workspace model approval gate. Resolved once per batch since
+    # the registry hands us one artifact regardless of items.
+    resolved_version = str(art.version)
+    decision = model_approval_mod.evaluate(
+        p.get("tenant", "default"),
+        model_name=model_name,
+        model_version=resolved_version,
+    )
+    response.headers["X-Model-Approval"] = (
+        "approved" if decision.approved else (
+            "blocked" if not decision.allowed else "unapproved"
+        )
+    )
+    response.headers["X-Model-Approval-Mode"] = decision.mode
+    if not decision.allowed:
+        record_admin_action(
+            action="workspace.model_approval.predict.blocked",
+            principal=p,
+            target=f"{model_name}@{resolved_version}",
+            details={
+                "route": "/v1/predict/batch",
+                "reason": decision.reason,
+                "n_items": len(req.items),
+            },
+            request_id=rid,
+            tenant_id=p.get("tenant", "default"),
+            ok=False, error=decision.reason,
+        )
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "model_version_not_approved",
+                "model_name": model_name,
+                "model_version": resolved_version,
+                "mode": decision.mode,
+                "reason": decision.reason,
+            },
+            headers={
+                "X-Model-Approval": "blocked",
+                "X-Model-Approval-Mode": decision.mode,
+            },
+        )
+    if decision.mode == "audit" and not decision.approved:
+        record_admin_action(
+            action="workspace.model_approval.predict.unapproved",
+            principal=p,
+            target=f"{model_name}@{resolved_version}",
+            details={
+                "route": "/v1/predict/batch",
+                "mode": decision.mode,
+                "n_items": len(req.items),
+            },
+            request_id=rid,
+            tenant_id=p.get("tenant", "default"),
+        )
 
     results: list[BatchPredictItem] = []
     n_ok = 0

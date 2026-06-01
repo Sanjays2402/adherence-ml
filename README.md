@@ -44,6 +44,44 @@ curl -s http://127.0.0.1:8080/.well-known/security.json | jq '{
 Then open `http://localhost:3000/trust#manifest` to download the same
 file from the dashboard.
 
+## Per-workspace model approval policy
+
+Regulated buyers (HIPAA, SOC2, ISO 27001 change control) need to attest that only an explicitly approved set of model versions ever scores their workspace. Each tenant now has:
+
+- An enforcement mode (`disabled`, `audit`, `enforce`) stored in `workspace_model_approval_mode` and surfaced on every predict response as `X-Model-Approval-Mode`.
+- An allowlist of `(model_name, model_version)` pairs in `workspace_approved_model_version`.
+- In `enforce` mode, `POST /v1/predict` and `POST /v1/predict/batch` reject any version not on the allowlist with `HTTP 422` and `X-Model-Approval: blocked`. In `audit` mode the call goes through but every unapproved version is recorded in the admin audit chain under `workspace.model_approval.predict.unapproved`. Mode changes and approvals are admin-only, MFA-gated, dry-run aware, and tenant-scoped (one workspace can never approve a version on behalf of another).
+- Admin UI at `/settings/model-approval` to flip the mode and manage approvals.
+
+### Try it
+
+Local API: <http://127.0.0.1:8000>. Local dashboard: <http://127.0.0.1:3000/settings/model-approval>.
+
+```bash
+# read current policy
+curl -s http://127.0.0.1:8000/v1/workspace/model-approval \
+  -H "Authorization: Bearer $ADMIN_JWT"
+
+# flip to enforce mode (admin + MFA)
+curl -s -X PUT http://127.0.0.1:8000/v1/workspace/model-approval \
+  -H "Authorization: Bearer $ADMIN_JWT" \
+  -H "X-MFA-Code: 123456" \
+  -H "content-type: application/json" \
+  -d '{"mode":"enforce"}'
+
+# approve a version
+curl -s -X POST http://127.0.0.1:8000/v1/workspace/model-approval/versions \
+  -H "Authorization: Bearer $ADMIN_JWT" \
+  -H "X-MFA-Code: 123456" \
+  -H "content-type: application/json" \
+  -d '{"model_name":"default","model_version":"v1.2.3","note":"CAB-1234"}'
+
+# predict with X-Model-Approval header in the response
+curl -si -X POST http://127.0.0.1:8000/v1/predict \
+  -H "x-api-key: $SVC_KEY" -H "content-type: application/json" \
+  -d '{"user_id":"u_1","schedule":[{"dose_id":"d1","scheduled_at":"2026-03-05T08:00:00Z","dose_class":"cardio","dose_strength_mg":10}],"top_k_reasons":2}'
+```
+
 ## Tamper-evident admin audit chain
 
 Every row in `admin_audit_log` is now linked to its predecessor by a sha256
