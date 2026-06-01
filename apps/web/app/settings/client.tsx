@@ -681,6 +681,21 @@ export default function SettingsClient() {
             />
           </a>
           <a
+            href="/settings/disclosures"
+            className="flex items-center justify-between gap-3 px-4 py-3 border-t border-[var(--color-border)] hover:bg-[var(--color-border)]/30 transition-colors group"
+          >
+            <div className="min-w-0">
+              <div className="text-[13px]">HIPAA accounting of disclosures</div>
+              <div className="text-[11px] text-[var(--color-muted)] mt-0.5">
+                Per-workspace, append-only register of PHI disclosures to external recipients. Per subject accounting under 45 CFR 164.528, purpose categories, six year retention clock, CSV export, and audit-logged mutations.
+              </div>
+            </div>
+            <CaretRight
+              size={14}
+              className="text-[var(--color-muted)] group-hover:text-[var(--color-text)] shrink-0"
+            />
+          </a>
+          <a
             href="/settings/pentests"
             className="flex items-center justify-between gap-3 px-4 py-3 border-t border-[var(--color-border)] hover:bg-[var(--color-border)]/30 transition-colors group"
           >
@@ -688,6 +703,21 @@ export default function SettingsClient() {
               <div className="text-[13px]">Penetration test register</div>
               <div className="text-[11px] text-[var(--color-muted)] mt-0.5">
                 Per-workspace pentest engagement log. Scope, vendor, methodology, report URL, open finding counts per severity, remediation tracking, overdue-test alerts, CSV export, and audit-logged mutations.
+              </div>
+            </div>
+            <CaretRight
+              size={14}
+              className="text-[var(--color-muted)] group-hover:text-[var(--color-text)] shrink-0"
+            />
+          </a>
+          <a
+            href="/settings/changes"
+            className="flex items-center justify-between gap-3 px-4 py-3 border-t border-[var(--color-border)] hover:bg-[var(--color-border)]/30 transition-colors group"
+          >
+            <div className="min-w-0">
+              <div className="text-[13px]">Change management register</div>
+              <div className="text-[11px] text-[var(--color-muted)] mt-0.5">
+                Per-workspace production change log. Risk class, four-eyes approval, rollback plan, planned and actual windows, post implementation review, CSV export, and audit-logged transitions for SOC 2 CC8.1 and ISO 27001 A.12.1.2.
               </div>
             </div>
             <CaretRight
@@ -718,6 +748,21 @@ export default function SettingsClient() {
               <div className="text-[13px]">SLA commitments</div>
               <div className="text-[11px] text-[var(--color-muted)] mt-0.5">
                 Per-workspace record of contracted uptime, severity response targets, RTO, and RPO. Procurement evidence for SOC 2 CC3.4 and CAIQ STA-05. In-force commitment exposed at /v1/sla/current.
+              </div>
+            </div>
+            <CaretRight
+              size={14}
+              className="text-[var(--color-muted)] group-hover:text-[var(--color-text)] shrink-0"
+            />
+          </a>
+          <a
+            href="/settings/model-cards"
+            className="flex items-center justify-between gap-3 px-4 py-3 border-t border-[var(--color-border)] hover:bg-[var(--color-border)]/30 transition-colors group"
+          >
+            <div className="min-w-0">
+              <div className="text-[13px]">AI transparency register</div>
+              <div className="text-[11px] text-[var(--color-muted)] mt-0.5">
+                Per-workspace model cards declaring intended use, training data sensitivity, PHI suitability, fairness status, and last validation date. Procurement evidence for EU AI Act Article 13, NIST AI RMF, and ISO/IEC 42001. Active card per (name, version) exposed at /v1/model-cards/active.
               </div>
             </div>
             <CaretRight

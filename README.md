@@ -472,6 +472,56 @@ curl -OJ -H "x-api-key: $ADHERENCE_API_KEY" \
   http://localhost:7421/v1/admin/pentests/export.csv
 ```
 
+## Per-workspace change management register
+
+Every enterprise procurement review and every SOC 2 / ISO 27001 audit
+expects a register of production changes that names the requester,
+records four-eyes approval for high or critical risk and emergency
+changes, captures the rollback plan up front, and closes with a post
+implementation review. The new register is per-workspace, tenant-scoped
+at the query layer, admin and MFA gated on every mutation, and
+audit-logged through the existing admin audit chain. It enforces a
+strict workflow (planned, approved, in_progress, completed, rolled_back,
+cancelled) and refuses to close a change without a written review. It
+covers SOC 2 CC8.1, ISO 27001 A.12.1.2 and A.14.2.2, NIST SP 800-53
+CM-3, and the ITIL change advisory board pattern.
+
+### Try it
+
+```bash
+# in another shell
+uvicorn adherence_api.app:create_app --factory --port 7421
+pnpm --filter @adherence/web dev
+
+# open http://localhost:3000/settings/changes
+
+# list the register
+curl -H "x-api-key: $ADHERENCE_API_KEY" \
+  http://localhost:7421/v1/admin/changes
+
+# dry-run a new change (no DB write, audit row still recorded)
+curl -X POST -H "x-api-key: $ADHERENCE_API_KEY" \
+  -H 'content-type: application/json' \
+  "http://localhost:7421/v1/admin/changes?dry_run=true" \
+  -d '{"title":"Roll forecast worker to v3.4","change_type":"normal","risk_class":"high","affected_service":"inference_worker","rollback_plan":"Re-tag previous image and trigger blue-green rollback. Watch p95 on /v1/forecast for 10 minutes.","requester_email":"alice@acme.example","approver_email":"bob@acme.example","reference":"CHG-1042"}'
+
+# move an existing change through the workflow (approve, then in_progress, then completed)
+curl -X POST -H "x-api-key: $ADHERENCE_API_KEY" \
+  -H 'content-type: application/json' \
+  http://localhost:7421/v1/admin/changes/1/transition \
+  -d '{"target_status":"approved","actor_email":"bob@acme.example"}'
+
+# close a change with a post implementation review
+curl -X POST -H "x-api-key: $ADHERENCE_API_KEY" \
+  -H 'content-type: application/json' \
+  http://localhost:7421/v1/admin/changes/1/transition \
+  -d '{"target_status":"completed","actor_email":"alice@acme.example","review_summary":"Deployed without incident. Latency steady."}'
+
+# download the register as CSV for a procurement pack
+curl -OJ -H "x-api-key: $ADHERENCE_API_KEY" \
+  http://localhost:7421/v1/admin/changes/export.csv
+```
+
 ## Per-workspace GDPR Article 35 data protection impact assessment register
 
 GDPR Art. 35 requires the controller to carry out a DPIA before any

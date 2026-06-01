@@ -297,6 +297,10 @@ def create_app() -> FastAPI:
     app.include_router(bcdr_route.router)
     from adherence_api.routes import pentests as pentests_route
     app.include_router(pentests_route.router)
+    from adherence_api.routes import disclosures as disclosures_route
+    app.include_router(disclosures_route.router)
+    from adherence_api.routes import changes as changes_route
+    app.include_router(changes_route.router)
     from adherence_api.routes import vendor_risk as vendor_risk_route
     app.include_router(vendor_risk_route.router)
     from adherence_api.routes import risk_register as risk_register_route
@@ -309,6 +313,9 @@ def create_app() -> FastAPI:
     from adherence_api.routes import sla as sla_route
     app.include_router(sla_route.router)
     app.include_router(sla_route.public_router)
+    from adherence_api.routes import model_cards as model_cards_route
+    app.include_router(model_cards_route.router)
+    app.include_router(model_cards_route.public_router)
     from adherence_api.routes import consents as consents_route
     app.include_router(consents_route.router)
     # Ensure quota + workspace tables exist before the first request.
