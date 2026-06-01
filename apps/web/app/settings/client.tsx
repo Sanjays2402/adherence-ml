@@ -651,6 +651,21 @@ export default function SettingsClient() {
             />
           </a>
           <a
+            href="/settings/vendor-risk"
+            className="flex items-center justify-between gap-3 px-4 py-3 border-t border-[var(--color-border)] hover:bg-[var(--color-border)]/30 transition-colors group"
+          >
+            <div className="min-w-0">
+              <div className="text-[13px]">Vendor risk register</div>
+              <div className="text-[11px] text-[var(--color-muted)] mt-0.5">
+                Per-workspace vendor risk assessments. Track sub-processors, integrations, and internal tools with inherent and residual risk, attested certifications, owner, status, review cadence, and CSV export.
+              </div>
+            </div>
+            <CaretRight
+              size={14}
+              className="text-[var(--color-muted)] group-hover:text-[var(--color-text)] shrink-0"
+            />
+          </a>
+          <a
             href="/settings/bcdr"
             className="flex items-center justify-between gap-3 px-4 py-3 border-t border-[var(--color-border)] hover:bg-[var(--color-border)]/30 transition-colors group"
           >

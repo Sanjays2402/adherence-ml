@@ -295,6 +295,10 @@ def create_app() -> FastAPI:
     app.include_router(baa_route.router)
     from adherence_api.routes import bcdr as bcdr_route
     app.include_router(bcdr_route.router)
+    from adherence_api.routes import pentests as pentests_route
+    app.include_router(pentests_route.router)
+    from adherence_api.routes import vendor_risk as vendor_risk_route
+    app.include_router(vendor_risk_route.router)
     from adherence_api.routes import risk_register as risk_register_route
     app.include_router(risk_register_route.router)
     from adherence_api.routes import dual_control as dual_control_route

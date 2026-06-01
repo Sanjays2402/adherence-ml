@@ -340,6 +340,51 @@ The first action wired through the gate is ``legal_hold.release``
 admin role, MFA challenge, and the admin audit chain are all
 preserved.
 
+## Per-workspace vendor risk assessment register
+
+Procurement, security, and privacy reviewers all expect the customer to
+maintain their own vendor risk register (SOC 2 CC9.2, ISO 27001 A.5.19
+and A.5.22, HIPAA 164.308(b), and most SIG/CAIQ packs) independently
+of the supplier-published sub-processor list. The new register is
+per-workspace, tenant-scoped at the query layer, admin and MFA gated
+on every mutation, and audit-logged through the existing admin audit
+chain. Each row carries vendor type, the data class shared, inherent
+and residual risk tiers, attested SOC2/ISO27001/HIPAA/PCI flags,
+evidence URL, owner, status, and a review cadence with an overdue
+flag. A `POST /{id}/review` endpoint records the outcome of a review,
+pushes the next review forward by the cadence, and updates the row
+status. CSV export is available for procurement and audit packs.
+
+### Try it
+
+```bash
+# in another shell
+uvicorn adherence_api.app:create_app --factory --port 7421
+pnpm --filter @adherence/web dev
+
+# open http://localhost:3000/settings/vendor-risk
+
+# register a vendor
+curl -X POST -H "x-api-key: $ADHERENCE_API_KEY" \
+  -H "content-type: application/json" \
+  -H "x-admin-mfa: $ADMIN_MFA_TOKEN" \
+  -d '{
+        "vendor_name": "OpenAI",
+        "vendor_type": "subprocessor",
+        "owner": "J. Patel",
+        "data_shared": "metadata",
+        "inherent_risk": "high",
+        "residual_risk": "medium",
+        "soc2": true,
+        "review_cadence_days": 365
+      }' \
+  http://localhost:7421/v1/admin/vendor-risk
+
+# export the register
+curl -H "x-api-key: $ADHERENCE_API_KEY" \
+  http://localhost:7421/v1/admin/vendor-risk/export.csv
+```
+
 ## Per-workspace business continuity and disaster recovery declarations
 
 Every enterprise procurement review (SIG Lite section L, CAIQ domain
