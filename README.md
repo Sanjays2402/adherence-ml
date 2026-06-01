@@ -311,6 +311,48 @@ The first action wired through the gate is ``legal_hold.release``
 admin role, MFA challenge, and the admin audit chain are all
 preserved.
 
+## Per-workspace business continuity and disaster recovery declarations
+
+Every enterprise procurement review (SIG Lite section L, CAIQ domain
+BCR, ISO 27001 Annex A.17, SOC 2 CC9.1) asks the vendor to declare, per
+service tier, its Recovery Time Objective, Recovery Point Objective, DR
+strategy, runbook reference, and the date and outcome of the last DR
+test. The new register is per-workspace, tenant-scoped at the query
+layer, admin and MFA gated on every mutation, audit-logged through the
+existing admin audit chain, and surfaces overdue-test warnings against
+the declared cadence. A `POST /{id}/test` endpoint lets operators log a
+fresh DR drill outcome which clears the overdue flag.
+
+### Try it
+
+```bash
+# in another shell
+uvicorn adherence_api.app:create_app --factory --port 7421
+pnpm --filter @adherence/web dev
+
+# open http://localhost:3000/settings/bcdr
+
+# list the register
+curl -H "x-api-key: $ADHERENCE_API_KEY" \
+  http://localhost:7421/v1/admin/bcdr
+
+# dry-run a new declaration (no DB write, audit row still recorded)
+curl -X POST -H "x-api-key: $ADHERENCE_API_KEY" \
+  -H 'content-type: application/json' \
+  "http://localhost:7421/v1/admin/bcdr?dry_run=true" \
+  -d '{"service_name":"prediction-api","tier":"tier1","rto_minutes":60,"rpo_minutes":15,"strategy":"warm_standby","runbook_url":"https://runbooks.example.com/dr/prediction-api","test_cadence_days":180}'
+
+# record a DR test outcome against an existing entry
+curl -X POST -H "x-api-key: $ADHERENCE_API_KEY" \
+  -H 'content-type: application/json' \
+  http://localhost:7421/v1/admin/bcdr/1/test \
+  -d '{"outcome":"passed","test_notes":"Failover drill us-east-2, recovered in 14m, no data loss."}'
+
+# download the register as CSV for a procurement pack
+curl -OJ -H "x-api-key: $ADHERENCE_API_KEY" \
+  http://localhost:7421/v1/admin/bcdr/export.csv
+```
+
 ## Per-workspace GDPR Article 35 data protection impact assessment register
 
 GDPR Art. 35 requires the controller to carry out a DPIA before any
