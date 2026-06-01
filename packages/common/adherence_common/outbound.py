@@ -6,9 +6,14 @@ POSTs a signed JSON payload to every active subscription whose
 ``event_types_csv`` allowlist matches the event type. Each attempt is
 recorded as a ``WebhookDelivery`` row so operators can audit and replay.
 
-Signature scheme: ``X-Adherence-Signature: sha256=<hex(hmac(secret, body))>``.
-Receivers should reject any request that does not match (constant-time
-compare) and ignore retries via ``X-Adherence-Delivery-Id``.
+Signature scheme (v1, legacy): ``X-Adherence-Signature: sha256=<hex(hmac(secret, body))>``.
+Signature scheme (v2, anti-replay): ``X-Adherence-Signature-V2: sha256=<hex(hmac(secret, "<timestamp>.<body>"))>``
+paired with ``X-Adherence-Timestamp: <unix_seconds>``. Receivers MUST
+verify the v2 signature in constant time AND reject any request whose
+timestamp skew vs wall clock exceeds the configured tolerance (default
+300s). The v1 header is still sent during a deprecation window so
+existing receivers keep working; new integrations should consume v2
+only. Retries are deduplicated via ``X-Adherence-Delivery-Id``.
 
 Failures here never bubble out to the API request that triggered them;
 the event is best-effort and isolated from the request hot path.
@@ -53,15 +58,60 @@ def _ensure_table() -> None:
 
 
 def sign(secret: str, body: bytes) -> str:
-    """Return the value for the ``X-Adherence-Signature`` header."""
+    """Return the value for the legacy ``X-Adherence-Signature`` header."""
     mac = hmac.new(secret.encode("utf-8"), body, hashlib.sha256)
     return f"sha256={mac.hexdigest()}"
 
 
+def sign_v2(secret: str, timestamp: str, body: bytes) -> str:
+    """Return the value for the ``X-Adherence-Signature-V2`` header.
+
+    Binds the body to a unix-seconds ``timestamp`` so receivers can reject
+    replays once a configurable skew window elapses, even if the secret
+    has not rotated. Payload is ``timestamp.body`` (ASCII dot separator)
+    to match the inbound webhook verifier.
+    """
+    payload = timestamp.encode("ascii") + b"." + body
+    mac = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256)
+    return f"sha256={mac.hexdigest()}"
+
+
 def verify(secret: str, body: bytes, header_value: str) -> bool:
-    """Constant-time verification helper for tests / downstream receivers."""
+    """Constant-time verification helper for the legacy v1 signature."""
     expected = sign(secret, body)
     return hmac.compare_digest(expected, header_value or "")
+
+
+def verify_v2(
+    secret: str,
+    timestamp_header: str | None,
+    body: bytes,
+    signature_header: str | None,
+    *,
+    max_skew_seconds: int = 300,
+    now: int | None = None,
+) -> tuple[bool, str | None]:
+    """Verify a v2 signed delivery. Returns ``(ok, reason)``.
+
+    Fails closed: missing headers, non-integer timestamp, skew beyond
+    ``max_skew_seconds``, or signature mismatch all return ``False``
+    with a human-readable reason suitable for logs (never echoed to the
+    untrusted sender).
+    """
+    if not signature_header or not timestamp_header:
+        return False, "missing_signature_or_timestamp"
+    try:
+        ts_int = int(timestamp_header)
+    except (TypeError, ValueError):
+        return False, "timestamp_not_integer"
+    current = int(now if now is not None else time.time())
+    skew = abs(current - ts_int)
+    if skew > max(1, int(max_skew_seconds)):
+        return False, f"timestamp_skew_{skew}s_exceeds_limit"
+    expected = sign_v2(secret, timestamp_header, body)
+    if not hmac.compare_digest(expected, signature_header):
+        return False, "signature_mismatch"
+    return True, None
 
 
 def verify_any(
@@ -210,9 +260,16 @@ def dispatch(
                 reason=decision.reason,
             )
             continue
+        # Stamp a per-dispatch timestamp so every retry of the same
+        # delivery uses the same value; this lets receivers dedupe via
+        # ``X-Adherence-Delivery-Id`` while still enforcing skew on the
+        # first attempt.
+        ts_str = str(int(time.time()))
         sig = sign(sub.secret, body)
+        sig_v2 = sign_v2(sub.secret, ts_str, body)
         prev_secret = _previous_secret_active(sub)
         sig_prev = sign(prev_secret, body) if prev_secret else None
+        sig_v2_prev = sign_v2(prev_secret, ts_str, body) if prev_secret else None
         last_status: int | None = None
         last_error: str | None = None
         last_latency: float | None = None
@@ -225,14 +282,18 @@ def dispatch(
             headers = {
                 "Content-Type": "application/json",
                 "X-Adherence-Signature": sig,
+                "X-Adherence-Signature-V2": sig_v2,
+                "X-Adherence-Timestamp": ts_str,
                 "X-Adherence-Event": event_type,
                 "X-Adherence-Attempt": str(attempt),
             }
             if sig_prev:
                 # Receivers in the middle of rotating their stored secret
-                # can verify either header. Drop this header once the
+                # can verify either header. Drop these headers once the
                 # window expires.
                 headers["X-Adherence-Signature-Previous"] = sig_prev
+                if sig_v2_prev:
+                    headers["X-Adherence-Signature-V2-Previous"] = sig_v2_prev
             status, latency_ms, err = _post(
                 sub.url, body, headers, timeout, client=_client,
             )
@@ -372,7 +433,9 @@ __all__ = [
     "DEFAULT_TIMEOUT_S",
     "MAX_ATTEMPTS",
     "sign",
+    "sign_v2",
     "verify",
+    "verify_v2",
     "verify_any",
     "list_targets",
     "dispatch",
