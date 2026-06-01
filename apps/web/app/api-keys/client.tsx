@@ -43,6 +43,7 @@ type KeyRow = {
   expires_at: number | null;
   expired: boolean;
   daily_quota: number | null;
+  burst_rpm: number | null;
   allowed_cidrs: string[] | null;
   last_used_ip?: string | null;
   last_used_user_agent?: string | null;
@@ -248,6 +249,123 @@ function QuotaCell({
           className="text-[10px] text-[var(--color-high)]"
           role="alert"
         >
+          {err}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+function BurstCell({
+  k,
+  disabled,
+  onSaved,
+}: {
+  k: KeyRow;
+  disabled: boolean;
+  onSaved: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState<string>(
+    k.burst_rpm == null ? "" : String(k.burst_rpm),
+  );
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const save = useCallback(async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const trimmed = val.trim();
+      let burst_rpm: number | null = null;
+      if (trimmed) {
+        const n = Math.floor(Number(trimmed));
+        if (!Number.isFinite(n) || n <= 0) {
+          throw new Error(
+            "enter a positive whole number, or leave blank for no burst cap",
+          );
+        }
+        if (n > 60_000) {
+          throw new Error("burst cap is at most 60000 calls per minute");
+        }
+        burst_rpm = n;
+      }
+      const res = await fetch(`/api/keys/${k.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ burst_rpm }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j?.detail ?? `update failed (${res.status})`);
+      }
+      setEditing(false);
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [k.id, val, onSaved]);
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => {
+          setVal(k.burst_rpm == null ? "" : String(k.burst_rpm));
+          setErr(null);
+          setEditing(true);
+        }}
+        className="text-[11px] font-mono px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-surface)] hover:border-[var(--color-accent)]/40 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)] disabled:opacity-50 disabled:cursor-not-allowed"
+        aria-label={`edit burst rate limit for ${k.name}`}
+        title={
+          k.burst_rpm == null
+            ? "No per-minute burst cap. Click to set one."
+            : `Per-key burst cap: ${k.burst_rpm} calls/minute. Click to edit.`
+        }
+      >
+        {k.burst_rpm == null ? "none" : k.burst_rpm.toLocaleString()}
+      </button>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1 justify-end">
+      <input
+        type="number"
+        min={1}
+        step={1}
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        placeholder="none"
+        autoFocus
+        onKeyDown={(e) => {
+          if (e.key === "Enter") void save();
+          if (e.key === "Escape") setEditing(false);
+        }}
+        className="w-20 text-[11px] font-mono px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-soft)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
+        aria-label="burst rate limit in calls per minute, blank for none"
+      />
+      <button
+        type="button"
+        onClick={() => void save()}
+        disabled={busy}
+        className="text-[11px] px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-surface)] hover:border-[var(--color-accent)]/40 disabled:opacity-50"
+      >
+        {busy ? "..." : "save"}
+      </button>
+      <button
+        type="button"
+        onClick={() => setEditing(false)}
+        disabled={busy}
+        className="text-[11px] px-2 py-1 rounded text-[var(--color-muted)] hover:text-[var(--color-text)] disabled:opacity-50"
+      >
+        cancel
+      </button>
+      {err ? (
+        <span className="text-[10px] text-[var(--color-high)]" role="alert">
           {err}
         </span>
       ) : null}
@@ -885,6 +1003,7 @@ export default function KeysClient() {
                     <th className="px-4 py-2 font-medium">Expires</th>
                     <th className="px-4 py-2 font-medium text-right">Calls</th>
                     <th className="px-4 py-2 font-medium text-right">Cap/day</th>
+                    <th className="px-4 py-2 font-medium text-right">Burst/min</th>
                     <th className="px-4 py-2 font-medium text-right">IPs</th>
                     <th className="px-4 py-2 font-medium">Status</th>
                     <th className="px-4 py-2 font-medium text-right">Actions</th>
@@ -941,6 +1060,13 @@ export default function KeysClient() {
                       <td className="px-4 py-2 text-right font-mono">{k.use_count}</td>
                       <td className="px-4 py-2 text-right">
                         <QuotaCell
+                          k={k}
+                          disabled={k.revoked || k.expired}
+                          onSaved={() => mutate()}
+                        />
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        <BurstCell
                           k={k}
                           disabled={k.revoked || k.expired}
                           onSaved={() => mutate()}

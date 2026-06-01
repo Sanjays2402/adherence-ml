@@ -30,6 +30,12 @@ import type { ApiKeyRecord } from "./api-keys-store";
 import { FREE_DAILY_QUOTA, recordUsage, usedToday } from "./usage-store";
 import { recordKeyUsage, usedTodayForKey } from "./api-key-usage-store";
 import { dailyQuota as planDailyQuota } from "./plan-store";
+import {
+  type BurstRing,
+  chargeBurst,
+  readBurst,
+  wouldExceedBurst,
+} from "./burst-ratelimit";
 
 export interface RateBudget {
   /** binding limit (min of plan, per-key) for the standard headers */
@@ -44,8 +50,10 @@ export interface RateBudget {
   plan: { limit: number; used: number; remaining: number };
   /** per-key ring; null when the key has no per-key cap */
   key: { limit: number; used: number; remaining: number } | null;
+  /** per-minute burst ring; null when the key has no per-minute cap */
+  burst: BurstRing | null;
   /** which ring is the binding one */
-  scope: "plan" | "api_key";
+  scope: "plan" | "api_key" | "burst";
 }
 
 /** Seconds remaining until the next UTC midnight, minimum 1. */
@@ -67,7 +75,7 @@ export function nextUtcMidnightEpoch(now: Date = new Date()): number {
  * charging the caller.
  */
 export async function readBudget(
-  key: Pick<ApiKeyRecord, "id" | "daily_quota">,
+  key: Pick<ApiKeyRecord, "id" | "daily_quota" | "burst_rpm">,
   now: Date = new Date(),
 ): Promise<RateBudget> {
   const planLimit = await planDailyQuota().catch(() => FREE_DAILY_QUOTA);
@@ -81,10 +89,36 @@ export async function readBudget(
   const perKeyUsed = perKeyLimit !== null ? await usedTodayForKey(key.id).catch(() => 0) : 0;
   const perKeyRemaining = perKeyLimit !== null ? Math.max(0, perKeyLimit - perKeyUsed) : Infinity;
 
+  const burst = readBurst(key.id, key.burst_rpm ?? null, now.getTime());
+
   const reset = nextUtcMidnightEpoch(now);
   const retryAfter = secondsUntilUtcMidnight(now);
 
-  if (perKeyLimit !== null && perKeyLimit - perKeyUsed <= planLimit - planUsed) {
+  // Pick the binding ring: smallest remaining wins. Burst is in calls per
+  // minute, plan/key are calls per day, but "remaining" is comparable: it
+  // is the number of additional calls allowed right now in either window.
+  const planRem = planLimit - planUsed;
+  const keyRem = perKeyLimit !== null ? perKeyLimit - perKeyUsed : Infinity;
+  const burstRem = burst ? burst.remaining : Infinity;
+  const min = Math.min(planRem, keyRem, burstRem);
+
+  if (burst && burstRem === min) {
+    return {
+      limit: burst.limit,
+      remaining: burst.remaining,
+      reset: burst.reset,
+      retryAfter: burst.retryAfter,
+      plan: { limit: planLimit, used: planUsed, remaining: planRemaining },
+      key:
+        perKeyLimit !== null
+          ? { limit: perKeyLimit, used: perKeyUsed, remaining: perKeyRemaining }
+          : null,
+      burst,
+      scope: "burst",
+    };
+  }
+
+  if (perKeyLimit !== null && keyRem <= planRem) {
     return {
       limit: perKeyLimit,
       remaining: perKeyRemaining,
@@ -92,6 +126,7 @@ export async function readBudget(
       retryAfter,
       plan: { limit: planLimit, used: planUsed, remaining: planRemaining },
       key: { limit: perKeyLimit, used: perKeyUsed, remaining: perKeyRemaining },
+      burst,
       scope: "api_key",
     };
   }
@@ -105,6 +140,7 @@ export async function readBudget(
       perKeyLimit !== null
         ? { limit: perKeyLimit, used: perKeyUsed, remaining: perKeyRemaining }
         : null,
+    burst,
     scope: "plan",
   };
 }
@@ -118,10 +154,16 @@ export function rateLimitHeaders(b: RateBudget, consumed = 0): Record<string, st
   const planRemainingAfter = Math.max(0, b.plan.remaining - consumed);
   const keyRemainingAfter =
     b.key === null ? null : Math.max(0, b.key.remaining - consumed);
-  const bindingRemainingAfter =
-    b.scope === "api_key" && keyRemainingAfter !== null
-      ? keyRemainingAfter
-      : planRemainingAfter;
+  const burstRemainingAfter =
+    b.burst === null ? null : Math.max(0, b.burst.remaining - consumed);
+  let bindingRemainingAfter: number;
+  if (b.scope === "burst" && burstRemainingAfter !== null) {
+    bindingRemainingAfter = burstRemainingAfter;
+  } else if (b.scope === "api_key" && keyRemainingAfter !== null) {
+    bindingRemainingAfter = keyRemainingAfter;
+  } else {
+    bindingRemainingAfter = planRemainingAfter;
+  }
 
   const h: Record<string, string> = {
     // Standard IETF-style headers, lowercased for HTTP/2 friendliness.
@@ -137,6 +179,11 @@ export function rateLimitHeaders(b: RateBudget, consumed = 0): Record<string, st
     h["x-ratelimit-key-limit"] = String(b.key.limit);
     h["x-ratelimit-key-remaining"] = String(keyRemainingAfter);
   }
+  if (b.burst !== null && burstRemainingAfter !== null) {
+    h["x-ratelimit-burst-limit"] = String(b.burst.limit);
+    h["x-ratelimit-burst-remaining"] = String(burstRemainingAfter);
+    h["x-ratelimit-burst-window"] = "60";
+  }
   return h;
 }
 
@@ -149,19 +196,31 @@ export function rateLimitHeaders(b: RateBudget, consumed = 0): Record<string, st
  * spend half a batch before bailing.
  */
 export function over429(b: RateBudget, cost = 1): NextResponse | null {
+  const burstOver = wouldExceedBurst(b.burst, cost);
   const keyOver = b.key !== null && b.key.used + cost > b.key.limit;
   const planOver = b.plan.used + cost > b.plan.limit;
-  if (!keyOver && !planOver) return null;
+  if (!burstOver && !keyOver && !planOver) return null;
 
-  const scope: "plan" | "api_key" = keyOver ? "api_key" : "plan";
+  // Burst trips first so a runaway client gets shed in real time even
+  // when it still has daily headroom.
+  const scope: "plan" | "api_key" | "burst" = burstOver
+    ? "burst"
+    : keyOver
+      ? "api_key"
+      : "plan";
+  const retryAfter =
+    scope === "burst" && b.burst !== null ? b.burst.retryAfter : b.retryAfter;
+  const reset = scope === "burst" && b.burst !== null ? b.burst.reset : b.reset;
   const headers: Record<string, string> = {
     ...rateLimitHeaders(b, 0),
-    "retry-after": String(b.retryAfter),
+    "retry-after": String(retryAfter),
   };
-  // When the binding scope is the one we just tripped, force remaining=0
-  // (the helper above clamps to >=0 but a partial batch might have a
-  // non-zero remaining; the 429 should always claim 0 on the tripped ring).
-  if (scope === "api_key") {
+  if (scope === "burst" && b.burst !== null) {
+    headers["x-ratelimit-scope"] = "burst";
+    headers["x-ratelimit-limit"] = String(b.burst.limit);
+    headers["x-ratelimit-remaining"] = "0";
+    headers["x-ratelimit-reset"] = String(b.burst.reset);
+  } else if (scope === "api_key") {
     headers["x-ratelimit-scope"] = "api_key";
     headers["x-ratelimit-limit"] = String(b.key!.limit);
     headers["x-ratelimit-remaining"] = "0";
@@ -171,18 +230,34 @@ export function over429(b: RateBudget, cost = 1): NextResponse | null {
     headers["x-ratelimit-remaining"] = "0";
   }
 
+  const detail =
+    scope === "burst"
+      ? "per-key burst rate limit exceeded (60s window)"
+      : scope === "api_key"
+        ? "per-key daily quota exceeded"
+        : "daily plan quota exceeded";
+  const limit =
+    scope === "burst"
+      ? b.burst!.limit
+      : scope === "api_key"
+        ? b.key!.limit
+        : b.plan.limit;
+  const used =
+    scope === "burst"
+      ? b.burst!.used
+      : scope === "api_key"
+        ? b.key!.used
+        : b.plan.used;
+
   return NextResponse.json(
     {
-      detail:
-        scope === "api_key"
-          ? "per-key daily quota exceeded"
-          : "daily plan quota exceeded",
+      detail,
       scope,
-      limit: scope === "api_key" ? b.key!.limit : b.plan.limit,
-      used_today: scope === "api_key" ? b.key!.used : b.plan.used,
+      limit,
+      used_today: used,
       remaining: 0,
-      reset: b.reset,
-      retry_after_seconds: b.retryAfter,
+      reset,
+      retry_after_seconds: retryAfter,
       upgrade_url: "/pricing",
     },
     { status: 429, headers },
@@ -203,6 +278,10 @@ export async function chargeCall(opts: {
 }): Promise<void> {
   const { key, method, path, status, latencyMs } = opts;
   const cost = opts.cost ?? 1;
+  // Burst ring: charge real-time so the next call sees the new headroom.
+  // This is unconditional; if the key has no burst cap, readBurst returns
+  // null at the headers stage and these in-memory hits are simply unread.
+  chargeBurst(key.id, cost);
   // Plan ring: usage-store is one event per call. For batch (cost>1) we
   // record `cost` events so the daily counter and the per-key counter
   // stay aligned with what the caller was actually charged.

@@ -250,6 +250,15 @@ export interface ApiKeyRecord {
    */
   daily_quota?: number | null;
   /**
+   * Optional per-key per-minute burst rate limit. When set to a positive
+   * integer, the key is limited to this many calls in any rolling 60-second
+   * window in addition to the daily quota. `null` or omitted means no
+   * per-minute cap. This is the small companion to `daily_quota`: it lets
+   * an enterprise customer protect a production tenant from a runaway
+   * client without dropping the daily ceiling.
+   */
+  burst_rpm?: number | null;
+  /**
    * Optional per-key client IP allowlist as a list of normalized CIDRs.
    * When set and non-empty, the key only authenticates requests whose
    * client IP falls inside at least one entry. See `ipAllowedForKey`.
@@ -327,6 +336,21 @@ export function normalizeDailyQuota(raw: unknown): number | null {
   if (!Number.isFinite(n) || n <= 0) return null;
   // cap at 10M/day to avoid silly values
   return Math.min(Math.floor(n), 10_000_000);
+}
+
+/**
+ * Maximum per-key burst rate, in requests per minute. 60_000 rpm = 1000 rps,
+ * well past anything a single sane caller should need; the workspace plan
+ * still applies on top.
+ */
+export const MAX_BURST_RPM = 60_000;
+
+/** Normalize a user-supplied per-minute burst limit into a stored field. */
+export function normalizeBurstRpm(raw: unknown): number | null {
+  if (raw === null || raw === undefined || raw === "") return null;
+  const n = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.min(Math.floor(n), MAX_BURST_RPM);
 }
 
 /** True when the key carries a non-null `expires_at` that has already passed. */
@@ -445,6 +469,7 @@ export function publicView(k: ApiKeyRecord) {
     expires_at: k.expires_at ?? null,
     expired: isExpired(k),
     daily_quota: k.daily_quota ?? null,
+    burst_rpm: k.burst_rpm ?? null,
     allowed_cidrs: Array.isArray(k.allowed_cidrs) ? [...k.allowed_cidrs] : null,
     last_used_ip: k.last_used_ip ?? null,
     last_used_user_agent: k.last_used_user_agent ?? null,
@@ -475,6 +500,7 @@ export async function updateKey(
     name?: string;
     scopes?: KeyScope[];
     daily_quota?: number | null;
+    burst_rpm?: number | null;
     allowed_cidrs?: string[] | null;
   },
 ): Promise<ApiKeyRecord | null> {
@@ -492,6 +518,9 @@ export async function updateKey(
     }
     if (patch.daily_quota !== undefined) {
       k.daily_quota = normalizeDailyQuota(patch.daily_quota);
+    }
+    if (patch.burst_rpm !== undefined) {
+      k.burst_rpm = normalizeBurstRpm(patch.burst_rpm);
     }
     if (patch.allowed_cidrs !== undefined) {
       // patch.allowed_cidrs === null clears the pin; an array is normalized
@@ -587,6 +616,7 @@ export async function createKey(
     scopes: normalizeScopes(scopes),
     expires_at: expiresAt ?? null,
     daily_quota: null,
+    burst_rpm: null,
     allowed_cidrs: normalizeAllowedCidrs(allowedCidrs),
   };
   writeQueue = writeQueue.then(async () => {

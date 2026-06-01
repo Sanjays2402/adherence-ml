@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import {
   ALL_SCOPES,
+  MAX_BURST_RPM,
   MAX_KEY_CIDRS,
   REVOKE_NOTE_MAX,
   REVOKE_REASONS,
@@ -25,6 +26,9 @@ const PatchSchema = z.object({
   scopes: z.array(z.enum(ALL_SCOPES)).optional(),
   // null clears the per-key cap, positive int sets it. Capped server-side.
   daily_quota: z.number().int().min(1).max(10_000_000).nullable().optional(),
+  // null clears the per-minute burst cap, positive int sets it. Capped at
+  // MAX_BURST_RPM so a typo cannot effectively disable rate limiting.
+  burst_rpm: z.number().int().min(1).max(MAX_BURST_RPM).nullable().optional(),
   // null clears the IP pin; an array replaces it. Each entry must be a valid
   // IPv4 or IPv6 CIDR (a bare IP is treated as a /32 or /128 host route).
   allowed_cidrs: z.array(z.string().min(1).max(64)).max(MAX_KEY_CIDRS).nullable().optional(),

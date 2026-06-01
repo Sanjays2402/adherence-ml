@@ -2,6 +2,52 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Per-API-key burst rate limit (per-minute)
+
+Every API key already supports a daily quota. Daily caps reset at UTC
+midnight, so a misbehaving client can still burn an entire day's budget
+in seconds. Keys now carry an optional `burst_rpm` (per-minute) limit
+that is checked against a rolling 60-second window and trips before the
+daily ring. Customers shed runaway clients in real time without losing
+headroom for the rest of the day.
+
+The binding limit picks the smallest of plan, per-key daily, and per-key
+burst. Responses include `X-RateLimit-Burst-Limit`, `X-RateLimit-Burst-Remaining`,
+and `X-RateLimit-Burst-Window: 60`. A burst trip returns HTTP 429 with
+`X-RateLimit-Scope: burst` and a real `Retry-After` (seconds until the
+oldest hit ages out), so SDKs back off correctly.
+
+### Try it
+
+```
+cd apps/web && pnpm dev   # http://localhost:3000/api-keys
+```
+
+Edit a key's "Burst/min" cell, set 3, then hammer `/v1/predict` with a
+valid key. The fourth call inside 60s returns:
+
+```
+curl -i -H "Authorization: Bearer $KEY" \
+  -H 'content-type: application/json' \
+  -d '{"age":54,"prior_adherence":0.71}' \
+  http://localhost:3000/v1/predict
+# HTTP/1.1 429
+# X-RateLimit-Scope: burst
+# X-RateLimit-Limit: 3
+# X-RateLimit-Remaining: 0
+# X-RateLimit-Burst-Window: 60
+# Retry-After: 47
+# {"detail":"per-key burst rate limit exceeded (60s window)","scope":"burst",...}
+```
+
+PATCH a key's burst cap directly from the admin API:
+
+```
+curl -X PATCH http://localhost:3000/api/keys/$KEY_ID \
+  -H 'content-type: application/json' \
+  -d '{"burst_rpm": 60}'
+```
+
 ## Inbound webhook posture dashboard
 
 Partner systems (Med-Tracker and similar) POST dose-outcome events

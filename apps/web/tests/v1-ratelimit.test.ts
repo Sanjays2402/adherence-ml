@@ -111,6 +111,7 @@ describe("v1-ratelimit", () => {
       retryAfter: retry,
       plan: { limit: 100, used: 100, remaining: 0 },
       key: null,
+      burst: null,
       scope: "plan" as const,
     };
     const resp = rl.over429(exhausted, 1);
