@@ -2,6 +2,46 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Per-workspace retention policy UI
+
+The FastAPI backend already exposes `/v1/workspace/retention-policy` so a
+workspace admin can tighten how long predictions, prediction audit, and
+admin audit log rows live below the deployment default. Procurement teams
+ask for this on every HIPAA, GDPR, and SOC2 questionnaire so they can prove
+their own data minimization story instead of inheriting the vendor default.
+
+Until now that endpoint had no admin surface. The new
+`/settings/retention-policy` page renders the allowed tables, current
+override values, last-updated actor, and a sweep panel with a dry-run
+preview that returns candidate counts without deleting. Saves and sweeps
+stay admin only, MFA gated, and audit logged on the backend, and an active
+legal hold still returns `423 Locked` and aborts the sweep. The Next.js
+proxy validates the payload with zod so a malformed body never reaches
+upstream; six vitest cases cover empty maps, out-of-range TTLs,
+non-integer values, and a well-formed forward.
+
+### Try it
+
+```
+cd apps/web && pnpm dev   # http://localhost:3000/settings/retention-policy
+```
+
+Or drive it directly:
+
+```
+curl -sS http://localhost:3000/api/retention-policy
+curl -sS -X PUT http://localhost:3000/api/retention-policy \
+  -H 'content-type: application/json' \
+  -d '{"ttls_days":{"predictions":30,"prediction_audit":90}}'
+curl -sS -X POST http://localhost:3000/api/retention-policy/sweep \
+  -H 'content-type: application/json' \
+  -d '{"dry_run":true}'
+```
+
+Cross-tenant isolation of the sweep itself is verified in
+`tests/integration/test_retention_policy.py`; proxy input validation lives in
+`apps/web/tests/retention-policy-proxy.test.ts`.
+
 ## Per-API-key burst rate limit (per-minute)
 
 Every API key already supports a daily quota. Daily caps reset at UTC
