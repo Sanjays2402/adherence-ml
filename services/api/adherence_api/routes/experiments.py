@@ -13,11 +13,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
 from adherence_api.deps import require_admin, require_service
 from adherence_common import experiments as exp_mod
+from adherence_common.admin_audit import record_admin_action
+
+
+def _rid(request: Request) -> str | None:
+    return getattr(request.state, "request_id", None)
 
 router = APIRouter(prefix="/v1/experiments", tags=["experiments"])
 
@@ -58,7 +63,7 @@ def _to_out(exp) -> ExperimentOut:
 
 
 @router.post("", response_model=ExperimentOut, status_code=status.HTTP_201_CREATED)
-def create_experiment(body: ExperimentIn, p=Depends(require_admin)) -> ExperimentOut:
+def create_experiment(body: ExperimentIn, request: Request, p=Depends(require_admin)) -> ExperimentOut:
     try:
         row = exp_mod.create_experiment(
             key=body.key,
@@ -69,7 +74,31 @@ def create_experiment(body: ExperimentIn, p=Depends(require_admin)) -> Experimen
             created_by=p.get("sub"),
         )
     except exp_mod.ExperimentError as exc:
+        record_admin_action(
+            action="experiment.create",
+            principal=p,
+            target=body.key,
+            details={
+                "variants": [v.model_dump() for v in body.variants],
+                "state": body.state,
+                "description": body.description,
+            },
+            ok=False,
+            error=str(exc),
+            request_id=_rid(request),
+        )
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    record_admin_action(
+        action="experiment.create",
+        principal=p,
+        target=body.key,
+        details={
+            "variants": [v.model_dump() for v in body.variants],
+            "state": body.state,
+            "description": body.description,
+        },
+        request_id=_rid(request),
+    )
     return _to_out(row)
 
 
@@ -91,13 +120,31 @@ class StateIn(BaseModel):
 
 
 @router.patch("/{key}/state", response_model=ExperimentOut)
-def patch_state(key: str, body: StateIn, _p=Depends(require_admin)) -> ExperimentOut:
+def patch_state(key: str, body: StateIn, request: Request, p=Depends(require_admin)) -> ExperimentOut:
+    prev = exp_mod.get_experiment(key)
+    prev_state = prev.state if prev is not None else None
     try:
         row = exp_mod.set_state(key, body.state)
     except exp_mod.ExperimentError as exc:
         # 404 when missing, 400 otherwise.
         code = status.HTTP_404_NOT_FOUND if "not found" in str(exc) else status.HTTP_400_BAD_REQUEST
+        record_admin_action(
+            action="experiment.state.set",
+            principal=p,
+            target=key,
+            details={"from": prev_state, "to": body.state},
+            ok=False,
+            error=str(exc),
+            request_id=_rid(request),
+        )
         raise HTTPException(code, detail=str(exc))
+    record_admin_action(
+        action="experiment.state.set",
+        principal=p,
+        target=key,
+        details={"from": prev_state, "to": row.state},
+        request_id=_rid(request),
+    )
     return _to_out(row)
 
 

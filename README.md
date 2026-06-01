@@ -39,6 +39,36 @@ curl -s -H "authorization: bearer $TOKEN" \
 Then open `http://localhost:3000/settings/audit-integrity` to verify
 from the dashboard.
 
+## Admin-audit coverage for mutes, risk policies, experiments, and training
+
+SOC2 CC7.2 and ISO 27001 A.12.4 both require that every privileged state change is captured in a tamper-evident log with actor, target, timestamp, request id, and before/after context. Earlier releases instrumented the auth, api-key, webhook, and GDPR planes, but four mutation surfaces still slipped through and produced no `admin_audit_log` row at all: per-user intervention mutes, per-user / per-class risk policies, experiment lifecycle, and the training endpoints. This release closes that gap end to end.
+
+- `PUT /v1/users/{user_id}/mute` and `DELETE /v1/users/{user_id}/mute` now write `user.mute.set` / `user.mute.clear` rows with duration, reason, the resolved `muted_until`, the caller, and the request id. Both success and failure paths (including the 404 when there is nothing to clear) land an entry, and the `?dry_run=true` preview is captured with `details.dry_run = true` so reviewers can tell rehearsals from real changes.
+- `PUT /v1/policies/risk` and `DELETE /v1/policies/risk` log `risk_policy.upsert` / `risk_policy.delete` with the full scope, thresholds, and note. Validation failures and missing-target deletes are recorded as `ok=false` with the original error.
+- `POST /v1/experiments` and `PATCH /v1/experiments/{key}/state` log `experiment.create` and `experiment.state.set`. The state-change row carries an explicit `from` and `to` so an auditor can replay the lifecycle of a rollout without joining tables.
+- `POST /v1/train` and `POST /v1/train/async` log `model.train` / `model.train.async` with the synthetic flag, user count, day window, seed, and the resulting `run_id` / `model_version`. The async variant is recorded at accept-time so a queued job is never invisible.
+
+Every row reuses the existing `record_admin_action` helper, so secret redaction, PII scrubbing, and tenant scoping work identically to the auth and api-key planes. Viewer-role callers are rejected at the dependency layer before any audit row is written, so a rejected probe cannot pollute the log with false-positive activity.
+
+Proven by `tests/integration/test_audit_coverage.py`: a viewer cannot trigger an upsert, a successful mute set and clear land paired rows, deleting a never-set mute writes an `ok=false` row, a risk policy upsert + delete chain leaves the right targets behind, and an experiment created in `running` state and then patched to `paused` produces an audit row with `details.from = "running"` and `details.to = "paused"`.
+
+### Try the new audit rows
+
+```bash
+# Start the API locally (uses sqlite by default).
+uv run uvicorn adherence_api.app:create_app --factory --port 8080
+
+# Set a mute as a service caller; the row is now in admin_audit_log.
+curl -s -X PUT http://127.0.0.1:8080/v1/users/u-1/mute \
+  -H "x-api-key: $ADHERENCE_SERVICE_KEY" \
+  -H "content-type: application/json" \
+  -d '{"duration_minutes": 30, "reason": "outage"}'
+
+# Read it back from the admin audit reader.
+curl -s "http://127.0.0.1:8080/v1/admin/audit/admin?action=user.mute.set&limit=5" \
+  -H "x-api-key: $ADHERENCE_ADMIN_KEY"
+```
+
 ## Per-workspace data classification
 
 Procurement, HIPAA, and EU healthcare reviewers want to see a concrete per-tenant sensitivity tier they can map to their own DLP, encryption, and breach-notification playbooks. This release adds that as a first-class, audit-logged workspace setting wired across the API surface.
