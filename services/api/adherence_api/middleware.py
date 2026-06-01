@@ -89,6 +89,17 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
                 response.headers["x-data-residency"] = get_region(str(tenant))
             except Exception:  # pragma: no cover - defensive
                 pass
+            # Stamp the active data-classification label for the same
+            # reason: enterprise reviewers and downstream egress filters
+            # need to read the contractual sensitivity tier off the
+            # response without an extra round-trip.
+            try:
+                from adherence_common.data_classification import get_label
+                response.headers["x-data-classification"] = get_label(
+                    str(tenant)
+                )
+            except Exception:  # pragma: no cover - defensive
+                pass
         return response
 
 

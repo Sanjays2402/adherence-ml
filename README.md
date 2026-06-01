@@ -2,6 +2,40 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Per-workspace data classification
+
+Procurement, HIPAA, and EU healthcare reviewers want to see a concrete per-tenant sensitivity tier they can map to their own DLP, encryption, and breach-notification playbooks. This release adds that as a first-class, audit-logged workspace setting wired across the API surface.
+
+- New table `workspace_data_classification` holds the per-tenant label (`public`, `internal`, `confidential`, `restricted`) plus a free-form justification, updated-by, and updated-at. Default when unset is `confidential`.
+- `GET/PUT/DELETE /v1/workspace/data-classification` lets a workspace admin read, set, or clear the label. Writes are admin-only, MFA-gated, dry-run aware (`?dry_run=true`), and audit-logged under `workspace.data_classification.set` / `.clear` with both the new and prior label.
+- Every tenant-bound response now carries `X-Data-Classification: <label>` alongside the existing `X-Data-Residency` header so security reviewers running `curl` can read the contractual tier without an extra round-trip.
+- The Settings UI gains `/settings/data-classification`: a Linear-style page with the current label, contractually enforced retention floor (0 / 30 / 90 / 365 days per tier), justification, MFA-gated save, dry-run preview, and clear-pin.
+- Cross-tenant isolation is proven by an integration test: pinning `acme` to `restricted` does not affect `globex`, viewers cannot write, unknown labels are rejected, and `dry_run=true` never persists.
+
+Proven by `tests/integration/test_data_classification.py` (4 tests).
+
+### Try it
+
+Web UI: <http://127.0.0.1:3000/settings/data-classification>.
+
+```bash
+# Read the active label and its retention floor.
+curl -s http://127.0.0.1:8000/v1/workspace/data-classification \
+  -H "Authorization: Bearer $TOKEN" | jq
+
+# Pin the workspace to restricted (PHI / PCI). Dry-run first.
+curl -s -X PUT \
+  'http://127.0.0.1:8000/v1/workspace/data-classification?dry_run=true' \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H 'x-mfa-code: 123456' \
+  -H 'content-type: application/json' \
+  -d '{"label":"restricted","justification":"PHI under 45 CFR 164.514"}' | jq
+
+# Check the response header on any tenant-bound call.
+curl -si http://127.0.0.1:8000/v1/workspace/data-classification \
+  -H "Authorization: Bearer $TOKEN" | grep -i x-data-classification
+```
+
 ## API key revocation with recorded reason
 
 Procurement and SOC2 reviewers ask the same question for every credential a vendor ever issued: why was it killed, when, and by whom? The previous revoke path flipped a boolean and walked away, so the audit log had no forensic record of compromise vs rotation vs offboarding. This release fixes that across the schema, the API, the UI, and the audit trail.

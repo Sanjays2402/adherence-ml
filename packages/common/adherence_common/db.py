@@ -685,6 +685,7 @@ def init_db() -> None:
     from adherence_common import break_glass as _bg  # noqa: F401
     from adherence_common import legal_hold as _lh  # noqa: F401
     from adherence_common import pii_policy as _pii  # noqa: F401
+    from adherence_common import data_classification as _dc  # noqa: F401
     from adherence_common import siem as _siem  # noqa: F401
     from adherence_common import verified_domains as _vd  # noqa: F401
     from adherence_common import scim as _scim  # noqa: F401
