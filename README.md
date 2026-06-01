@@ -4,6 +4,35 @@ Medication adherence risk modeling and intervention API with a Next.js admin das
 
 ## Per-workspace SLA commitment register
 
+Enterprise procurement (MSA review, SOC 2 CC3.4, CAIQ STA-05 and STA-06) routinely asks the vendor to point at a single durable record of what was contractually committed to this specific customer: uptime percentage, severity response targets, RTO, RPO, and effective dates. The register lives in `adherence_common.sla_register`, is exposed at `/v1/admin/sla`, is admin-MFA gated, and is strictly tenant-scoped (no cross-tenant code path). Creating a new commitment automatically supersedes the prior active one and records the supersede reason on the archived row. `GET /v1/sla/current` returns the in-force commitment for the caller's own tenant.
+
+### Try it
+
+Local dev: API at http://localhost:7421.
+
+```sh
+curl -s -X POST http://localhost:7421/v1/admin/sla \
+  -H "x-api-key: $ADHERENCE_API_KEY" -H "content-type: application/json" \
+  -d '{
+    "contract_ref": "MSA-2026-0001",
+    "plan": "enterprise",
+    "uptime_pct": 99.9,
+    "sev1_response_hours": 1,
+    "sev2_response_hours": 4,
+    "sev3_response_hours": 8,
+    "sev4_response_hours": 24,
+    "rto_minutes": 240,
+    "rpo_minutes": 60,
+    "effective_from": "2026-01-01T00:00:00Z",
+    "effective_until": "2027-01-01T00:00:00Z"
+  }'
+
+curl -s http://localhost:7421/v1/sla/current -H "x-api-key: $ADHERENCE_API_KEY"
+```
+
+
+## Per-workspace SLA commitment register
+
 Enterprise procurement (MSA review, SOC 2 CC3.4, CAIQ STA-05 and
 STA-06) routinely asks the vendor to point at a single durable record
 of what was contractually committed to *this specific customer*:
