@@ -2,6 +2,41 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Per-workspace SSO group to role mapping
+
+Enterprise IdPs (Okta, Azure AD, Google Workspace, Cognito) provision SaaS
+access by group membership rather than per-user assignment. Until now the only
+way to grant an SSO identity admin role was the deployment wide
+`oidc_domain_role_map` setting, which forces every customer to share one
+allowlist controlled by the operator.
+
+The new `tenant_oidc_group_role_map` table lets a workspace owner declare
+"members of `okta:adherence-admins` get role `admin` inside tenant `acme`"
+from the dashboard. The mapping is consulted by
+`adherence_common.oidc.map_identity_to_principal` BEFORE the static
+email-domain map, so a group match always wins; if no group claim matches
+the resolver falls back to the existing domain map and default role so
+existing deployments are not disturbed.
+
+The mapping is strictly tenant scoped (workspace A cannot read, edit, or
+delete workspace B's rows), admin only, MFA gated on every mutation, and
+mirrored into the tamper-evident admin audit log. Group claim extraction
+accepts the common shapes (`groups`, `roles`, `wids`, `cognito:groups`)
+so the same row works across IdPs without per-provider plumbing.
+
+### Try it
+
+```
+cd apps/web && pnpm dev   # http://localhost:3000/settings/sso-group-roles
+```
+
+```
+curl -s -H "x-api-key: $ADMIN_KEY" -H 'content-type: application/json' \
+  -d '{"group_claim":"okta:adherence-admins","role":"admin","priority":500}' \
+  http://localhost:8000/v1/admin/sso/group-roles | jq
+```
+
+
 ## Per-workspace security incident register
 
 Every workspace gets a per-tenant security incident register that captures the

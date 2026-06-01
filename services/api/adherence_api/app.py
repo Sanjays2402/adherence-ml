@@ -29,6 +29,7 @@ from adherence_api.routes import verified_domains as verified_domains_route
 from adherence_api.routes import scim as scim_route
 from adherence_api.routes import session_policy as session_policy_route
 from adherence_api.routes import sso_enforcement as sso_enforcement_route
+from adherence_api.routes import sso_group_roles as sso_group_roles_route
 from adherence_api.routes import pii_policy as pii_policy_route
 from adherence_api.routes import residency as residency_route
 from adherence_api.routes import data_classification as data_classification_route
@@ -231,6 +232,7 @@ def create_app() -> FastAPI:
     app.include_router(scim_route.router)
     app.include_router(session_policy_route.router)
     app.include_router(sso_enforcement_route.router)
+    app.include_router(sso_group_roles_route.router)
     app.include_router(pii_policy_route.router)
     app.include_router(residency_route.router)
     app.include_router(data_classification_route.router)
@@ -251,6 +253,8 @@ def create_app() -> FastAPI:
     app.include_router(caiq_route.router)
     from adherence_api.routes import incidents as incidents_route
     app.include_router(incidents_route.router)
+    from adherence_api.routes import dsar as dsar_route
+    app.include_router(dsar_route.router)
     # Ensure quota + workspace tables exist before the first request.
     try:
         from adherence_common.db import init_db

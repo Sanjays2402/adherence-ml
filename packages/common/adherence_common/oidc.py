@@ -204,10 +204,15 @@ def map_identity_to_principal(
     """Return (role, tenant) for a verified OIDC identity.
 
     Resolution order:
-      1. Email-domain role map (``oidc_domain_role_map``)
-      2. ``oidc_default_role`` (default ``viewer``)
+      1. Per-tenant OIDC group-claim mapping (highest priority match
+         from ``tenant_oidc_group_role_map`` for the resolved tenant)
+      2. Email-domain role map (``oidc_domain_role_map``)
+      3. ``oidc_default_role`` (default ``viewer``)
 
     Tenant resolution: domain map, else deployment ``default_tenant``.
+    The group lookup runs against the resolved tenant so a workspace
+    owner can grant access by IdP group without changing global config.
+
     Unmapped domains raise :class:`AuthError` when
     ``oidc_require_domain_match`` is true (default false).
     """
@@ -217,15 +222,36 @@ def map_identity_to_principal(
     tenant_map = _parse_csv_map(getattr(settings, "oidc_domain_tenant_map", "") or "")
     require_domain = bool(getattr(settings, "oidc_require_domain_match", False))
 
-    if domain and domain in role_map:
-        role = role_map[domain]
-    elif require_domain:
-        raise AuthError(f"oidc email domain {domain!r} not allowed")
-    else:
-        role = default_role
+    # Resolve tenant first so the group lookup is scoped correctly.
+    tenant = tenant_map.get(domain) or settings.default_tenant
+
+    # 1. Per-tenant group-claim mapping wins when an IdP group matches.
+    role: str | None = None
+    try:
+        from adherence_common.oidc_group_map import (  # noqa: WPS433
+            extract_groups,
+            resolve_role_for_groups,
+        )
+        groups = extract_groups(identity.raw_claims)
+        if groups:
+            hit = resolve_role_for_groups(tenant, groups)
+            if hit is not None:
+                role = hit[0]
+    except Exception:
+        # Group map is best-effort; fall back to the static maps below
+        # so a broken DB row never locks every SSO user out.
+        role = None
+
+    # 2/3. Fall back to email-domain map, then deployment default.
+    if role is None:
+        if domain and domain in role_map:
+            role = role_map[domain]
+        elif require_domain:
+            raise AuthError(f"oidc email domain {domain!r} not allowed")
+        else:
+            role = default_role
 
     if role not in {"admin", "service", "viewer"}:
         raise AuthError(f"oidc mapped to invalid role {role!r}")
 
-    tenant = tenant_map.get(domain) or settings.default_tenant
     return role, tenant

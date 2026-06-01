@@ -457,6 +457,32 @@ class TenantOutboundHostAllowlist(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class TenantOidcGroupRoleMap(Base):
+    """Per-tenant mapping from OIDC group claim values to internal roles.
+
+    Enterprise IdPs (Okta, Azure AD, Google Workspace) provision access
+    via group membership. This table lets a workspace owner declare
+    "members of `okta:adherence-admins` get role `admin` in tenant
+    `acme`" without changing global deployment settings. Rows are
+    consulted by :func:`adherence_common.oidc.map_identity_to_principal`
+    BEFORE the email-domain map, so a group match always wins.
+
+    A row is uniquely identified by (tenant_id, group_claim). The
+    ``priority`` column breaks ties when an identity belongs to several
+    mapped groups (higher wins). ``role`` must be one of admin /
+    service / viewer.
+    """
+    __tablename__ = "tenant_oidc_group_role_map"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(String(64), index=True, nullable=False, default="default")
+    group_claim = Column(String(255), nullable=False, index=True)
+    role = Column(String(16), nullable=False)
+    priority = Column(Integer, nullable=False, default=100)
+    note = Column(String(255), nullable=True)
+    created_by = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class JWTRevocation(Base):
     """JWT revocation entries: per-jti hard deny and per-principal bulk deny.
 
@@ -756,6 +782,7 @@ def init_db() -> None:
     from adherence_common import subprocessors as _subproc  # noqa: F401
     from adherence_common import caiq as _caiq  # noqa: F401
     from adherence_common import incidents as _inc  # noqa: F401
+    from adherence_common import dsar as _dsar  # noqa: F401
     engine = _engine()
     Base.metadata.create_all(engine)
     try:
