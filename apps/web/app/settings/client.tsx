@@ -561,13 +561,13 @@ export default function SettingsClient() {
             />
           </a>
           <a
-            href="/settings/data-classification"
+            href="/settings/sso-enforcement"
             className="flex items-center justify-between gap-3 px-4 py-3 border-t border-[var(--color-border)] hover:bg-[var(--color-border)]/30 transition-colors group"
           >
             <div className="min-w-0">
-              <div className="text-[13px]">Data classification</div>
+              <div className="text-[13px]">Enforce SSO</div>
               <div className="text-[11px] text-[var(--color-muted)] mt-0.5">
-                Pin this workspace to a sensitivity tier (public, internal, confidential, restricted).
+                Require corporate SSO sign-in for every human session in this workspace.
               </div>
             </div>
             <CaretRight

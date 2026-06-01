@@ -26,6 +26,7 @@ from adherence_api.routes import memberships as memberships_route
 from adherence_api.routes import verified_domains as verified_domains_route
 from adherence_api.routes import scim as scim_route
 from adherence_api.routes import session_policy as session_policy_route
+from adherence_api.routes import sso_enforcement as sso_enforcement_route
 from adherence_api.routes import pii_policy as pii_policy_route
 from adherence_api.routes import residency as residency_route
 from adherence_api.routes import data_classification as data_classification_route
@@ -204,6 +205,7 @@ def create_app() -> FastAPI:
     app.include_router(verified_domains_route.router)
     app.include_router(scim_route.router)
     app.include_router(session_policy_route.router)
+    app.include_router(sso_enforcement_route.router)
     app.include_router(pii_policy_route.router)
     app.include_router(residency_route.router)
     app.include_router(data_classification_route.router)

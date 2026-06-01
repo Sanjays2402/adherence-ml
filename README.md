@@ -36,6 +36,33 @@ curl -si http://127.0.0.1:8000/v1/workspace/data-classification \
   -H "Authorization: Bearer $TOKEN" | grep -i x-data-classification
 ```
 
+## Per-workspace enforce-SSO toggle
+
+Regulated buyers (HIPAA, PCI, SOX, FedRAMP-style) require that human sign-in for their tenant go through their corporate IdP. Once enforce-SSO is on for a workspace, password and magic-link JWTs are rejected on the very next request; only OIDC-issued sessions (Okta, Azure AD, Google Workspace) and DB-backed service-account API keys may call the API. CI does not break because machine integrations stay allowed.
+
+- `PUT /v1/workspace/sso-enforcement {require_sso, break_glass_subjects[]}` (admin + MFA, `?dry_run=true` supported, audit-logged).
+- `GET /v1/workspace/sso-enforcement` returns the live policy; viewers see whether SSO is required, admins also see the break-glass list.
+- Enforcement runs inside `services/api/adherence_api/deps._principal_from_headers`, so the gate bites every authenticated route without per-route changes. JWTs minted via `/v1/admin/sso/oidc/exchange` carry an `auth_method=sso` claim; `/v1/admin/token` mints stamp `password`.
+- A break-glass allow-list of up to 5 subjects (JWT `sub` or API-key name) preserves a recovery path if the IdP is down. Every bypass writes `sso.enforcement.break_glass` to the admin audit log.
+- Dashboard surface: <http://127.0.0.1:3000/settings/sso-enforcement> with toggle, chip-based break-glass editor, dry-run, clear, and per-change MFA.
+
+Proven by `tests/integration/test_sso_enforcement.py`: a password token that worked seconds ago is rejected with `403 sso_required` after the toggle flips, an SSO-issued token in the same tenant still works, a sibling tenant is unaffected, and the break-glass subject bypasses the gate while landing an audit row.
+
+### Try enforce-SSO
+
+```bash
+# Read the current policy (viewer or admin).
+curl -sS http://127.0.0.1:8000/v1/workspace/sso-enforcement \
+  -H 'x-api-key: <admin-key>'
+
+# Flip it on for the tenant the caller belongs to, with a single break-glass subject.
+curl -sS -X PUT 'http://127.0.0.1:8000/v1/workspace/sso-enforcement?dry_run=true' \
+  -H 'x-api-key: <admin-key>' -H 'X-MFA-Code: 123456' \
+  -H 'content-type: application/json' \
+  -d '{"require_sso": true, "break_glass_subjects": ["sso:okta:owner@acme.com"]}'
+```
+
+
 ## API key revocation with recorded reason
 
 Procurement and SOC2 reviewers ask the same question for every credential a vendor ever issued: why was it killed, when, and by whom? The previous revoke path flipped a boolean and walked away, so the audit log had no forensic record of compromise vs rotation vs offboarding. This release fixes that across the schema, the API, the UI, and the audit trail.

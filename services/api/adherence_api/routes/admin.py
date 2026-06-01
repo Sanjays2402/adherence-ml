@@ -56,7 +56,13 @@ def mint_token(
             ok=False, error="invalid role", request_id=_rid(request),
         )
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid role")
-    tok = mint_jwt(req.subject, req.role, settings, tenant=req.tenant)  # type: ignore[arg-type]
+    tok = mint_jwt(  # type: ignore[arg-type]
+        req.subject,
+        req.role,
+        settings,
+        tenant=req.tenant,
+        auth_method="password",
+    )
     record_admin_action(
         action="token.mint", principal=p, target=req.subject,
         details={

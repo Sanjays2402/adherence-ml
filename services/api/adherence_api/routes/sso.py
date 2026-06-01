@@ -175,7 +175,13 @@ def exchange_oidc(
             }
 
     subject = f"sso:{identity.provider}:{identity.email or identity.sub}"
-    token = mint_jwt(subject, role, settings, tenant=tenant)  # type: ignore[arg-type]
+    token = mint_jwt(  # type: ignore[arg-type]
+        subject,
+        role,
+        settings,
+        tenant=tenant,
+        auth_method="sso",
+    )
 
     record_admin_action(
         action="sso.oidc.exchange",

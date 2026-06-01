@@ -14,9 +14,25 @@ Role = Literal["admin", "service", "viewer"]
 ROLE_RANK: dict[str, int] = {"viewer": 1, "service": 2, "admin": 3}
 
 
-def mint_jwt(subject: str, role: Role, settings: Settings, *, tenant: str | None = None) -> str:
+def mint_jwt(
+    subject: str,
+    role: Role,
+    settings: Settings,
+    *,
+    tenant: str | None = None,
+    auth_method: str | None = None,
+) -> str:
+    """Mint a short-lived internal JWT.
+
+    ``auth_method`` records how the bearer authenticated upstream
+    (``"sso"``, ``"password"``, ``"magic_link"``, ...). The claim is
+    used by :mod:`adherence_common.sso_enforcement` to honour a
+    tenant's enforce-SSO policy; downstream RBAC ignores it. The claim
+    is omitted when the caller does not supply it so older deployments
+    that never set the value continue to behave as before.
+    """
     now = datetime.now(tz=timezone.utc)
-    payload = {
+    payload: dict = {
         "sub": subject,
         "role": role,
         "tenant": (tenant or "default"),
@@ -25,6 +41,8 @@ def mint_jwt(subject: str, role: Role, settings: Settings, *, tenant: str | None
         "iss": "adherence-ml",
         "jti": uuid.uuid4().hex,
     }
+    if auth_method:
+        payload["auth_method"] = str(auth_method)[:32]
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_alg)
 
 

@@ -10,6 +10,7 @@ from adherence_common.api_keys import resolve_db_key, touch_last_seen
 from adherence_common.api_key_usage import record_usage as _record_key_usage
 from adherence_common.errors import AuthError, PermissionError_
 from adherence_common.settings import Settings, get_settings
+from adherence_common.sso_enforcement import enforce as _enforce_sso
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
@@ -28,7 +29,7 @@ def _principal_from_headers(
         except Exception:
             dbk = None
         if dbk is not None:
-            return {
+            principal = {
                 "sub": f"api-key:{dbk.name}",
                 "role": dbk.role,
                 "scopes": ",".join(sorted(dbk.scopes)),
@@ -36,23 +37,92 @@ def _principal_from_headers(
                 "key_record_id": str(dbk.record_id),
                 "tenant": dbk.tenant_id or settings.default_tenant,
             }
+            _enforce_sso_or_403(
+                principal,
+                auth_method=None,
+                is_service_account=(dbk.role == "service"),
+            )
+            return principal
         try:
             role = resolve_api_key(x_api_key, settings)
-            return {"sub": "api-key", "role": role, "tenant": settings.default_tenant}
+            principal = {"sub": "api-key", "role": role, "tenant": settings.default_tenant}
+            # Env-mapped static keys never carry SSO context and are never
+            # considered service accounts for enforce-SSO purposes; tenants
+            # that require SSO must migrate to DB-backed keys.
+            _enforce_sso_or_403(
+                principal,
+                auth_method=None,
+                is_service_account=False,
+            )
+            return principal
+        except HTTPException:
+            raise
         except Exception as exc:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=str(exc))
     if authorization and authorization.lower().startswith("bearer "):
         token = authorization.split(" ", 1)[1]
         try:
             claims = verify_jwt(token, settings)
-            return {
+            principal = {
                 "sub": claims.get("sub", ""),
                 "role": claims.get("role", "viewer"),
                 "tenant": claims.get("tenant") or settings.default_tenant,
             }
+            _enforce_sso_or_403(
+                principal,
+                auth_method=str(claims.get("auth_method") or "") or None,
+                is_service_account=False,
+            )
+            return principal
+        except HTTPException:
+            raise
         except Exception as exc:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=str(exc))
     raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="missing credentials")
+
+
+def _enforce_sso_or_403(
+    principal: dict,
+    *,
+    auth_method: str | None,
+    is_service_account: bool,
+) -> None:
+    """Raise 403 if the principal's tenant requires SSO and this
+    credential isn't SSO-issued or break-glass.
+
+    Break-glass uses are recorded in the admin audit log so workspace
+    owners can review every bypass.
+    """
+    result = _enforce_sso(
+        principal,
+        auth_method=auth_method,
+        is_service_account=is_service_account,
+    )
+    if result.break_glass_used:
+        try:
+            from adherence_common.admin_audit import record_admin_action
+            record_admin_action(
+                action="sso.enforcement.break_glass",
+                principal=principal,
+                target=str(principal.get("tenant") or "default"),
+                details={
+                    "auth_method": auth_method,
+                    "is_service_account": is_service_account,
+                },
+                tenant_id=str(principal.get("tenant") or "default"),
+            )
+        except Exception:
+            pass
+        return
+    if not result.allowed:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "sso_required",
+                "reason": result.reason or "SSO required",
+                "tenant": str(principal.get("tenant") or "default"),
+            },
+        )
 
 
 def current_principal(
