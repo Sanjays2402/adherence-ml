@@ -2,6 +2,37 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Per-workspace security incident register
+
+Every workspace gets a per-tenant security incident register that captures the
+evidence enterprise procurement, GDPR Art. 33/34, and SOC2 CC7.4 reviewers ask
+for. Each incident records severity, status (open, contained, resolved), the
+`personal_data_breach` flag, affected user count, an append-only operator
+timeline, and milestone timestamps for containment, regulator notification,
+subject notification, and resolution.
+
+High-severity, critical, or personal-data-breach incidents auto-stamp a
+`notification_deadline_at` exactly 72 hours after `discovered_at` so the UI can
+count down against the GDPR Art. 33(1) deadline. All mutations require admin
+role, an active MFA challenge, and are mirrored into the tamper-evident admin
+audit log. The route is strictly tenant-scoped: workspace A cannot list, fetch,
+update, or close workspace B's incidents.
+
+### Try it
+
+```
+cd apps/web && pnpm dev   # http://localhost:3000/settings/incidents
+```
+
+```
+curl -s -H "x-api-key: $ADMIN_KEY" -H 'content-type: application/json' \
+  -d '{"title":"unauthorized access to staging predictions",
+       "summary":"Anomalous /v1/predict traffic from unknown IP.",
+       "severity":"high","personal_data_breach":false}' \
+  http://localhost:8000/v1/admin/incidents | jq
+```
+
+
 ## Per-workspace retention policy UI
 
 The FastAPI backend already exposes `/v1/workspace/retention-policy` so a

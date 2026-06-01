@@ -249,6 +249,8 @@ def create_app() -> FastAPI:
     app.include_router(subprocessors_route.router)
     from adherence_api.routes import caiq as caiq_route
     app.include_router(caiq_route.router)
+    from adherence_api.routes import incidents as incidents_route
+    app.include_router(incidents_route.router)
     # Ensure quota + workspace tables exist before the first request.
     try:
         from adherence_common.db import init_db
