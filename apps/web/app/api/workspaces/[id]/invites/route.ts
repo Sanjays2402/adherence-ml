@@ -10,6 +10,7 @@ import {
 } from "@/lib/workspaces-store";
 import { dryRunBody, isDryRun, withDryRunHeaders } from "@/lib/dry-run";
 import { emit } from "@/lib/webhook-dispatch";
+import { beginIdempotency, finishIdempotency } from "@/lib/idempotency";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,9 +32,16 @@ export async function POST(
   if (ws.role !== "owner" && ws.role !== "editor") {
     return NextResponse.json({ detail: "owner or editor only" }, { status: 403 });
   }
+  // Read raw body once so the idempotency hash matches exactly what the
+  // client sent (whitespace and key order included).
+  const rawBody = await req.text();
+  const idem = await beginIdempotency(req, id, rawBody);
+  if (idem.kind === "replay" || idem.kind === "conflict" || idem.kind === "invalid") {
+    return idem.response;
+  }
   let body: unknown;
   try {
-    body = await req.json();
+    body = rawBody ? JSON.parse(rawBody) : {};
   } catch {
     return NextResponse.json({ detail: "invalid json" }, { status: 400 });
   }
@@ -60,7 +68,7 @@ export async function POST(
       invited_at: new Date().toISOString(),
       expires_at: new Date(invite.expires_at).toISOString(),
     });
-    return NextResponse.json({
+    const response = NextResponse.json({
       invite: {
         id: invite.id,
         email: invite.email,
@@ -71,6 +79,7 @@ export async function POST(
       token,
       accept_url: `${origin}/invite/${token}`,
     });
+    return idem.kind === "live" ? await finishIdempotency(idem, response) : response;
   } catch (err) {
     const msg = err instanceof Error ? err.message : "failed";
     return NextResponse.json({ detail: msg }, { status: 400 });

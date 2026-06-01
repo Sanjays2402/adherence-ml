@@ -2,6 +2,56 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Idempotency-Key support for mutating routes
+
+Any integration team that retries a failed POST without server-side
+idempotency will eventually send the same invite twice, mint the same
+API key twice, or open the same webhook subscription twice. We added
+the Stripe / AWS / Twilio style `Idempotency-Key` request header so
+client retries are safe by default.
+
+How it works:
+
+* Send `Idempotency-Key: <8-200 printable ASCII>` on a mutating call.
+* The first request runs normally and the response is cached for 24
+  hours, scoped to the workspace.
+* A second request with the same key and the same body returns the
+  cached response with `Idempotent-Replay: true` and the original
+  `Idempotency-Key` echoed back, so retries are byte-for-byte safe.
+* A second request with the same key but a different body returns
+  `409 Conflict` with code `idempotency_key_conflict`, surfacing a
+  client bug rather than silently overwriting state.
+* Only 2xx responses are cached; failures can be retried without
+  forcing the client to mint a fresh key first.
+* The cache is tenant scoped: workspace A and workspace B can use the
+  exact same key value without collision and never see each other's
+  cached payloads.
+
+Workspace owners get an admin console at `/workspace/idempotency` that
+lists every cached key (no body payloads), shows its status code, age,
+and TTL, and can purge the cache for the workspace. Purges are recorded
+in the tamper-evident dashboard audit log.
+
+Wired today on `POST /api/workspaces/:id/invites`. The same
+`beginIdempotency` / `finishIdempotency` helpers in
+`apps/web/lib/idempotency.ts` drop into any other mutating route in
+four lines.
+
+### Try it
+
+```bash
+cd apps/web && pnpm dev
+# open http://localhost:3000/workspace/idempotency
+
+# replay-safe invite create (run twice; the second returns Idempotent-Replay: true)
+curl -i -X POST \
+  -H "Content-Type: application/json" \
+  -H "Cookie: $SESSION" \
+  -H "Idempotency-Key: invite-acme-2026-05-31-a4f1" \
+  -d '{"email":"new.hire@acme.com","role":"editor"}' \
+  http://localhost:3000/api/workspaces/$WS_ID/invites
+```
+
 ## HIPAA purpose of use enforcement and PHI access log
 
 Healthcare buyers will not sign without an auditable answer to "who

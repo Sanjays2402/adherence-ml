@@ -334,6 +334,12 @@ export default function WorkspaceClient() {
               <ShieldCheck weight="duotone" size={13} /> Data export
             </Link>
             <Link
+              href="/workspace/idempotency"
+              className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[12px] hover:bg-[var(--color-surface-2)]"
+            >
+              <ArrowsLeftRight weight="duotone" size={13} /> Idempotency cache
+            </Link>
+            <Link
               href="/workspace/danger-zone"
               className="inline-flex items-center gap-1 rounded-md border border-[var(--color-danger)]/40 bg-[var(--color-surface)] px-2.5 py-1.5 text-[12px] text-[var(--color-danger)] hover:bg-[var(--color-surface-2)]"
             >
