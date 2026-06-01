@@ -126,6 +126,7 @@ EXEMPT_PREFIXES: tuple[str, ...] = (
     "/scim/v2",        # SCIM uses its own per-tenant bearer, not an API key
     "/v1/legal",       # legal acceptance gate exempts these too; keep scope-exempt so a stuck tenant can read and accept
     "/v1/subprocessors", # public registry + workspace ack flow; route handlers gate writes via require_admin
+    "/v1/caiq",        # public CAIQ Lite manifest + tenant overrides; route handlers gate writes via require_admin
     "/.well-known",    # RFC 9116 + trust manifest; intentionally public for procurement scanners
 )
 

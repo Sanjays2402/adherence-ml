@@ -187,6 +187,48 @@ curl -s -X POST http://127.0.0.1:8080/v1/subprocessors/acknowledge \
 Then open `http://localhost:3000/settings/subprocessors` to review,
 acknowledge, and audit changes from the dashboard.
 
+## CAIQ Lite vendor security questionnaire
+
+Procurement teams almost always send a CAIQ or SIG-Lite spreadsheet
+during security review. We ship the answers as code (one canonical
+bank, versioned with `SCHEMA_VERSION`) and let each workspace pin
+per-tenant overrides for contractual clarifications (region locks,
+BAA references) without forking the canonical document.
+
+- Module: `packages/common/adherence_common/caiq.py`
+- Route: `services/api/adherence_api/routes/caiq.py`
+- Test: `tests/integration/test_caiq.py` (cross-tenant isolation,
+  viewer denial, idempotent upsert, audit coverage)
+
+The canonical manifest (`GET /v1/caiq`) is reachable without
+credentials so a buyer's trust-center scanner can pull the latest
+answers directly. Workspace admins write to `caiq_overrides` scoped
+to their tenant; every write lands in the tamper-evident
+`admin_audit_log` with a before/after pair.
+
+### Try the CAIQ flow
+
+```bash
+uv run uvicorn adherence_api.app:create_app --factory --port 8080
+
+# Public canonical manifest, no auth required
+curl -s http://127.0.0.1:8080/v1/caiq | jq '.schema_version, .question_count'
+
+# Workspace admin pins a tenant-specific clarification
+TOKEN=$(curl -s -X POST http://127.0.0.1:8080/v1/admin/token \
+  -H 'x-api-key: <admin-key>' -H 'content-type: application/json' \
+  -d '{"subject":"amy@acme.test","role":"admin","tenant":"acme"}' \
+  | jq -r .token)
+
+curl -s -X PUT http://127.0.0.1:8080/v1/caiq/overrides/IAM-01 \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"answer":"partial","note":"Okta SAML only; OIDC disabled by contract"}' | jq
+
+# Resolved view = canonical + this workspace's overrides
+curl -s http://127.0.0.1:8080/v1/caiq/resolved \
+  -H "authorization: Bearer $TOKEN" | jq '.override_count'
+```
+
 ## Machine-readable trust manifest
 
 Procurement teams and automated vendor-review pipelines can pull our

@@ -722,6 +722,7 @@ def init_db() -> None:
     from adherence_common import legal_acceptance as _legal  # noqa: F401
     from adherence_common import model_approval as _ma  # noqa: F401
     from adherence_common import subprocessors as _subproc  # noqa: F401
+    from adherence_common import caiq as _caiq  # noqa: F401
     engine = _engine()
     Base.metadata.create_all(engine)
     try:
