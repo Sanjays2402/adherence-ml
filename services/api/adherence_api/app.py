@@ -300,6 +300,8 @@ def create_app() -> FastAPI:
     from adherence_api.routes import maintenance as maintenance_route
     app.include_router(maintenance_route.router)
     app.include_router(maintenance_route.public_router)
+    from adherence_api.routes import consents as consents_route
+    app.include_router(consents_route.router)
     # Ensure quota + workspace tables exist before the first request.
     try:
         from adherence_common.db import init_db

@@ -2,6 +2,44 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Per-workspace SLA commitment register
+
+Enterprise procurement (MSA review, SOC 2 CC3.4, CAIQ STA-05 and
+STA-06) routinely asks the vendor to point at a single durable record
+of what was contractually committed to *this specific customer*:
+uptime percentage, severity response targets, RTO, RPO, and effective
+dates. The register lives in `adherence_common.sla_register`, is
+exposed at `/v1/admin/sla`, is admin-MFA gated, and is strictly
+tenant-scoped: there is no cross-tenant code path. A new commitment
+automatically supersedes the prior active one and records the
+supersede reason on the archived row. `GET /v1/sla/current` returns
+the in-force commitment for the caller's own tenant.
+
+### Try it
+
+Local dev: web at http://localhost:3000/settings/sla, API at
+http://localhost:7421.
+
+```sh
+curl -s -X POST http://localhost:7421/v1/admin/sla \
+  -H "x-api-key: $ADHERENCE_API_KEY" -H "content-type: application/json" \
+  -d '{
+    "contract_ref": "MSA-2026-0001",
+    "plan": "enterprise",
+    "uptime_pct": 99.9,
+    "sev1_response_hours": 1,
+    "sev2_response_hours": 4,
+    "sev3_response_hours": 8,
+    "sev4_response_hours": 24,
+    "rto_minutes": 240,
+    "rpo_minutes": 60,
+    "effective_from": "2026-01-01T00:00:00Z",
+    "effective_until": "2027-01-01T00:00:00Z"
+  }'
+
+curl -s http://localhost:7421/v1/sla/current -H "x-api-key: $ADHERENCE_API_KEY"
+```
+
 ## Per-workspace HIPAA Business Associate Agreement register
 
 45 CFR 164.502(e) and 164.504(e) forbid a covered entity from
@@ -151,6 +189,44 @@ curl -sS -H "x-api-key: $ADHERENCE_API_KEY" \
 
 Then open `http://localhost:3000/settings/maintenance` to schedule,
 edit, cancel, and export windows.
+
+## Data subject consent register
+
+Enterprise procurement and healthcare buyers (HIPAA Authorization
+45 CFR 164.508, GDPR Article 7 and Recital 42, CCPA 1798.120) require
+that a controller can produce, on demand, a per-data-subject record
+of every consent that has been collected, the exact purpose it
+covers, the lawful basis, when it was granted, and when (and by whom)
+it was withdrawn. The new `/settings/consents` console is the
+per-workspace consent receipt register: record a receipt with subject
+reference, purpose, lawful basis (eight values across GDPR Article 6
+and HIPAA), capture channel, optional evidence reference, and notes;
+list, filter, and export; withdraw with a typed reason. Subject
+references are SHA-256 hashed with a tenant-scoped salt before
+indexing so cross-tenant subject correlation by hash is impossible.
+Withdrawal never deletes the row, so the audit trail stays
+immutable. Every mutation requires admin MFA, writes a row to the
+admin audit log, supports `?dry_run=true`, and is strictly
+tenant-scoped. Other services check
+`has_active_consent(tenant_id, subject_ref, purpose)` before any
+processing that relies on consent as the lawful basis.
+
+### Try it
+
+```bash
+# list active consent receipts for the current workspace
+curl -sS -H "x-api-key: $ADHERENCE_API_KEY" \
+  http://localhost:7421/v1/admin/consents | jq .
+
+# record a HIPAA authorization for a patient (admin MFA required)
+curl -sS -X POST -H "x-api-key: $ADHERENCE_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"subject_ref":"patient:000123","purpose":"research.secondary_use","lawful_basis":"hipaa_authorization","capture_channel":"paper_form","evidence_ref":"form-2026-01-15-a7c4"}' \
+  http://localhost:7421/v1/admin/consents | jq .
+```
+
+Then open `http://localhost:3000/settings/consents` to record,
+filter, withdraw, and export consent receipts.
 
 ## Break-glass cross-tenant access review console
 

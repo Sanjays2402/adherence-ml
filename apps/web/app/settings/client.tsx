@@ -666,6 +666,36 @@ export default function SettingsClient() {
             />
           </a>
           <a
+            href="/settings/sla"
+            className="flex items-center justify-between gap-3 px-4 py-3 border-t border-[var(--color-border)] hover:bg-[var(--color-border)]/30 transition-colors group"
+          >
+            <div className="min-w-0">
+              <div className="text-[13px]">SLA commitments</div>
+              <div className="text-[11px] text-[var(--color-muted)] mt-0.5">
+                Per-workspace record of contracted uptime, severity response targets, RTO, and RPO. Procurement evidence for SOC 2 CC3.4 and CAIQ STA-05. In-force commitment exposed at /v1/sla/current.
+              </div>
+            </div>
+            <CaretRight
+              size={14}
+              className="text-[var(--color-muted)] group-hover:text-[var(--color-text)] shrink-0"
+            />
+          </a>
+          <a
+            href="/settings/consents"
+            className="flex items-center justify-between gap-3 px-4 py-3 border-t border-[var(--color-border)] hover:bg-[var(--color-border)]/30 transition-colors group"
+          >
+            <div className="min-w-0">
+              <div className="text-[13px]">Consent register</div>
+              <div className="text-[11px] text-[var(--color-muted)] mt-0.5">
+                Per-tenant data subject consent receipts for HIPAA Authorization (45 CFR 164.508) and GDPR Article 7, with hashed subject indexing, lawful-basis tracking, audit-logged grant and withdrawal, and CSV export.
+              </div>
+            </div>
+            <CaretRight
+              size={14}
+              className="text-[var(--color-muted)] group-hover:text-[var(--color-text)] shrink-0"
+            />
+          </a>
+          <a
             href="/settings/login-throttle"
             className="flex items-center justify-between gap-3 px-4 py-3 border-t border-[var(--color-border)] hover:bg-[var(--color-border)]/30 transition-colors group"
           >
