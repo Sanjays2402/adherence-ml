@@ -783,6 +783,7 @@ def init_db() -> None:
     from adherence_common import caiq as _caiq  # noqa: F401
     from adherence_common import incidents as _inc  # noqa: F401
     from adherence_common import dsar as _dsar  # noqa: F401
+    from adherence_common import api_deprecations as _apidep  # noqa: F401
     engine = _engine()
     Base.metadata.create_all(engine)
     try:

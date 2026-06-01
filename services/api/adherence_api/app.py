@@ -94,6 +94,7 @@ from adherence_api.routes import (
     policies as policies_route,
 )
 from adherence_api.security_headers_middleware import SecurityHeadersMiddleware
+from adherence_api.api_deprecations_middleware import ApiDeprecationsMiddleware
 
 log = get_logger(__name__)
 
@@ -190,6 +191,11 @@ def create_app() -> FastAPI:
         ),
     )
     app.add_middleware(SecurityHeadersMiddleware, settings=s)
+    # Stamps RFC 8594 Sunset + draft Deprecation headers on every
+    # response that matches a registered deprecation. Runs outside
+    # the auth gates so even 401/403 responses carry the headers,
+    # which is what SDK telemetry needs to see.
+    app.add_middleware(ApiDeprecationsMiddleware, settings=s)
     # Body size cap runs last (closest to the wire) so oversize requests
     # short-circuit before any other middleware does work on them.
     app.add_middleware(BodySizeLimitMiddleware, settings=s)
@@ -255,6 +261,10 @@ def create_app() -> FastAPI:
     app.include_router(incidents_route.router)
     from adherence_api.routes import dsar as dsar_route
     app.include_router(dsar_route.router)
+    from adherence_api.routes import api_deprecations as api_deprecations_route
+    app.include_router(api_deprecations_route.router)
+    from adherence_api.routes import well_known_deprecations as well_known_deprecations_route
+    app.include_router(well_known_deprecations_route.router)
     # Ensure quota + workspace tables exist before the first request.
     try:
         from adherence_common.db import init_db

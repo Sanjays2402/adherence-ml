@@ -2,6 +2,59 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## API deprecation and sunset registry (RFC 8594)
+
+Procurement reviewers ask: "what is your API lifecycle policy and how do
+customers know when an endpoint is removed?" The new deprecation
+registry is the machine-readable answer.
+
+An operator (admin role) registers a route prefix and method along with
+a `deprecated_at`, a `sunset_at`, an optional `successor_link`, and a
+short reason. From that moment, every response that matches the prefix
+carries the standard `Deprecation` and `Sunset` headers per
+[RFC 8594](https://datatracker.ietf.org/doc/html/rfc8594) and the
+IETF httpapi `Deprecation` draft, plus a `Link` header pointing at the
+successor version and the machine-readable changelog. SDK telemetry
+and integration partners spot the sunset automatically without polling
+a changelog.
+
+Per-workspace usage of deprecated routes is counted separately and is
+strictly tenant scoped, so a workspace admin sees "we still hit this
+142 times last week" for their own traffic without leaking anyone
+else's call patterns. Mutations are audit logged, support
+`?dry_run=true`, and are gated by `admin` role plus the
+`admin:policy` API key scope. A public `/.well-known/api-deprecations`
+endpoint exposes the registry without authentication so external
+scanners and SDK release pipelines can pull it.
+
+Cross-tenant isolation, header injection, dry-run, and viewer denial
+are pinned by `tests/integration/test_api_deprecations.py`.
+
+### Try it
+
+```
+cd services/api && uvicorn adherence_api.app:create_app --factory --reload
+# http://localhost:8000/.well-known/api-deprecations
+```
+
+```
+curl -s http://localhost:8000/.well-known/api-deprecations | jq
+
+curl -s -H "Authorization: Bearer $ADMIN_JWT" -H 'content-type: application/json' \
+  -d '{
+    "method":"GET",
+    "path_prefix":"/v1/predict",
+    "deprecated_at":"2026-06-01T00:00:00Z",
+    "sunset_at":"2026-12-01T00:00:00Z",
+    "successor_link":"https://docs.adherence.ml/v2/predict",
+    "reason":"v1 predict is being replaced with /v2/predict (adds confidence intervals)."
+  }' \
+  http://localhost:8000/v1/admin/api-deprecations | jq
+
+# Every subsequent response now carries the RFC 8594 headers:
+curl -si http://localhost:8000/v1/predict | grep -iE 'deprecation|sunset|link'
+```
+
 ## Admin MFA backup code rotation
 
 Admin TOTP MFA gates every sensitive backend mutation, and a fresh set of
