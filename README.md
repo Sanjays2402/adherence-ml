@@ -29,7 +29,23 @@ scanners and SDK release pipelines can pull it.
 
 Cross-tenant isolation, header injection, dry-run, and viewer denial
 are pinned by `tests/integration/test_api_deprecations.py`.
+## Per-workspace vendor support access lock-down
 
+Regulated buyers reject vendors who can silently reach into customer
+tenants. Adherence.ml workspaces can now flip on a per-tenant lock so
+that no vendor admin (a Sanjay-side operator) may cross into the
+tenant unless the workspace owner has issued an explicit, time-bound,
+revocable grant from `/settings/support-access`. The check runs before
+the existing break-glass justification, so a locked workspace rejects
+even a well-formed cross-tenant call when there is no active grant.
+
+Grants are stored in `tenant_support_access_grant` with `granted_by`,
+`granted_at`, `expires_at`, `grantee_sub`, `reason`, and live `use_count`
+/ `last_used_at` counters. Revocation is instant; expiry is enforced on
+every request. Denied attempts are written to the admin audit log under
+`support_access.denied` so the workspace owner can spot unauthorised
+reach-ins. Successful grants attribute the cross-tenant access back to
+the grant id in `last_used_at`.
 ### Try it
 
 ```
@@ -53,7 +69,21 @@ curl -s -H "Authorization: Bearer $ADMIN_JWT" -H 'content-type: application/json
 
 # Every subsequent response now carries the RFC 8594 headers:
 curl -si http://localhost:8000/v1/predict | grep -iE 'deprecation|sunset|link'
+cd apps/web && pnpm dev   # http://localhost:3000/settings/support-access
 ```
+
+```
+# Lock the workspace (admin + MFA required)
+curl -s -X PUT -H "x-api-key: $ADMIN_KEY" -H "x-mfa-code: 123456" \
+  -H 'content-type: application/json' \
+  -d '{"require_grant": true}' \
+  http://localhost:8000/v1/workspace/support-access/policy | jq
+
+# Issue a one-hour grant scoped to a specific support key
+curl -s -X POST -H "x-api-key: $ADMIN_KEY" -H "x-mfa-code: 123456" \
+  -H 'content-type: application/json' \
+  -d '{"reason":"ticket 9921: debug ingestion lag","ttl_seconds":3600,"grantee_sub":"api-key:vendor-support"}' \
+  http://localhost:8000/v1/workspace/support-access/grants | jq```
 
 ## Admin MFA backup code rotation
 

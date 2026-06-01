@@ -284,6 +284,51 @@ def require_tenant_access(
     if not crossing or request is None:
         return
 
+    # Vendor support access grants (per-tenant lock-down). When the
+    # target tenant requires an active grant, deny any cross-tenant
+    # admin call that is not covered by an unrevoked, unexpired grant
+    # bound to this principal. The check happens BEFORE the
+    # justification check so locked tenants reject even well-formed
+    # break-glass attempts that haven't been pre-authorised.
+    from adherence_common import support_access as _sa
+    sub_for_grant = str(
+        principal.get("sub")
+        or principal.get("key_name")
+        or "unknown"
+    )
+    allowed, deny_reason, grant_view = _sa.evaluate_access(
+        target_tenant if target_tenant != "*" else own,
+        sub_for_grant,
+    )
+    if not allowed:
+        try:
+            from adherence_common.admin_audit import record_admin_action
+            record_admin_action(
+                action="support_access.denied",
+                principal=principal,
+                target=target_tenant,
+                details={
+                    "source_tenant": own,
+                    "route": str(request.url.path),
+                    "method": str(request.method),
+                    "reason": deny_reason,
+                },
+                ok=False,
+                error=deny_reason,
+                tenant_id=(target_tenant if target_tenant != "*" else own),
+            )
+        except Exception:
+            pass
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "support_access_grant_required",
+                "reason": deny_reason,
+                "source_tenant": own,
+                "target_tenant": target_tenant,
+            },
+        )
+
     # Cross-tenant admin access: require justification + record.
     from adherence_common.break_glass import (
         BreakGlassError,
@@ -334,3 +379,8 @@ def require_tenant_access(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="failed to record break-glass event; access denied",
         )
+    if grant_view is not None:
+        try:
+            _sa.record_use(grant_view.public_id)
+        except Exception:
+            pass

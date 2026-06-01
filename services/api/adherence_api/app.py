@@ -265,6 +265,8 @@ def create_app() -> FastAPI:
     app.include_router(api_deprecations_route.router)
     from adherence_api.routes import well_known_deprecations as well_known_deprecations_route
     app.include_router(well_known_deprecations_route.router)
+    from adherence_api.routes import support_access as support_access_route
+    app.include_router(support_access_route.router)
     # Ensure quota + workspace tables exist before the first request.
     try:
         from adherence_common.db import init_db
