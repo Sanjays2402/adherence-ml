@@ -2,6 +2,33 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Scheduled maintenance window register
+
+Enterprise procurement (SOC 2 CC7.3, ISO 27001 A.12.1.2, CAIQ AIS-04,
+SIG O.4) requires a documented change-management calendar that the
+customer can observe. The new `/settings/maintenance` console is the
+per-workspace register: schedule a window with category, customer-facing
+impact, start and end times, see what is in flight right now, cancel a
+window with a typed reason, and download the audit-ready CSV. The
+public `GET /v1/maintenance/active` endpoint backs an in-product status
+banner. Every mutation requires admin MFA and writes a row to the admin
+audit log. Every read and write is strictly tenant-scoped.
+
+### Try it
+
+```bash
+# list scheduled and in-flight windows for the current workspace
+curl -sS -H "x-api-key: $ADHERENCE_API_KEY" \
+  http://localhost:7421/v1/admin/maintenance | jq .
+
+# in-product status feed (what is currently in flight)
+curl -sS -H "x-api-key: $ADHERENCE_API_KEY" \
+  http://localhost:7421/v1/maintenance/active | jq .
+```
+
+Then open `http://localhost:3000/settings/maintenance` to schedule,
+edit, cancel, and export windows.
+
 ## Break-glass cross-tenant access review console
 
 Every time a vendor admin reaches into a customer workspace from outside
