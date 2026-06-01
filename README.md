@@ -1839,6 +1839,40 @@ See `packages/common/adherence_common/inbound_webhook_ip.py` and the
 integration suite at
 `tests/integration/test_webhook_inbound_ip_allowlist.py`.
 
+## Inbound webhook HMAC secret rotation with overlap window
+
+Partner systems eventually need to rotate the shared HMAC secret used
+to sign inbound dose-outcome events. Forcing a flag-day cutover means
+lost events on either side of the swap. The inbound receiver now
+accepts a dual-secret form so the partner can roll forward without
+coordinated downtime.
+
+Format `ADHERENCE_INBOUND_WEBHOOK_SECRETS="source:NEW_SECRET|OLD_SECRET"`
+verifies an envelope signed with either secret. Old single-secret
+entries (`source:secret`) continue to work unchanged. Every accepted
+request signed with the previous secret is logged as
+`inbound_webhook_previous_secret_used` so an operator can see when
+cutover has completed and the `|OLD_SECRET` suffix is safe to drop.
+The `/v1/webhooks/inbound/config` posture endpoint and the
+`/webhooks/inbound` admin page expose `rotation_pending` and a
+`rotating` count so the state is visible without grepping env vars.
+
+### Try it
+
+Local API runs on `http://localhost:8000`.
+
+```
+export ADHERENCE_INBOUND_WEBHOOK_SECRETS='medtracker:NEW|OLD'
+curl -sS http://localhost:8000/v1/webhooks/inbound/config \
+  -H 'X-API-Key: <service-key>' | jq '.sources[] | select(.source=="medtracker")'
+# { "source": "medtracker", "signed": true,
+#   "rotation_pending": true, "secret_count": 2, ... }
+```
+
+See `packages/common/adherence_common/inbound_webhook.py::parse_secret_set`
+and the rotation tests in
+`tests/integration/test_webhook_inbound_signature.py`.
+
 ## W3C Trace Context propagation (end-to-end correlation)
 
 Every request to the FastAPI service honors the W3C `traceparent`

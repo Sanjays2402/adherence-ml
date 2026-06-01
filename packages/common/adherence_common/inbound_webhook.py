@@ -14,7 +14,11 @@ Signature scheme (compatible with Stripe/GitHub style):
 * Constant-time compare via ``hmac.compare_digest``.
 * Requests with skew > ``inbound_webhook_max_skew_seconds`` are rejected.
 * Per-source secrets are loaded from ``ADHERENCE_INBOUND_WEBHOOK_SECRETS``
-  (CSV ``source:secret,source:secret``).
+  (CSV ``source:secret,source:secret``). Each source value may carry an
+  optional previous secret separated by ``|`` to support zero-downtime
+  rotation: ``source:NEW_SECRET|OLD_SECRET``. Both signatures verify
+  during the overlap window; once the partner has fully cut over, drop
+  the ``|OLD_SECRET`` suffix to retire it.
 * Sources that have no configured secret are allowed through for back-compat
   unless ``inbound_webhook_require_signed`` is true, but every unsigned
   request is logged so operators can find them.
@@ -42,10 +46,24 @@ class VerifyResult:
 def parse_secrets(csv: str) -> dict[str, str]:
     """Parse ``"source:secret,other:secret"`` into a dict.
 
-    Bad entries are skipped silently so a single typo cannot brick the
-    receiver for healthy partners.
+    The returned value is the *current* (primary) secret per source.
+    When an entry uses the rotation form ``source:NEW|OLD`` only the
+    NEW half is returned here; use :func:`parse_secret_set` to see
+    both. Bad entries are skipped silently so a single typo cannot
+    brick the receiver for healthy partners.
     """
-    out: dict[str, str] = {}
+    return {src: secrets[0] for src, secrets in parse_secret_set(csv).items()}
+
+
+def parse_secret_set(csv: str) -> dict[str, tuple[str, ...]]:
+    """Parse ``ADHERENCE_INBOUND_WEBHOOK_SECRETS`` preserving rotation pairs.
+
+    Returns ``{source: (current, previous?)}``. A single secret yields a
+    1-tuple. The previous slot exists so an enterprise partner can rotate
+    HMAC secrets without coordinated downtime: both signatures verify
+    during the overlap window.
+    """
+    out: dict[str, tuple[str, ...]] = {}
     if not csv:
         return out
     for chunk in csv.split(","):
@@ -55,8 +73,14 @@ def parse_secrets(csv: str) -> dict[str, str]:
         source, _, secret = chunk.partition(":")
         source = source.strip()
         secret = secret.strip()
-        if source and secret:
-            out[source] = secret
+        if not source or not secret:
+            continue
+        parts = [p.strip() for p in secret.split("|") if p.strip()]
+        if not parts:
+            continue
+        # Cap at 2 secrets (current, previous). Anything more is a
+        # configuration smell, not a feature.
+        out[source] = tuple(parts[:2])
     return out
 
 
@@ -77,10 +101,10 @@ def verify(
     now: float | None = None,
 ) -> VerifyResult:
     """Verify inbound HMAC envelope. See module docstring for the scheme."""
-    secrets = parse_secrets(settings.inbound_webhook_secrets)
-    secret = secrets.get(source)
+    secrets = parse_secret_set(settings.inbound_webhook_secrets)
+    candidates = secrets.get(source)
 
-    if secret is None:
+    if not candidates:
         if settings.inbound_webhook_require_signed:
             return VerifyResult(False, "no secret configured for source", False)
         log.warning("inbound_webhook_unsigned", source=source)
@@ -99,9 +123,20 @@ def verify(
     if skew > max(1, settings.inbound_webhook_max_skew_seconds):
         return VerifyResult(False, f"timestamp skew {skew:.0f}s exceeds limit", False)
 
-    expected = expected_signature(secret, timestamp_header, body)
-    # constant-time compare
-    if not hmac.compare_digest(expected, signature_header.strip()):
+    sig = signature_header.strip()
+    # Try current first, then previous. Constant-time compare each
+    # candidate so we never short-circuit on the wrong branch.
+    matched_slot: int | None = None
+    for idx, candidate in enumerate(candidates):
+        expected = expected_signature(candidate, timestamp_header, body)
+        if hmac.compare_digest(expected, sig):
+            matched_slot = idx
+            break
+    if matched_slot is None:
         return VerifyResult(False, "signature mismatch", False)
+    if matched_slot == 1:
+        # Partner is still using the retiring secret. Log so operators
+        # can see who has not finished cutover before they drop it.
+        log.warning("inbound_webhook_previous_secret_used", source=source)
 
     return VerifyResult(True, "ok", True)

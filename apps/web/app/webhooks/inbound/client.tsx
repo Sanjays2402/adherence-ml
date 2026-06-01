@@ -8,6 +8,7 @@ import {
   GlobeHemisphereWest,
   Lock,
   Info,
+  ArrowsClockwise,
 } from "@phosphor-icons/react";
 
 import {
@@ -25,6 +26,8 @@ import {
 type SourceRow = {
   source: string;
   signed: boolean;
+  rotation_pending?: boolean;
+  secret_count?: number;
   ip_restricted: boolean;
   allowed_cidrs: string[];
 };
@@ -74,6 +77,7 @@ export default function InboundWebhooksClient() {
   const totalSources = data?.sources.length ?? 0;
   const signedCount = data?.sources.filter((s) => s.signed).length ?? 0;
   const ipCount = data?.sources.filter((s) => s.ip_restricted).length ?? 0;
+  const rotatingCount = data?.sources.filter((s) => s.rotation_pending).length ?? 0;
 
   return (
     <main className="min-h-dvh">
@@ -93,7 +97,7 @@ export default function InboundWebhooksClient() {
       />
 
       <div className="px-4 sm:px-6 py-6 space-y-6 max-w-5xl">
-        <section className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <Stat
             label="sources"
             value={isLoading ? "—" : totalSources}
@@ -108,6 +112,11 @@ export default function InboundWebhooksClient() {
             label="ip restricted"
             value={isLoading ? "—" : `${ipCount}/${totalSources || 0}`}
             sub="allowlist enforced"
+          />
+          <Stat
+            label="rotating"
+            value={isLoading ? "—" : rotatingCount}
+            sub="dual secret active"
           />
         </section>
 
@@ -185,6 +194,14 @@ export default function InboundWebhooksClient() {
                     </div>
                     <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                       <Badge tone={t.tone}>{t.label}</Badge>
+                      {row.rotation_pending ? (
+                        <Badge tone="warn">
+                          <span className="inline-flex items-center gap-1">
+                            <ArrowsClockwise size={11} weight="duotone" />
+                            rotating
+                          </span>
+                        </Badge>
+                      ) : null}
                       {row.ip_restricted ? (
                         <div className="flex flex-wrap gap-1 max-w-full">
                           {row.allowed_cidrs.slice(0, 3).map((c) => (
@@ -237,6 +254,16 @@ export default function InboundWebhooksClient() {
               />
               <p>
                 Clock skew above <span className="font-mono">{data?.max_skew_seconds ?? 300}s</span> is rejected to defeat replay. Tune with <span className="font-mono">ADHERENCE_INBOUND_WEBHOOK_MAX_SKEW_SECONDS</span>.
+              </p>
+            </div>
+            <div className="flex items-start gap-2">
+              <Info
+                size={14}
+                weight="duotone"
+                className="text-[var(--color-muted)] mt-0.5 shrink-0"
+              />
+              <p>
+                Rotate a partner secret without downtime by setting <span className="font-mono">source:NEW_SECRET|OLD_SECRET</span> in <span className="font-mono">ADHERENCE_INBOUND_WEBHOOK_SECRETS</span>. Both signatures verify while the partner cuts over. Every accepted request signed with the previous secret is logged as <span className="font-mono">inbound_webhook_previous_secret_used</span>; once that count is zero, drop the <span className="font-mono">|OLD_SECRET</span> suffix.
               </p>
             </div>
           </div>

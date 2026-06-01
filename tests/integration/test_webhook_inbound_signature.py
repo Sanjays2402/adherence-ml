@@ -146,3 +146,82 @@ def test_valid_signature_accepted(tmp_path, monkeypatch):
     )
     assert r.status_code == 200, r.text
     assert r.json() == {"accepted": 1, "duplicates": 0, "n": 1}
+
+
+def test_rotation_both_secrets_accepted(tmp_path, monkeypatch):
+    """During HMAC secret rotation the current AND previous secret must
+    both verify so the partner can cut over without coordinated downtime.
+    """
+    _setup(
+        tmp_path, monkeypatch,
+        secrets="medtracker:NEW_SECRET|OLD_SECRET",
+    )
+    c = _client()
+    # New secret signs OK.
+    body = json.dumps(_payload()).encode()
+    ts = str(int(time.time()))
+    r_new = c.post(
+        "/v1/webhooks/medtracker/event",
+        content=body,
+        headers={
+            "x-api-key": "svc",
+            "Content-Type": "application/json",
+            "X-Webhook-Timestamp": ts,
+            "X-Webhook-Signature": _sign("NEW_SECRET", ts, body),
+        },
+    )
+    assert r_new.status_code == 200, r_new.text
+
+    # Old secret also signs OK on a distinct event.
+    payload2 = _payload()
+    payload2["events"][0]["event_id"] = "evt-sig-2"
+    body2 = json.dumps(payload2).encode()
+    ts2 = str(int(time.time()))
+    r_old = c.post(
+        "/v1/webhooks/medtracker/event",
+        content=body2,
+        headers={
+            "x-api-key": "svc",
+            "Content-Type": "application/json",
+            "X-Webhook-Timestamp": ts2,
+            "X-Webhook-Signature": _sign("OLD_SECRET", ts2, body2),
+        },
+    )
+    assert r_old.status_code == 200, r_old.text
+
+    # An unrelated third secret is still rejected.
+    payload3 = _payload()
+    payload3["events"][0]["event_id"] = "evt-sig-3"
+    body3 = json.dumps(payload3).encode()
+    ts3 = str(int(time.time()))
+    r_bad = c.post(
+        "/v1/webhooks/medtracker/event",
+        content=body3,
+        headers={
+            "x-api-key": "svc",
+            "Content-Type": "application/json",
+            "X-Webhook-Timestamp": ts3,
+            "X-Webhook-Signature": _sign("UNRELATED", ts3, body3),
+        },
+    )
+    assert r_bad.status_code == 401, r_bad.text
+
+
+def test_inbound_config_reports_rotation_pending(tmp_path, monkeypatch):
+    """Posture endpoint surfaces rotation state so the admin UI can warn
+    operators that a partner has not finished cutover yet."""
+    _setup(
+        tmp_path, monkeypatch,
+        secrets="medtracker:NEW|OLD,steady:onlyone",
+    )
+    c = _client()
+    r = c.get(
+        "/v1/webhooks/inbound/config",
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200, r.text
+    by_source = {s["source"]: s for s in r.json()["sources"]}
+    assert by_source["medtracker"]["rotation_pending"] is True
+    assert by_source["medtracker"]["secret_count"] == 2
+    assert by_source["steady"]["rotation_pending"] is False
+    assert by_source["steady"]["secret_count"] == 1

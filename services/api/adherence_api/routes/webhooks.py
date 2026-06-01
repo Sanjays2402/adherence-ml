@@ -230,9 +230,9 @@ def inbound_config(settings: SettingsDep, _p=Depends(require_service)) -> dict:
     grepping environment variables. Secrets themselves are never echoed
     back, only their presence.
     """
-    from adherence_common.inbound_webhook import parse_secrets
+    from adherence_common.inbound_webhook import parse_secret_set
     from adherence_common.inbound_webhook_ip import summary as ip_summary
-    secrets_map = parse_secrets(settings.inbound_webhook_secrets)
+    secrets_map = parse_secret_set(settings.inbound_webhook_secrets)
     ip_map = ip_summary(settings.inbound_webhook_ip_allowlist)
     sources = sorted(set(secrets_map) | set(ip_map) | {"medtracker"})
     return {
@@ -242,6 +242,8 @@ def inbound_config(settings: SettingsDep, _p=Depends(require_service)) -> dict:
             {
                 "source": s,
                 "signed": s in secrets_map,
+                "rotation_pending": len(secrets_map.get(s, ())) > 1,
+                "secret_count": len(secrets_map.get(s, ())),
                 "ip_restricted": s in ip_map,
                 "allowed_cidrs": ip_map.get(s, []),
             }
