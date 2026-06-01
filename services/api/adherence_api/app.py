@@ -14,6 +14,7 @@ from adherence_api.middleware import RequestIdMiddleware
 from adherence_api.ip_allowlist_middleware import IpAllowlistMiddleware
 from adherence_api.origin_allowlist_middleware import OriginAllowlistMiddleware
 from adherence_api.legal_acceptance_middleware import LegalAcceptanceMiddleware
+from adherence_api.baa_enforce_middleware import BaaEnforcementMiddleware
 from adherence_api.purpose_of_use_middleware import PurposeOfUseMiddleware
 from adherence_api.ratelimit_middleware import RateLimitMiddleware
 from adherence_api.scope_enforce_middleware import ScopeEnforceMiddleware
@@ -28,6 +29,7 @@ from adherence_api.routes import admin_sessions as admin_sessions_route
 from adherence_api.routes import memberships as memberships_route
 from adherence_api.routes import verified_domains as verified_domains_route
 from adherence_api.routes import invite_policy as invite_policy_route
+from adherence_api.routes import workspace_contacts as workspace_contacts_route
 from adherence_api.routes import scim as scim_route
 from adherence_api.routes import session_policy as session_policy_route
 from adherence_api.routes import password_policy as password_policy_route
@@ -154,6 +156,7 @@ def create_app() -> FastAPI:
     # exempt (see middleware EXEMPT_PREFIXES) so a blocked tenant can
     # still discover what to accept.
     app.add_middleware(LegalAcceptanceMiddleware, settings=s)
+    app.add_middleware(BaaEnforcementMiddleware, settings=s)
     # HIPAA Purpose of Use gate. Runs after legal acceptance and
     # before scope enforcement so a blocked tenant still sees the
     # legal-acceptance 451 first; once accepted, the POU 412 surfaces
@@ -245,6 +248,7 @@ def create_app() -> FastAPI:
     app.include_router(memberships_route.router)
     app.include_router(verified_domains_route.router)
     app.include_router(invite_policy_route.router)
+    app.include_router(workspace_contacts_route.router)
     app.include_router(scim_route.router)
     app.include_router(session_policy_route.router)
     app.include_router(password_policy_route.router)
@@ -287,6 +291,8 @@ def create_app() -> FastAPI:
     app.include_router(ropa_route.router)
     from adherence_api.routes import dpia as dpia_route
     app.include_router(dpia_route.router)
+    from adherence_api.routes import baa as baa_route
+    app.include_router(baa_route.router)
     from adherence_api.routes import dual_control as dual_control_route
     app.include_router(dual_control_route.router)
     from adherence_api.routes import maintenance as maintenance_route

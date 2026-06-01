@@ -96,6 +96,7 @@ _CATALOG: tuple[ScopeRule, ...] = (
     ScopeRule("*", "/v1/admin/residency",       "admin:policy",    "Manage data residency"),
     ScopeRule("*", "/v1/admin/api-key-policy",  "admin:policy",    "Manage API key TTL policy"),
     ScopeRule("*", "/v1/workspace/cmek",         "admin:policy",    "Manage customer-managed encryption key registration"),
+    ScopeRule("*", "/v1/workspace/contacts",     "admin:policy",    "Manage workspace notification contact roles"),
     ScopeRule("*", "/v1/admin/retention",       "admin:policy",    "Manage retention policy"),
     ScopeRule("*", "/v1/admin/break-glass",     "admin:break_glass","Use break-glass access"),
     ScopeRule("*", "/v1/admin/legal-hold",      "admin:legal_hold","Manage legal holds"),

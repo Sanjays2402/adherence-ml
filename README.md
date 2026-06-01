@@ -2,6 +2,41 @@
 
 Medication adherence risk modeling and intervention API with a Next.js admin dashboard.
 
+## Workspace notification contacts
+
+Enterprise procurement always asks the same question: when something
+goes wrong, who do we email? The new `/settings/workspace-contacts`
+console lets a workspace admin pin a per-role address for security,
+privacy / DPO, billing, abuse, technical on-call, and Article 33
+breach notification. Roles without an override inherit the operator
+default advertised at `/.well-known/security.txt`. Every set or delete
+is admin-only, audit-logged with the before / after diff, and supports
+`?dry_run=true` for change-control previews. Reads are viewer-readable
+so auditors can confirm routing without write access. Strict tenant
+isolation: workspace A cannot see or mutate workspace B's contacts.
+
+### Try it
+
+```bash
+# read effective contacts (workspace overrides + operator defaults)
+curl -sS http://localhost:3000/api/workspace/contacts
+
+# set the breach-notification mailbox (admin)
+curl -sS -X PUT http://localhost:3000/api/workspace/contacts/breach_notification \
+  -H 'content-type: application/json' \
+  -d '{"email":"breach@your-co.com","label":"Sec Eng on-call"}'
+
+# dry-run a planned rotation without writing
+curl -sS -X PUT 'http://localhost:3000/api/workspace/contacts/security?dry_run=true' \
+  -H 'content-type: application/json' \
+  -d '{"email":"new-sec@your-co.com"}'
+
+# revert a role back to the operator default
+curl -sS -X DELETE http://localhost:3000/api/workspace/contacts/billing
+```
+
+UI: <http://localhost:3000/settings/workspace-contacts>
+
 ## Scheduled maintenance window register
 
 Enterprise procurement (SOC 2 CC7.3, ISO 27001 A.12.1.2, CAIQ AIS-04,

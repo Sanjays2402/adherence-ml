@@ -806,6 +806,7 @@ def init_db() -> None:
     from adherence_common import dpia as _dpia  # noqa: F401
     from adherence_common import dual_control as _dc2  # noqa: F401
     from adherence_common import maintenance as _maint  # noqa: F401
+    from adherence_common import workspace_contacts as _wsc  # noqa: F401
     engine = _engine()
     Base.metadata.create_all(engine)
     try:
