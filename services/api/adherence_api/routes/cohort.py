@@ -143,6 +143,19 @@ class CohortRiskResponse(BaseModel):
             "the full cohort via /export to compute this."
         ),
     )
+    n_users_with_medium_risk: int = Field(
+        default=0,
+        description=(
+            "Distinct users whose highest-risk dose lands in "
+            "[DEFAULT_RISK_THRESHOLDS['medium'], DEFAULT_RISK_THRESHOLDS['high']) "
+            "(i.e. medium-tier patients with no high-tier doses). Symmetric to "
+            "n_users_with_high_risk: this is the patient-level second-tier "
+            "queue size for text / nudge campaigns, which is what "
+            "non-nurse outreach capacity is planned against (one patient with "
+            "5 medium doses is one text, not five) and is disjoint from the "
+            "high-risk patient queue so the two counts can be summed."
+        ),
+    )
     top_users: list[CohortBucket] = Field(
         description="Users sorted by mean miss probability (highest first)."
     )
@@ -322,6 +335,16 @@ def cohort_risk(
         n_users_eligible=len(user_rows),
         n_users_with_high_risk=int(
             df.loc[df["miss_probability"] >= high, "user_id"].nunique()
+        ),
+        n_users_with_medium_risk=int(
+            # Users whose *max* dose risk lands in the medium band. Excluding
+            # any user that has at least one high-risk dose keeps this count
+            # disjoint from n_users_with_high_risk so the two patient-level
+            # queues can be summed without double-counting.
+            df.groupby("user_id")["miss_probability"]
+            .max()
+            .between(med, high, inclusive="left")
+            .sum()
         ),
         top_users=user_rows[:top_users],
     )

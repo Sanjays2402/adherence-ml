@@ -117,6 +117,22 @@ def test_cohort_risk_n_users_with_high_risk(tmp_path, monkeypatch):
     )
     assert users_with_hr_in_top == n_hr_users
 
+    # n_users_with_medium_risk is the disjoint patient-level second-tier
+    # queue: medium-tier patients with no high-tier doses. Bounded by total
+    # users, disjoint from the high-risk patient queue (so the two sum
+    # without double-counting), and matches the count of top_users rows
+    # whose max-risk dose lands in the medium band (n_high_risk == 0 and
+    # n_medium_risk >= 1).
+    n_med_users = body["n_users_with_medium_risk"]
+    assert 0 <= n_med_users <= body["n_users_total"]
+    assert n_med_users + n_hr_users <= body["n_users_total"]
+    users_med_only_in_top = sum(
+        1
+        for u in body["top_users"]
+        if u["n_high_risk"] == 0 and u["n_medium_risk"] >= 1
+    )
+    assert users_med_only_in_top == n_med_users
+
 
 def test_cohort_risk_buckets_include_n_medium_risk(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
