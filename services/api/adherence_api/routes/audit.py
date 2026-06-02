@@ -222,6 +222,16 @@ def list_audit(
         ),
     ),
     only_errors: bool = False,
+    high_risk_only: bool = Query(
+        False,
+        description=(
+            "When true, only return rows where ``high_risk_count > 0`` (the"
+            " call surfaced at least one dose above the high-risk threshold)."
+            " Lets clinical ops pull just the calls that fired an alert for a"
+            " given user or model window without paging through routine"
+            " traffic."
+        ),
+    ),
     since: str | None = Query(
         None,
         description=(
@@ -269,6 +279,8 @@ def list_audit(
             q = q.where(PredictionAudit.request_id == request_id)
         if only_errors:
             q = q.where(PredictionAudit.ok == 0)
+        if high_risk_only:
+            q = q.where(PredictionAudit.high_risk_count > 0)
         if since_dt is not None:
             q = q.where(PredictionAudit.created_at >= since_dt)
         if until_dt is not None:
@@ -596,6 +608,15 @@ def export_csv(
         ),
     ),
     only_errors: bool = False,
+    high_risk_only: bool = Query(
+        False,
+        description=(
+            "When true, only export rows where ``high_risk_count > 0``. Lets"
+            " clinical ops or QA pull a CSV of just the calls that flagged a"
+            " high-risk dose for a given user, model, or window without first"
+            " filtering downstream."
+        ),
+    ),
     since: str | None = Query(
         None,
         description=(
@@ -666,6 +687,8 @@ def export_csv(
             q = q.where(PredictionAudit.request_id == request_id)
         if only_errors:
             q = q.where(PredictionAudit.ok == 0)
+        if high_risk_only:
+            q = q.where(PredictionAudit.high_risk_count > 0)
         rows = list(s.scalars(q))
     if since_dt is not None and until_dt is not None:
         filename = (

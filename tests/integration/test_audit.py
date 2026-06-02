@@ -558,3 +558,64 @@ def test_audit_stats_since_until_absolute_window(tmp_path, monkeypatch):
     )
     assert r.status_code == 400
     assert "since" in r.json()["detail"]
+
+
+def test_audit_filter_by_high_risk_only(tmp_path, monkeypatch):
+    """list + export.csv accept high_risk_only=true and return only rows
+    where high_risk_count > 0, so clinical ops can pull alert-only traffic
+    without paging the full firehose."""
+    _setup_env(tmp_path, monkeypatch)
+    from datetime import datetime
+    from adherence_common.db import PredictionAudit, init_db, session
+    from adherence_api.app import create_app
+
+    init_db()
+    with session() as s:
+        for i in range(3):
+            s.add(PredictionAudit(
+                tenant_id="default", request_id=f"req-low-{i}",
+                route="/v1/predict", user_id="u_hr", caller="k:test",
+                caller_role="service", model_name="default", model_version="v1",
+                n_doses=1, mean_miss_prob=0.1, max_miss_prob=0.1,
+                high_risk_count=0, latency_ms=1.0, ok=1,
+                created_at=datetime.utcnow(),
+            ))
+        for i in range(2):
+            s.add(PredictionAudit(
+                tenant_id="default", request_id=f"req-hi-{i}",
+                route="/v1/predict", user_id="u_hr", caller="k:test",
+                caller_role="service", model_name="default", model_version="v1",
+                n_doses=1, mean_miss_prob=0.9, max_miss_prob=0.95,
+                high_risk_count=2, latency_ms=1.0, ok=1,
+                created_at=datetime.utcnow(),
+            ))
+        s.commit()
+
+    client = TestClient(create_app())
+
+    # without the filter we see all 5 rows
+    r = client.get("/v1/audit/list?user_id=u_hr",
+                   headers={"x-api-key": "adm"})
+    assert r.status_code == 200, r.text
+    assert len(r.json()["items"]) == 5
+
+    # high_risk_only narrows to the 2 alert rows
+    r = client.get("/v1/audit/list?user_id=u_hr&high_risk_only=true",
+                   headers={"x-api-key": "adm"})
+    assert r.status_code == 200, r.text
+    rows = r.json()["items"]
+    assert len(rows) == 2
+    assert all(row["high_risk_count"] > 0 for row in rows)
+    assert {row["request_id"] for row in rows} == {"req-hi-0", "req-hi-1"}
+
+    # CSV export honors the same filter
+    r = client.get(
+        "/v1/audit/export.csv?user_id=u_hr&high_risk_only=true&window_hours=24",
+        headers={"x-api-key": "adm"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.headers.get("X-Row-Count") == "2"
+    lines = r.text.splitlines()
+    assert len(lines) == 3  # header + 2 rows
+    for line in lines[1:]:
+        assert "req-hi" in line
