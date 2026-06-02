@@ -985,3 +985,40 @@ def test_export_count_only_tier_cross_tabs_respect_filters(tmp_path, monkeypatch
     body = r.json()
     assert list(body["by_tier_dose_class"].keys()) == [pick]
     assert sum(body["by_tier_dose_class"][pick].values()) == body["count"]
+
+
+def test_export_footer_includes_by_dose_class_and_time_bucket(tmp_path, monkeypatch):
+    """Streaming consumers get the same per-class / per-bucket tallies
+    count_only already returns, without a second pass over the NDJSON.
+    """
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    r = c.post(
+        "/v1/cohort/risk/export",
+        json={"synthetic": {"n_users": 40, "n_days": 6, "seed": 9}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200, r.text
+    rows = _parse_ndjson(r.content)
+    body_rows = [x for x in rows if x["kind"] == "row"]
+    footer = rows[-1]
+    assert footer["kind"] == "footer"
+    assert "by_dose_class" in footer
+    assert "by_time_bucket" in footer
+
+    expected_class: dict[str, int] = {}
+    expected_bucket: dict[str, int] = {}
+    for row in body_rows:
+        expected_class[row["dose_class"]] = expected_class.get(row["dose_class"], 0) + 1
+        expected_bucket[row["time_bucket"]] = expected_bucket.get(row["time_bucket"], 0) + 1
+
+    assert footer["by_dose_class"] == dict(sorted(expected_class.items()))
+    assert footer["by_time_bucket"] == dict(sorted(expected_bucket.items()))
+    assert sum(footer["by_dose_class"].values()) == footer["emitted"]
+    assert sum(footer["by_time_bucket"].values()) == footer["emitted"]
+    # keys are sorted for stable downstream diffs
+    assert list(footer["by_dose_class"].keys()) == sorted(footer["by_dose_class"].keys())
+    assert list(footer["by_time_bucket"].keys()) == sorted(footer["by_time_bucket"].keys())

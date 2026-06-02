@@ -115,6 +115,8 @@ def _stream(
     emitted = 0
     skipped = 0
     by_tier = {"low": 0, "medium": 0, "high": 0}
+    by_dose_class: dict[str, int] = {}
+    by_time_bucket: dict[str, int] = {}
     header = {
         "kind": "header",
         "model_name": model_name,
@@ -156,14 +158,21 @@ def _stream(
         yield (json.dumps(record) + "\n").encode("utf-8")
         emitted += 1
         by_tier[tier] += 1
+        by_dose_class[dose_class] = by_dose_class.get(dose_class, 0) + 1
+        by_time_bucket[time_bucket] = by_time_bucket.get(time_bucket, 0) + 1
         if limit is not None and emitted >= limit:
             break
+    # Include by_dose_class / by_time_bucket in the footer so streaming
+    # consumers get the same one-pass breakdown count_only already returns,
+    # without re-reading the NDJSON to tally per-class / per-bucket volume.
     yield (
         json.dumps(
             {
                 "kind": "footer",
                 "emitted": emitted,
                 "by_tier": by_tier,
+                "by_dose_class": dict(sorted(by_dose_class.items())),
+                "by_time_bucket": dict(sorted(by_time_bucket.items())),
                 "scored_at": scored_at,
             }
         )
