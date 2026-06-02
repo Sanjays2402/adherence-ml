@@ -517,3 +517,65 @@ def test_export_csv_offset_pages_after_sort(tmp_path, monkeypatch):
     page_rows = page_lines[1:]
     assert len(page_rows) == 10
     assert page_rows == full_rows[5:15]
+
+
+def test_export_count_only_matches_streamed_row_count(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    payload = {"synthetic": {"n_users": 50, "n_days": 6, "seed": 17}}
+    filters = {"risk_tier": "high,medium", "min_probability": 0.2}
+
+    r_stream = c.post(
+        "/v1/cohort/risk/export",
+        params=filters,
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r_stream.status_code == 200
+    rows = [x for x in _parse_ndjson(r_stream.content) if x["kind"] == "row"]
+    by_tier_stream = {"low": 0, "medium": 0, "high": 0}
+    for row in rows:
+        by_tier_stream[row["risk_tier"]] += 1
+
+    r_count = c.post(
+        "/v1/cohort/risk/export",
+        params={**filters, "count_only": "true"},
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r_count.status_code == 200
+    assert r_count.headers["content-type"].startswith("application/json")
+    body = r_count.json()
+    assert body["model_name"] == "default"
+    assert body["model_version"]
+    assert body["total_candidates"] > 0
+    assert body["count"] == len(rows)
+    assert body["by_tier"] == by_tier_stream
+
+
+def test_export_count_only_ignores_limit_and_offset(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    payload = {"synthetic": {"n_users": 25, "n_days": 5, "seed": 4}}
+
+    r_a = c.post(
+        "/v1/cohort/risk/export",
+        params={"count_only": "true"},
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    r_b = c.post(
+        "/v1/cohort/risk/export",
+        params={"count_only": "true", "limit": 1, "offset": 999999},
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r_a.status_code == 200
+    assert r_b.status_code == 200
+    assert r_a.json()["count"] == r_b.json()["count"]

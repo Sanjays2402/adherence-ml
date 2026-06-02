@@ -27,7 +27,7 @@ from typing import Any, Iterator
 
 import pandas as pd
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from adherence_api.deps import require_service
 from adherence_common.constants import DEFAULT_RISK_THRESHOLDS, DOSE_CLASSES, TIME_BUCKETS
@@ -290,8 +290,21 @@ def cohort_risk_export(
             " top-N highest-risk export. `risk_asc` reverses that."
         ),
     ),
+    count_only: bool = Query(
+        False,
+        description=(
+            "If true, skip streaming rows and return a single JSON object"
+            " with the post-filter row count and a per-tier breakdown."
+            " Lets operators size a nightly outreach batch (`how many high"
+            " risk patients will I page tonight?`) before kicking off the"
+            " full export. All other filters (`risk_tier`, `min_probability`,"
+            " `max_probability`, `dose_class`, `time_bucket`, `user_ids`,"
+            " `exclude_user_ids`) apply identically. `offset`, `limit`, and"
+            " `sort` are ignored because they do not affect the count."
+        ),
+    ),
     _p=Depends(require_service),
-) -> StreamingResponse:
+):
     fmt = format.lower().strip()
     if fmt not in _VALID_FORMATS:
         raise HTTPException(
@@ -359,6 +372,43 @@ def cohort_risk_export(
     X = df[model.feature_columns]
     df = df.copy()
     df["miss_probability"] = model.predict_proba(X)
+
+    if count_only:
+        class_decode = {i: c for i, c in enumerate(DOSE_CLASSES)}
+        bucket_decode = {i: b for i, b in enumerate(TIME_BUCKETS)}
+        min_prob = float(min_probability)
+        max_prob = float(max_probability)
+        counts = {"low": 0, "medium": 0, "high": 0}
+        total = 0
+        for row in df.itertuples(index=False):
+            uid = str(row.user_id)
+            if user_filter is not None and uid not in user_filter:
+                continue
+            if user_denylist is not None and uid in user_denylist:
+                continue
+            prob = float(row.miss_probability)
+            if prob < min_prob or prob > max_prob:
+                continue
+            tier = _tier(prob)
+            if tier_filter is not None and tier not in tier_filter:
+                continue
+            dose_class = class_decode.get(int(row.dose_class_idx), "unknown")
+            if class_filter is not None and dose_class not in class_filter:
+                continue
+            tb = bucket_decode.get(int(row.time_bucket_idx), "unknown")
+            if bucket_filter is not None and tb not in bucket_filter:
+                continue
+            counts[tier] += 1
+            total += 1
+        return JSONResponse(
+            {
+                "model_name": model_name,
+                "model_version": art.version,
+                "total_candidates": int(len(df)),
+                "count": total,
+                "by_tier": counts,
+            }
+        )
 
     if sort_mode == "risk_desc":
         df = df.sort_values("miss_probability", ascending=False, kind="mergesort")
