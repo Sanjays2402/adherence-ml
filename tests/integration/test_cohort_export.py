@@ -641,3 +641,62 @@ def test_export_envelopes_include_scored_at_timestamp(tmp_path, monkeypatch):
     assert r2.status_code == 200, r2.text
     body = r2.json()
     assert "scored_at" in body and body["scored_at"].endswith("Z")
+
+
+def test_export_response_headers_expose_snapshot_identity(tmp_path, monkeypatch):
+    """X-Scored-At / X-Model-Name / X-Model-Version on all export shapes.
+
+    Nightly snapshot pipelines (and reverse proxies / audit loggers) need to
+    know which model version produced an export and what UTC instant it was
+    scored at without parsing the response body. NDJSON callers can get this
+    from the header envelope but CSV consumers and count_only callers
+    historically could not. Surfacing it as response headers lets every
+    consumer partition by run identically.
+    """
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+    from datetime import datetime
+
+    def _check(resp):
+        assert resp.status_code == 200, resp.text
+        assert "x-scored-at" in {k.lower() for k in resp.headers.keys()}
+        scored_at = resp.headers["x-scored-at"]
+        assert scored_at.endswith("Z")
+        datetime.fromisoformat(scored_at.replace("Z", "+00:00"))
+        assert resp.headers["x-model-name"] == "default"
+        assert resp.headers["x-model-version"]
+
+    # NDJSON
+    r = c.post(
+        "/v1/cohort/risk/export",
+        params={"limit": 5},
+        json={"synthetic": {"n_users": 20, "n_days": 4, "seed": 7}},
+        headers={"x-api-key": "svc"},
+    )
+    _check(r)
+    # NDJSON header envelope agrees with the response header
+    header = _parse_ndjson(r.content)[0]
+    assert header["scored_at"] == r.headers["x-scored-at"]
+    assert header["model_version"] == r.headers["x-model-version"]
+
+    # CSV
+    r = c.post(
+        "/v1/cohort/risk/export",
+        params={"format": "csv", "limit": 5},
+        json={"synthetic": {"n_users": 20, "n_days": 4, "seed": 7}},
+        headers={"x-api-key": "svc"},
+    )
+    _check(r)
+    assert r.headers["content-type"].startswith("text/csv")
+
+    # count_only
+    r = c.post(
+        "/v1/cohort/risk/export",
+        params={"count_only": "true"},
+        json={"synthetic": {"n_users": 20, "n_days": 4, "seed": 7}},
+        headers={"x-api-key": "svc"},
+    )
+    _check(r)
+    assert r.json()["scored_at"] == r.headers["x-scored-at"]

@@ -17,6 +17,11 @@ Filters:
 
 The request body matches /v1/cohort/risk so the two endpoints are
 interchangeable from a payload perspective.
+
+Response headers ``X-Scored-At``, ``X-Model-Name`` and ``X-Model-Version``
+are set on every export shape (NDJSON, CSV, count_only) so reverse
+proxies, audit loggers and snapshot pipelines can partition by run
+without parsing the response body.
 """
 from __future__ import annotations
 
@@ -399,6 +404,8 @@ def cohort_risk_export(
     df = df.copy()
     df["miss_probability"] = model.predict_proba(X)
 
+    scored_at = _utc_now_iso()
+
     if count_only:
         class_decode = {i: c for i, c in enumerate(DOSE_CLASSES)}
         bucket_decode = {i: b for i, b in enumerate(TIME_BUCKETS)}
@@ -430,19 +437,22 @@ def cohort_risk_export(
             {
                 "model_name": model_name,
                 "model_version": art.version,
-                "scored_at": _utc_now_iso(),
+                "scored_at": scored_at,
                 "total_candidates": int(len(df)),
                 "count": total,
                 "by_tier": counts,
-            }
+            },
+            headers={
+                "X-Scored-At": scored_at,
+                "X-Model-Name": model_name,
+                "X-Model-Version": art.version,
+            },
         )
 
     if sort_mode == "risk_desc":
         df = df.sort_values("miss_probability", ascending=False, kind="mergesort")
     elif sort_mode == "risk_asc":
         df = df.sort_values("miss_probability", ascending=True, kind="mergesort")
-
-    scored_at = _utc_now_iso()
 
     if fmt == "csv":
         return StreamingResponse(
@@ -465,6 +475,9 @@ def cohort_risk_export(
                 "Content-Disposition": (
                     f'attachment; filename="cohort_risk_{model_name}_{art.version}.csv"'
                 ),
+                "X-Scored-At": scored_at,
+                "X-Model-Name": model_name,
+                "X-Model-Version": art.version,
             },
         )
 
@@ -489,5 +502,8 @@ def cohort_risk_export(
             "Content-Disposition": (
                 f'attachment; filename="cohort_risk_{model_name}_{art.version}.ndjson"'
             ),
+            "X-Scored-At": scored_at,
+            "X-Model-Name": model_name,
+            "X-Model-Version": art.version,
         },
     )
