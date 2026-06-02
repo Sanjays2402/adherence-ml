@@ -116,3 +116,41 @@ def test_cohort_risk_n_users_with_high_risk(tmp_path, monkeypatch):
         1 for u in body["top_users"] if u["n_high_risk"] >= 1
     )
     assert users_with_hr_in_top == n_hr_users
+
+
+def test_cohort_risk_buckets_include_n_medium_risk(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    client = TestClient(create_app())
+
+    r = client.post(
+        "/v1/cohort/risk",
+        params={"top_users": 100},
+        json={"synthetic": {"n_users": 40, "n_days": 7, "seed": 1}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    # by_tier.medium (overall) must equal the sum of n_medium_risk across
+    # the per-class breakdown and the per-bucket breakdown (every dose
+    # lands in exactly one class and exactly one bucket).
+    overall_medium = body["by_tier"]["medium"]
+    assert sum(b["n_medium_risk"] for b in body["by_dose_class"]) == overall_medium
+    assert sum(b["n_medium_risk"] for b in body["by_time_bucket"]) == overall_medium
+
+    # Per-bucket invariants: n_medium_risk is bounded by n_doses,
+    # disjoint from n_high_risk (combined cannot exceed total), and
+    # consistent with pct_medium_risk (no float drift beyond 1 dose).
+    for bucket in (
+        body["by_dose_class"]
+        + body["by_time_bucket"]
+        + body["top_users"]
+    ):
+        n = bucket["n_doses"]
+        nm = bucket["n_medium_risk"]
+        nh = bucket["n_high_risk"]
+        assert 0 <= nm <= n
+        assert nm + nh <= n
+        assert abs(nm - round(n * bucket["pct_medium_risk"])) <= 1
