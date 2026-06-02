@@ -220,6 +220,13 @@ def _stream(
                     k: by_tier_time_bucket[k] for k in sorted(by_tier_time_bucket)
                 },
                 "probability_stats": probability_stats,
+                # Sum of post-filter miss_probability across emitted rows ==
+                # expected count of missed doses this NDJSON slice represents.
+                # Mirrors count_only and /cohort/risk total_expected_misses so
+                # streaming consumers (Airflow, ETL) can write the outreach
+                # capacity budget straight from the footer without paging the
+                # rows. Rounded to 6 to match row-level miss_probability.
+                "total_expected_misses": round(sum(probs), 6) if probs else 0.0,
                 "n_users": len(emitted_user_ids),
                 # Distinct user pool sizes from the underlying cohort,
                 # mirroring /cohort/risk and count_only so streaming
@@ -642,6 +649,14 @@ def cohort_risk_export(
                     k: by_tier_time_bucket[k] for k in sorted(by_tier_time_bucket)
                 },
                 "probability_stats": probability_stats,
+                # Sum of post-filter miss_probability == expected count of
+                # missed doses the outreach program has to absorb in this
+                # slice. Mirrors /cohort/risk total_expected_misses so the
+                # dashboard header ("projected ~N missed doses") matches
+                # the count_only summary byte-for-byte after the same
+                # tier / class / bucket / user filters. Rounded to 6 to
+                # line up with row-level miss_probability precision.
+                "total_expected_misses": round(sum(probs), 6) if probs else 0.0,
                 "n_users": len(counted_user_ids),
                 # Distinct user pool sizes from the underlying cohort,
                 # mirroring /cohort/risk so dashboards can show

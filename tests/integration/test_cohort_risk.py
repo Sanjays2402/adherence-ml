@@ -237,3 +237,35 @@ def test_cohort_risk_rejects_unknown_sort_by(tmp_path, monkeypatch):
         headers={"x-api-key": "svc"},
     )
     assert r.status_code == 422
+
+
+def test_cohort_risk_total_expected_misses(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    client = TestClient(create_app())
+
+    r = client.post(
+        "/v1/cohort/risk",
+        params={"top_users": 100},
+        json={"synthetic": {"n_users": 40, "n_days": 7, "seed": 1}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    # total_expected_misses == total_doses * overall_mean_risk (within
+    # float tolerance). This is the cohort-wide outreach capacity budget
+    # dashboards show in the header without recomputing the product.
+    tem = body["total_expected_misses"]
+    assert tem >= 0.0
+    assert tem <= body["total_doses"]
+    assert abs(tem - body["total_doses"] * body["overall_mean_risk"]) < 1e-6
+
+    # And it must match the sum of expected_misses across the per-class
+    # and per-bucket breakdowns (every dose lands in exactly one class
+    # and exactly one bucket, so the partition sums to the whole).
+    sum_class = sum(b["expected_misses"] for b in body["by_dose_class"])
+    sum_bucket = sum(b["expected_misses"] for b in body["by_time_bucket"])
+    assert abs(sum_class - tem) < 1e-6
+    assert abs(sum_bucket - tem) < 1e-6

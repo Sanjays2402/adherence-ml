@@ -83,6 +83,18 @@ class CohortRiskResponse(BaseModel):
     model_version: str
     total_doses: int
     overall_mean_risk: float
+    total_expected_misses: float = Field(
+        default=0.0,
+        description=(
+            "Sum of miss_probability across every scored dose in the cohort "
+            "(== total_doses * overall_mean_risk). This is the expected count "
+            "of missed doses the outreach program has to absorb in this "
+            "window, which is what capacity planning is actually budgeted "
+            "against. Lets dashboards show 'projected ~N missed doses' in the "
+            "header without recomputing total_doses * overall_mean_risk and "
+            "absorbing the float-vs-int rounding surprises that come with it."
+        ),
+    )
     probability_stats: ProbabilityStats = Field(
         description=(
             "Dose-level miss_probability distribution across the full cohort "
@@ -349,6 +361,7 @@ def cohort_risk(
         model_version=art.version,
         total_doses=int(len(df)),
         overall_mean_risk=float(df["miss_probability"].mean()),
+        total_expected_misses=float(df["miss_probability"].sum()),
         probability_stats=stats,
         by_tier=tier_counts,
         by_tier_dose_class=by_tier_dose_class,
