@@ -333,6 +333,10 @@ def cohort_risk_export(
             " `max_probability`, `dose_class`, `time_bucket`, `user_ids`,"
             " `exclude_user_ids`) apply identically. `offset`, `limit`, and"
             " `sort` are ignored because they do not affect the count."
+            " Response also breaks the count down by dose_class and"
+            " time_bucket so staffing models can see, in one call, how many"
+            " high-risk insulin doses fall in the evening bucket without"
+            " running the export per (class, bucket) pair."
         ),
     ),
     _p=Depends(require_service),
@@ -414,6 +418,8 @@ def cohort_risk_export(
         min_prob = float(min_probability)
         max_prob = float(max_probability)
         counts = {"low": 0, "medium": 0, "high": 0}
+        by_dose_class: dict[str, int] = {}
+        by_time_bucket: dict[str, int] = {}
         total = 0
         for row in df.itertuples(index=False):
             uid = str(row.user_id)
@@ -434,6 +440,8 @@ def cohort_risk_export(
             if bucket_filter is not None and tb not in bucket_filter:
                 continue
             counts[tier] += 1
+            by_dose_class[dose_class] = by_dose_class.get(dose_class, 0) + 1
+            by_time_bucket[tb] = by_time_bucket.get(tb, 0) + 1
             total += 1
         return JSONResponse(
             {
@@ -443,6 +451,8 @@ def cohort_risk_export(
                 "total_candidates": total_candidates,
                 "count": total,
                 "by_tier": counts,
+                "by_dose_class": dict(sorted(by_dose_class.items())),
+                "by_time_bucket": dict(sorted(by_time_bucket.items())),
             },
             headers={
                 "X-Scored-At": scored_at,

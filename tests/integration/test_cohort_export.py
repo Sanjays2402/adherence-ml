@@ -556,6 +556,75 @@ def test_export_count_only_matches_streamed_row_count(tmp_path, monkeypatch):
     assert body["by_tier"] == by_tier_stream
 
 
+def test_export_count_only_includes_dose_class_and_time_bucket_breakdown(
+    tmp_path, monkeypatch
+):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    payload = {"synthetic": {"n_users": 60, "n_days": 6, "seed": 21}}
+
+    r_stream = c.post(
+        "/v1/cohort/risk/export",
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r_stream.status_code == 200
+    rows = [x for x in _parse_ndjson(r_stream.content) if x["kind"] == "row"]
+    by_class_stream: dict[str, int] = {}
+    by_bucket_stream: dict[str, int] = {}
+    for row in rows:
+        by_class_stream[row["dose_class"]] = by_class_stream.get(row["dose_class"], 0) + 1
+        by_bucket_stream[row["time_bucket"]] = by_bucket_stream.get(row["time_bucket"], 0) + 1
+
+    r_count = c.post(
+        "/v1/cohort/risk/export",
+        params={"count_only": "true"},
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r_count.status_code == 200
+    body = r_count.json()
+    assert body["by_dose_class"] == by_class_stream
+    assert body["by_time_bucket"] == by_bucket_stream
+    assert sum(body["by_dose_class"].values()) == body["count"]
+    assert sum(body["by_time_bucket"].values()) == body["count"]
+
+
+def test_export_count_only_breakdown_respects_filters(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    payload = {"synthetic": {"n_users": 50, "n_days": 6, "seed": 33}}
+
+    # baseline: see which dose classes exist in the cohort
+    r_all = c.post(
+        "/v1/cohort/risk/export",
+        params={"count_only": "true"},
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r_all.status_code == 200
+    classes = list(r_all.json()["by_dose_class"].keys())
+    assert classes, "expected at least one dose_class in synthetic cohort"
+    pick = classes[0]
+
+    r_filt = c.post(
+        "/v1/cohort/risk/export",
+        params={"count_only": "true", "dose_class": pick},
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r_filt.status_code == 200
+    body = r_filt.json()
+    assert list(body["by_dose_class"].keys()) == [pick]
+    assert body["by_dose_class"][pick] == body["count"]
+
+
 def test_export_count_only_ignores_limit_and_offset(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
     _train()
