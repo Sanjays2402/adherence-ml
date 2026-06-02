@@ -95,6 +95,7 @@ def _stream(
     bucket_decode = {i: b for i, b in enumerate(TIME_BUCKETS)}
     emitted = 0
     skipped = 0
+    by_tier = {"low": 0, "medium": 0, "high": 0}
     header = {
         "kind": "header",
         "model_name": model_name,
@@ -134,9 +135,13 @@ def _stream(
         }
         yield (json.dumps(record) + "\n").encode("utf-8")
         emitted += 1
+        by_tier[tier] += 1
         if limit is not None and emitted >= limit:
             break
-    yield (json.dumps({"kind": "footer", "emitted": emitted}) + "\n").encode("utf-8")
+    yield (
+        json.dumps({"kind": "footer", "emitted": emitted, "by_tier": by_tier})
+        + "\n"
+    ).encode("utf-8")
 
 
 def _stream_csv(

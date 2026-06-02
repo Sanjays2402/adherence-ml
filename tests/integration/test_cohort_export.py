@@ -579,3 +579,28 @@ def test_export_count_only_ignores_limit_and_offset(tmp_path, monkeypatch):
     assert r_a.status_code == 200
     assert r_b.status_code == 200
     assert r_a.json()["count"] == r_b.json()["count"]
+
+
+def test_export_footer_includes_by_tier_breakdown(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    r = c.post(
+        "/v1/cohort/risk/export",
+        json={"synthetic": {"n_users": 40, "n_days": 6, "seed": 7}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200, r.text
+    rows = _parse_ndjson(r.content)
+    body_rows = [x for x in rows if x["kind"] == "row"]
+    footer = rows[-1]
+    assert footer["kind"] == "footer"
+    assert "by_tier" in footer
+    assert set(footer["by_tier"].keys()) == {"low", "medium", "high"}
+    expected = {"low": 0, "medium": 0, "high": 0}
+    for row in body_rows:
+        expected[row["risk_tier"]] += 1
+    assert footer["by_tier"] == expected
+    assert sum(footer["by_tier"].values()) == footer["emitted"]
