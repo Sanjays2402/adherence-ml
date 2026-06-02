@@ -41,6 +41,12 @@ class ProbabilityStats(BaseModel):
     p95: float
 
 
+class TierCounts(BaseModel):
+    low: int
+    medium: int
+    high: int
+
+
 class CohortRiskResponse(BaseModel):
     model_name: str
     model_version: str
@@ -51,6 +57,12 @@ class CohortRiskResponse(BaseModel):
             "Dose-level miss_probability distribution across the full cohort "
             "(min/max/mean/p50/p95). Lets dashboards size risk bands and pick "
             "thresholds without pulling every row via /export."
+        )
+    )
+    by_tier: TierCounts = Field(
+        description=(
+            "Dose counts per risk tier (low/medium/high) using DEFAULT_RISK_THRESHOLDS. "
+            "Lets dashboards size outreach queues without paging the full cohort via /export."
         )
     )
     by_dose_class: list[CohortBucket]
@@ -170,6 +182,11 @@ def cohort_risk(
         p50=float(np.percentile(probs, 50)),
         p95=float(np.percentile(probs, 95)),
     )
+    tier_counts = TierCounts(
+        low=int((probs < med).sum()),
+        medium=int(((probs >= med) & (probs < high)).sum()),
+        high=int((probs >= high).sum()),
+    )
 
     return CohortRiskResponse(
         model_name=model_name,
@@ -177,6 +194,7 @@ def cohort_risk(
         total_doses=int(len(df)),
         overall_mean_risk=float(df["miss_probability"].mean()),
         probability_stats=stats,
+        by_tier=tier_counts,
         by_dose_class=by_class,
         by_time_bucket=by_time,
         top_users=user_rows[:top_users],

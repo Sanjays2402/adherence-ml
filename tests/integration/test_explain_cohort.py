@@ -163,3 +163,25 @@ def test_cohort_risk_probability_stats(tmp_path, monkeypatch):
     assert stats["min"] <= stats["mean"] <= stats["max"]
     # overall_mean_risk and probability_stats.mean are the same aggregation.
     assert abs(stats["mean"] - body["overall_mean_risk"]) < 1e-9
+
+
+def test_cohort_risk_by_tier_counts(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    _train_tiny()
+    from adherence_api.app import create_app
+    client = TestClient(create_app())
+
+    payload = {"synthetic": {"n_users": 80, "n_days": 10, "seed": 21}}
+    r = client.post(
+        "/v1/cohort/risk?top_users=5",
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    tiers = body["by_tier"]
+    assert set(tiers.keys()) == {"low", "medium", "high"}
+    for v in tiers.values():
+        assert isinstance(v, int) and v >= 0
+    # Tier counts partition total_doses exactly.
+    assert tiers["low"] + tiers["medium"] + tiers["high"] == body["total_doses"]
