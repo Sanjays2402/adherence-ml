@@ -46,6 +46,10 @@ class AuditRow(BaseModel):
 class AuditListResponse(BaseModel):
     n: int
     items: list[AuditRow]
+    # Keyset pagination cursor. Pass back as ``before_id`` on the next
+    # /v1/audit/list call to fetch the next page (older rows). ``None``
+    # when the current page is the last page.
+    next_before_id: int | None = None
 
 
 class AuditStatsResponse(BaseModel):
@@ -177,6 +181,16 @@ def _row_to_model(r: PredictionAudit) -> AuditRow:
 def list_audit(
     request: Request,
     limit: int = Query(100, ge=1, le=1000),
+    before_id: int | None = Query(
+        None,
+        ge=1,
+        description=(
+            "Keyset cursor: only return rows with ``id < before_id``. Use the"
+            " ``next_before_id`` value from a previous response to page"
+            " backwards through history without missing or duplicating rows"
+            " when new audit rows are written concurrently."
+        ),
+    ),
     user_id: str | None = None,
     route: str | None = None,
     model_name: str | None = None,
@@ -210,6 +224,8 @@ def list_audit(
         raise HTTPException(status_code=400, detail="until must be after since")
     with session() as s:
         q = select(PredictionAudit).order_by(PredictionAudit.id.desc()).limit(limit)
+        if before_id is not None:
+            q = q.where(PredictionAudit.id < before_id)
         if target != "*":
             q = q.where(PredictionAudit.tenant_id == target)
         if user_id:
@@ -225,7 +241,16 @@ def list_audit(
         if until_dt is not None:
             q = q.where(PredictionAudit.created_at < until_dt)
         rows = list(s.scalars(q))
-    return AuditListResponse(n=len(rows), items=[_row_to_model(r) for r in rows])
+    # Only advertise a cursor when a full page came back; a short page means
+    # we've reached the end of the filtered history.
+    next_cursor: int | None = None
+    if len(rows) == limit and rows:
+        next_cursor = int(rows[-1].id)
+    return AuditListResponse(
+        n=len(rows),
+        items=[_row_to_model(r) for r in rows],
+        next_before_id=next_cursor,
+    )
 
 
 class ChainBreakRow(BaseModel):

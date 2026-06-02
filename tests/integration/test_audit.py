@@ -144,3 +144,68 @@ def test_batch_predict_writes_per_item_audit(tmp_path, monkeypatch):
     assert r.status_code == 200
     rows = r.json()["items"]
     assert len(rows) >= 3
+
+
+def test_audit_list_before_id_cursor_pagination(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    _train(tmp_path)
+    from adherence_api.app import create_app
+    client = TestClient(create_app())
+
+    base = {"dose_id": "d1", "scheduled_at": "2026-03-05T08:00:00Z",
+            "dose_class": "cardio", "dose_strength_mg": 10.0}
+    for i in range(5):
+        client.post(
+            "/v1/predict",
+            json={"user_id": f"pg_{i}", "schedule": [base], "top_k_reasons": 1},
+            headers={"x-api-key": "svc"},
+        )
+
+    # First page of 2 rows: newest first.
+    r = client.get("/v1/audit/list?limit=2", headers={"x-api-key": "adm"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["n"] == 2
+    page1_ids = [row["id"] for row in body["items"]]
+    assert page1_ids == sorted(page1_ids, reverse=True)
+    cursor = body["next_before_id"]
+    assert cursor == page1_ids[-1]
+
+    # Second page using cursor: strictly older ids, no overlap.
+    r = client.get(
+        f"/v1/audit/list?limit=2&before_id={cursor}",
+        headers={"x-api-key": "adm"},
+    )
+    assert r.status_code == 200
+    body2 = r.json()
+    page2_ids = [row["id"] for row in body2["items"]]
+    assert all(i < cursor for i in page2_ids)
+    assert not set(page1_ids) & set(page2_ids)
+
+    # Walk to the end: last page returns next_before_id=None.
+    seen: list[int] = list(page1_ids) + list(page2_ids)
+    next_cur = body2["next_before_id"]
+    guard = 0
+    while next_cur is not None and guard < 20:
+        guard += 1
+        r = client.get(
+            f"/v1/audit/list?limit=2&before_id={next_cur}",
+            headers={"x-api-key": "adm"},
+        )
+        assert r.status_code == 200
+        bod = r.json()
+        for row in bod["items"]:
+            assert row["id"] < next_cur
+            seen.append(row["id"])
+        next_cur = bod["next_before_id"]
+    # No duplicates across pages.
+    assert len(seen) == len(set(seen))
+
+
+def test_audit_list_before_id_rejects_zero(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    _train(tmp_path)
+    from adherence_api.app import create_app
+    client = TestClient(create_app())
+    r = client.get("/v1/audit/list?before_id=0", headers={"x-api-key": "adm"})
+    assert r.status_code == 422
