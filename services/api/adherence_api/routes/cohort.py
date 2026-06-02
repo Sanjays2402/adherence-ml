@@ -121,6 +121,17 @@ class CohortRiskResponse(BaseModel):
             "users are excluded."
         ),
     )
+    n_users_with_high_risk: int = Field(
+        default=0,
+        description=(
+            "Distinct users with at least one dose at or above "
+            "DEFAULT_RISK_THRESHOLDS['high']. This is the patient-level "
+            "outreach queue size, which is what nurse capacity is actually "
+            "planned against (a single patient with 8 high-risk doses is "
+            "one phone call, not eight). Dashboards previously had to page "
+            "the full cohort via /export to compute this."
+        ),
+    )
     top_users: list[CohortBucket] = Field(
         description="Users sorted by mean miss probability (highest first)."
     )
@@ -296,5 +307,8 @@ def cohort_risk(
         by_time_bucket=by_time,
         n_users_total=int(df["user_id"].nunique()),
         n_users_eligible=len(user_rows),
+        n_users_with_high_risk=int(
+            df.loc[df["miss_probability"] >= high, "user_id"].nunique()
+        ),
         top_users=user_rows[:top_users],
     )

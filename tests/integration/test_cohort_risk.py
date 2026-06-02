@@ -84,3 +84,35 @@ def test_cohort_risk_buckets_include_n_high_risk(tmp_path, monkeypatch):
         nh = bucket["n_high_risk"]
         assert 0 <= nh <= n
         assert abs(nh - round(n * bucket["pct_high_risk"])) <= 1
+
+
+def test_cohort_risk_n_users_with_high_risk(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    client = TestClient(create_app())
+
+    r = client.post(
+        "/v1/cohort/risk",
+        params={"top_users": 100},
+        json={"synthetic": {"n_users": 40, "n_days": 7, "seed": 1}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    # n_users_with_high_risk is the distinct patient count for the
+    # outreach queue: bounded by total users, and bounded above by the
+    # raw high-risk dose count (cannot have more affected patients than
+    # high-risk doses).
+    n_hr_users = body["n_users_with_high_risk"]
+    assert 0 <= n_hr_users <= body["n_users_total"]
+    assert n_hr_users <= body["by_tier"]["high"]
+
+    # And it matches the count of top_users rows with n_high_risk >= 1
+    # (top_users covers every eligible user when the page size is large
+    # enough, and min_doses defaults to 1).
+    users_with_hr_in_top = sum(
+        1 for u in body["top_users"] if u["n_high_risk"] >= 1
+    )
+    assert users_with_hr_in_top == n_hr_users
