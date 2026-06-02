@@ -40,6 +40,17 @@ class CohortBucket(BaseModel):
             "p=0.4 beats a 2-dose user at p=0.95) instead of just severity."
         ),
     )
+    n_high_risk: int = Field(
+        default=0,
+        description=(
+            "Dose count in this bucket whose miss_probability is at or above "
+            "DEFAULT_RISK_THRESHOLDS['high']. This is the actual outreach "
+            "queue size per class / bucket / user, which dashboards previously "
+            "had to compute as round(n_doses * pct_high_risk) and risk "
+            "floating-point drift on. Used to size nurse call lists per "
+            "(class, bucket) without paging the full cohort via /export."
+        ),
+    )
 
 
 class ProbabilityStats(BaseModel):
@@ -116,6 +127,7 @@ def _bucket(df: pd.DataFrame, group_col: str, decode: dict[int, str] | None = No
                 pct_high_risk=float((p >= high).mean()),
                 pct_medium_risk=float(((p >= med) & (p < high)).mean()),
                 expected_misses=float(n * mean_p),
+                n_high_risk=int((p >= high).sum()),
             )
         )
     out.sort(key=lambda b: b.mean_miss_probability, reverse=True)
@@ -209,6 +221,7 @@ def cohort_risk(
                 pct_high_risk=float((p >= high).mean()),
                 pct_medium_risk=float(((p >= med) & (p < high)).mean()),
                 expected_misses=float(n * mean_p),
+                n_high_risk=int((p >= high).sum()),
             )
         )
     if sort_by == "expected_misses":
