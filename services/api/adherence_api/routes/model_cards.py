@@ -23,6 +23,7 @@ from adherence_api.deps import current_tenant, require_admin, require_viewer
 from adherence_api.dry_run import dry_run_response
 from adherence_api.routes.admin_mfa import require_admin_mfa
 from adherence_common import model_cards as mc_mod
+from adherence_common.csv_safe import safe_row
 from adherence_common.admin_audit import record_admin_action
 from adherence_common.logging import get_logger
 
@@ -158,7 +159,7 @@ def export_csv(
         "limitations", "notes",
     ])
     for e in entries:
-        w.writerow([
+        w.writerow(safe_row([
             e.id, e.model_name, e.model_version, e.owner,
             e.training_data_sensitivity, "1" if e.phi_suitable else "0",
             e.fairness_status, e.last_validated_at or "",
@@ -171,7 +172,7 @@ def export_csv(
             (e.evaluation_summary or "").replace("\n", " "),
             (e.limitations or "").replace("\n", " "),
             (e.notes or "").replace("\n", " "),
-        ])
+        ]))
     data = buf.getvalue()
     fname = "ai-model-cards-%s.csv" % tenant
     return StreamingResponse(

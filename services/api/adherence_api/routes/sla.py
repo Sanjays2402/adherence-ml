@@ -22,6 +22,7 @@ from adherence_api.deps import current_tenant, require_admin, require_viewer
 from adherence_api.dry_run import dry_run_response
 from adherence_api.routes.admin_mfa import require_admin_mfa
 from adherence_common import sla_register as sla_mod
+from adherence_common.csv_safe import safe_row
 from adherence_common.admin_audit import record_admin_action
 from adherence_common.logging import get_logger
 
@@ -148,7 +149,7 @@ def export_csv(
         "notes",
     ])
     for e in entries:
-        w.writerow([
+        w.writerow(safe_row([
             e.id, e.contract_ref, e.plan, e.uptime_pct,
             e.sev1_response_hours, e.sev2_response_hours,
             e.sev3_response_hours, e.sev4_response_hours,
@@ -158,7 +159,7 @@ def export_csv(
             e.archived_by or "", e.archived_at or "", e.archive_reason or "",
             e.superseded_by_id or "",
             (e.notes or "").replace("\n", " "),
-        ])
+        ]))
     data = buf.getvalue()
     fname = "sla-commitments-%s.csv" % tenant
     return StreamingResponse(

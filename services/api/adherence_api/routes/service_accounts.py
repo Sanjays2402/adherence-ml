@@ -29,6 +29,7 @@ from adherence_api.deps import current_tenant, require_admin, require_viewer
 from adherence_api.dry_run import dry_run_response
 from adherence_api.routes.admin_mfa import require_admin_mfa
 from adherence_common import service_accounts as sa_mod
+from adherence_common.csv_safe import safe_row
 from adherence_common.admin_audit import record_admin_action
 from adherence_common.logging import get_logger
 
@@ -237,7 +238,7 @@ def export_service_accounts_csv(
         "updated_at", "archived_by", "archived_at",
     ])
     for e in entries:
-        w.writerow([
+        w.writerow(safe_row([
             e.id, e.name, e.kind, e.system_of_record, e.credential_kind,
             e.owner_email, " ".join(e.scopes),
             "yes" if e.vault_managed else "no",
@@ -251,7 +252,7 @@ def export_service_accounts_csv(
             e.status, e.notes or "", e.version, e.created_by, e.created_at,
             e.updated_by or "", e.updated_at or "",
             e.archived_by or "", e.archived_at or "",
-        ])
+        ]))
     data = buf.getvalue()
     fname = f"service-accounts-{tenant}.csv"
     return StreamingResponse(

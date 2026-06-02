@@ -19,6 +19,7 @@ from adherence_api.deps import current_tenant, require_admin, require_viewer
 from adherence_api.dry_run import dry_run_response
 from adherence_api.routes.admin_mfa import require_admin_mfa
 from adherence_common import maintenance as maint_mod
+from adherence_common.csv_safe import safe_row
 from adherence_common.admin_audit import record_admin_action
 from adherence_common.logging import get_logger
 
@@ -157,12 +158,12 @@ def export_maintenance_csv(
         "archived_by", "archived_at", "archive_reason",
     ])
     for e in entries:
-        w.writerow([
+        w.writerow(safe_row([
             e.id, e.title, e.description, e.category, e.impact,
             e.starts_at, e.ends_at, e.duration_seconds, e.status, e.version,
             e.created_by, e.created_at, e.updated_by or "", e.updated_at or "",
             e.archived_by or "", e.archived_at or "", e.archive_reason or "",
-        ])
+        ]))
     data = buf.getvalue()
     fname = f"maintenance-{tenant}.csv"
     return StreamingResponse(
