@@ -195,12 +195,15 @@ def cohort_risk(
     top_users: int = Query(10, ge=1, le=100),
     sort_by: str = Query(
         "mean",
-        pattern="^(mean|expected_misses)$",
+        pattern="^(mean|expected_misses|n_high_risk)$",
         description=(
             "Ordering for top_users. 'mean' (default) ranks by mean_miss_probability "
             "so the most severe per-dose risk surfaces first. 'expected_misses' ranks "
             "by n_doses * mean_miss_probability so high-volume users with moderate "
-            "risk (the actual outreach payoff) surface first."
+            "risk (the actual outreach payoff) surface first. 'n_high_risk' ranks by "
+            "the count of doses at or above DEFAULT_RISK_THRESHOLDS['high'] per user, "
+            "which is the actual nurse outreach unit (one patient with 8 high-risk "
+            "doses is one phone call) and matches how staffing capacity is planned."
         ),
     ),
     min_doses: int = Query(
@@ -281,6 +284,15 @@ def cohort_risk(
         )
     if sort_by == "expected_misses":
         user_rows.sort(key=lambda b: b.expected_misses, reverse=True)
+    elif sort_by == "n_high_risk":
+        # Rank by the actual outreach unit (count of high-risk doses per user).
+        # Tie-break on mean_miss_probability so users with the same high-risk
+        # dose count surface in severity order, which keeps the leaderboard
+        # stable for staffing planners.
+        user_rows.sort(
+            key=lambda b: (b.n_high_risk, b.mean_miss_probability),
+            reverse=True,
+        )
     else:
         user_rows.sort(key=lambda b: b.mean_miss_probability, reverse=True)
 
