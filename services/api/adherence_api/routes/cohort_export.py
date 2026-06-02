@@ -12,6 +12,7 @@ Filters:
   dose_class: comma-separated subset of dose classes
   time_bucket: comma-separated subset of time-of-day buckets
   user_ids: comma-separated allowlist of user ids
+  exclude_user_ids: comma-separated denylist of user ids to skip
 
 The request body matches /v1/cohort/risk so the two endpoints are
 interchangeable from a payload perspective.
@@ -85,6 +86,7 @@ def _stream(
     class_filter: set[str] | None,
     bucket_filter: set[str] | None,
     user_filter: set[str] | None,
+    user_denylist: set[str] | None,
     limit: int | None,
 ) -> Iterator[bytes]:
     class_decode = {i: c for i, c in enumerate(DOSE_CLASSES)}
@@ -100,6 +102,8 @@ def _stream(
     for row in df.itertuples(index=False):
         uid = str(row.user_id)
         if user_filter is not None and uid not in user_filter:
+            continue
+        if user_denylist is not None and uid in user_denylist:
             continue
         prob = float(row.miss_probability)
         if prob < min_prob or prob > max_prob:
@@ -140,6 +144,7 @@ def _stream_csv(
     class_filter: set[str] | None,
     bucket_filter: set[str] | None,
     user_filter: set[str] | None,
+    user_denylist: set[str] | None,
     limit: int | None,
 ) -> Iterator[bytes]:
     """Stream cohort risk scores as CSV with formula-injection-safe cells.
@@ -159,6 +164,8 @@ def _stream_csv(
     for row in df.itertuples(index=False):
         uid = str(row.user_id)
         if user_filter is not None and uid not in user_filter:
+            continue
+        if user_denylist is not None and uid in user_denylist:
             continue
         prob = float(row.miss_probability)
         if prob < min_prob or prob > max_prob:
@@ -228,6 +235,16 @@ def cohort_risk_export(
     user_ids: str | None = Query(
         None, description="Comma-separated user_id allowlist"
     ),
+    exclude_user_ids: str | None = Query(
+        None,
+        description=(
+            "Comma-separated user_id denylist. Rows whose user_id appears"
+            " here are skipped. Lets nightly pipelines exclude patients"
+            " already contacted today (or opted out of outreach) without"
+            " post-filtering downstream. Applied after `user_ids`"
+            " allowlist, so a user listed in both is excluded."
+        ),
+    ),
     limit: int | None = Query(
         None, ge=1, le=1_000_000,
         description="Max rows to emit after filtering (None = unlimited).",
@@ -289,6 +306,7 @@ def cohort_risk_export(
             detail=f"time_bucket must be subset of {sorted(_VALID_BUCKETS)}",
         )
     user_filter = _parse_csv(user_ids)
+    user_denylist = _parse_csv(exclude_user_ids)
 
     if max_probability < min_probability:
         raise HTTPException(
@@ -337,6 +355,7 @@ def cohort_risk_export(
                 class_filter=class_filter,
                 bucket_filter=bucket_filter,
                 user_filter=user_filter,
+                user_denylist=user_denylist,
                 limit=limit,
             ),
             media_type="text/csv; charset=utf-8",
@@ -358,6 +377,7 @@ def cohort_risk_export(
             class_filter=class_filter,
             bucket_filter=bucket_filter,
             user_filter=user_filter,
+            user_denylist=user_denylist,
             limit=limit,
         ),
         media_type="application/x-ndjson",

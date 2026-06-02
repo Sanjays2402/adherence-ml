@@ -346,3 +346,68 @@ def test_export_rejects_bad_time_bucket(tmp_path, monkeypatch):
         headers={"x-api-key": "svc"},
     )
     assert r.status_code == 400
+
+
+def test_export_excludes_users_via_denylist(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    # Baseline to learn real user ids in the synthetic cohort.
+    r = c.post(
+        "/v1/cohort/risk/export",
+        json={"synthetic": {"n_users": 20, "n_days": 4, "seed": 7}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200
+    base_rows = [x for x in _parse_ndjson(r.content) if x["kind"] == "row"]
+    all_users = sorted({row["user_id"] for row in base_rows})
+    assert len(all_users) >= 3
+    excluded = all_users[:2]
+
+    r = c.post(
+        "/v1/cohort/risk/export",
+        params={"exclude_user_ids": ",".join(excluded)},
+        json={"synthetic": {"n_users": 20, "n_days": 4, "seed": 7}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200
+    rows = [x for x in _parse_ndjson(r.content) if x["kind"] == "row"]
+    assert rows
+    seen = {row["user_id"] for row in rows}
+    for uid in excluded:
+        assert uid not in seen
+    # And non-excluded users still appear.
+    assert seen & set(all_users[2:])
+
+
+def test_export_denylist_wins_over_allowlist(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    r = c.post(
+        "/v1/cohort/risk/export",
+        json={"synthetic": {"n_users": 15, "n_days": 3, "seed": 9}},
+        headers={"x-api-key": "svc"},
+    )
+    base_rows = [x for x in _parse_ndjson(r.content) if x["kind"] == "row"]
+    chosen = sorted({row["user_id"] for row in base_rows})[:3]
+    assert len(chosen) == 3
+
+    r = c.post(
+        "/v1/cohort/risk/export",
+        params={
+            "user_ids": ",".join(chosen),
+            "exclude_user_ids": chosen[0],
+        },
+        json={"synthetic": {"n_users": 15, "n_days": 3, "seed": 9}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200
+    rows = [x for x in _parse_ndjson(r.content) if x["kind"] == "row"]
+    seen = {row["user_id"] for row in rows}
+    assert chosen[0] not in seen
+    assert seen.issubset(set(chosen[1:]))
