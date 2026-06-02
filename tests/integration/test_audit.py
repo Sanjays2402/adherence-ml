@@ -307,3 +307,78 @@ def test_audit_list_before_id_rejects_zero(tmp_path, monkeypatch):
     client = TestClient(create_app())
     r = client.get("/v1/audit/list?before_id=0", headers={"x-api-key": "adm"})
     assert r.status_code == 422
+
+
+def test_audit_filter_by_model_version(tmp_path, monkeypatch):
+    """``model_version`` narrows list + CSV export to a single rollout.
+
+    Triage scenario: a customer reports flaky predictions after a rollout.
+    On-call wants every audit row answered by the new version, separate
+    from prior-version traffic still in the window, without scanning the
+    full log by hand.
+    """
+    _setup_env(tmp_path, monkeypatch)
+    _train(tmp_path)
+    from adherence_api.app import create_app
+    from adherence_common.db import PredictionAudit, session
+
+    client = TestClient(create_app())
+    base = {"dose_id": "d1", "scheduled_at": "2026-03-05T08:00:00Z",
+            "dose_class": "cardio", "dose_strength_mg": 10.0}
+    for _ in range(3):
+        client.post(
+            "/v1/predict",
+            json={"user_id": "u_mv", "schedule": [base], "top_k_reasons": 1},
+            headers={"x-api-key": "svc"},
+        )
+    # Stamp some rows with a synthetic prior version so we have a mix.
+    with session() as s:
+        all_rows = list(s.scalars(
+            __import__("sqlalchemy").select(PredictionAudit)
+            .where(PredictionAudit.user_id == "u_mv")
+            .order_by(PredictionAudit.id.asc())
+        ))
+        # Mark the oldest one as the prior version.
+        all_rows[0].model_version = "v-prior-test"
+        s.commit()
+        current_version = all_rows[-1].model_version
+
+    # List: only current-version rows come back.
+    r = client.get(
+        f"/v1/audit/list?model_version={current_version}&user_id=u_mv",
+        headers={"x-api-key": "adm"},
+    )
+    assert r.status_code == 200, r.text
+    rows = r.json()["items"]
+    assert rows and all(row["model_version"] == current_version for row in rows)
+    assert all(row["model_version"] != "v-prior-test" for row in rows)
+
+    # List: filter on prior version returns the seeded one.
+    r = client.get(
+        "/v1/audit/list?model_version=v-prior-test&user_id=u_mv",
+        headers={"x-api-key": "adm"},
+    )
+    assert r.status_code == 200
+    rows = r.json()["items"]
+    assert len(rows) == 1 and rows[0]["model_version"] == "v-prior-test"
+
+    # CSV export honors the same filter.
+    r = client.get(
+        "/v1/audit/export.csv?model_version=v-prior-test",
+        headers={"x-api-key": "adm"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.headers.get("X-Row-Count") == "1"
+    lines = r.text.splitlines()
+    header = lines[0].split(",")
+    mv_idx = header.index("model_version")
+    for line in lines[1:]:
+        assert line.split(",")[mv_idx] == "v-prior-test"
+
+    # Unknown version returns empty.
+    r = client.get(
+        "/v1/audit/list?model_version=does-not-exist",
+        headers={"x-api-key": "adm"},
+    )
+    assert r.status_code == 200
+    assert r.json()["items"] == []

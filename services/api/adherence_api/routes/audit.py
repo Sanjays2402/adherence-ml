@@ -194,6 +194,16 @@ def list_audit(
     user_id: str | None = None,
     route: str | None = None,
     model_name: str | None = None,
+    model_version: str | None = Query(
+        None,
+        description=(
+            "Exact match on the recorded model version (e.g. ``v3.1.0`` or"
+            " a registry hash). Combine with ``model_name`` to isolate a"
+            " single rollout when triaging a suspected regression, or to"
+            " produce evidence that a specific deployed version was the one"
+            " answering live traffic during a given window."
+        ),
+    ),
     caller: str | None = Query(
         None,
         description=(
@@ -251,6 +261,8 @@ def list_audit(
             q = q.where(PredictionAudit.route == route)
         if model_name:
             q = q.where(PredictionAudit.model_name == model_name)
+        if model_version:
+            q = q.where(PredictionAudit.model_version == model_version)
         if caller:
             q = q.where(PredictionAudit.caller == caller)
         if request_id:
@@ -468,6 +480,15 @@ def export_csv(
     user_id: str | None = None,
     route: str | None = None,
     model_name: str | None = None,
+    model_version: str | None = Query(
+        None,
+        description=(
+            "Exact match on the recorded model version. Combine with"
+            " ``model_name`` to scope the export to a single rollout (e.g."
+            " 'every call answered by churn-v3.1.0 during the canary"
+            " window') for incident packets or rollout reviews."
+        ),
+    ),
     caller: str | None = Query(
         None,
         description=(
@@ -547,6 +568,8 @@ def export_csv(
             q = q.where(PredictionAudit.route == route)
         if model_name:
             q = q.where(PredictionAudit.model_name == model_name)
+        if model_version:
+            q = q.where(PredictionAudit.model_version == model_version)
         if caller:
             q = q.where(PredictionAudit.caller == caller)
         if request_id:
