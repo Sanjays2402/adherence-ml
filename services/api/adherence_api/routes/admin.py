@@ -1,6 +1,8 @@
 """Admin endpoints: token mint, model listing."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 from adherence_common import api_keys as ak
 from adherence_common.admin_audit import list_admin_actions, record_admin_action
 from adherence_common.api_key_policy import (
@@ -660,12 +662,26 @@ def read_admin_audit(
     caller: str | None = None,
     tenant: str | None = None,
     limit: int = 100,
+    since: str | None = Query(
+        None,
+        description=(
+            "Optional ISO-8601 lower bound (inclusive) on created_at. "
+            "Accepts 'YYYY-MM-DD', 'YYYY-MM-DDTHH:MM:SS', with or without "
+            "a trailing 'Z' / offset. Use with 'until' to scope an audit "
+            "evidence pack to an absolute window."
+        ),
+    ),
+    until: str | None = Query(
+        None,
+        description="Optional ISO-8601 upper bound (exclusive) on created_at.",
+    ),
 ) -> list[AdminAuditRow]:
     """Return recent admin-plane audit rows for the caller's tenant.
 
     Admins may pass ``tenant=*`` for a cross-tenant read; any other value
     is honoured as-is. Non-admin roles cannot reach this route (gated by
-    ``require_admin``).
+    ``require_admin``). ``since`` / ``until`` scope to an absolute time
+    window for SOC 2 / ISO 27001 evidence packs.
     """
     caller_tenant = p.get("tenant") or "default"
     if tenant is None:
@@ -676,10 +692,47 @@ def read_admin_audit(
         if tenant != caller_tenant and p.get("role") != "admin":
             raise HTTPException(status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
         tenant_filter = tenant
+    since_dt = _parse_admin_audit_iso("since", since)
+    until_dt = _parse_admin_audit_iso("until", until)
+    if since_dt and until_dt and until_dt <= since_dt:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, detail="until must be after since"
+        )
     rows = list_admin_actions(
-        tenant_id=tenant_filter, action=action, caller=caller, limit=limit
+        tenant_id=tenant_filter,
+        action=action,
+        caller=caller,
+        limit=limit,
+        since=since_dt,
+        until=until_dt,
     )
     return [AdminAuditRow(**r) for r in rows]
+
+
+def _parse_admin_audit_iso(name: str, raw: str | None) -> datetime | None:
+    """Parse an ISO-8601 query param to a naive UTC datetime.
+
+    Mirrors the parser used by the prediction-audit route so the two
+    audit reader APIs accept the same shape of input. Returns ``None``
+    when the caller did not supply the param. Raises HTTP 400 on
+    unparseable input.
+    """
+    if raw is None or raw == "":
+        return None
+    s = raw.strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"invalid {name}: expected ISO-8601 datetime, got {raw!r}",
+        ) from e
+    if dt.tzinfo is not None:
+        offset = dt.utcoffset() or timedelta(0)
+        dt = (dt - offset).replace(tzinfo=None)
+    return dt
 
 
 # ---- Per-key IP/CIDR allowlist -------------------------------------------

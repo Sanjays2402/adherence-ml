@@ -163,3 +163,143 @@ def test_redact_details_scrubs_secrets():
     assert out["nested"][0]["token"] == "***"
     assert out["nested"][1]["role"] == "admin"
     assert out["jwt_secret"] == "***"
+
+
+def test_admin_audit_since_until_window(tmp_path, monkeypatch):
+    """``since`` / ``until`` scope the admin audit reader to an absolute
+    window so SOC 2 evidence packs can be pulled for a fixed quarter."""
+    _setup_env(tmp_path, monkeypatch)
+    from datetime import datetime, timedelta
+
+    from adherence_common.admin_audit import list_admin_actions, record_admin_action
+    from adherence_common.db import AdminAuditLog, session
+    from adherence_api.app import create_app
+
+    # Seed three rows across a 30-day spread by backdating created_at.
+    principal = {"sub": "adm", "role": "admin", "tenant": "acme"}
+    for i in range(3):
+        record_admin_action(
+            action="token.mint",
+            principal=principal,
+            target=f"subj-{i}",
+            ok=True,
+            details={"i": i},
+            request_id=f"req-{i}",
+            tenant_id="acme",
+        )
+    now = datetime.utcnow().replace(microsecond=0)
+    backdates = [now - timedelta(days=20), now - timedelta(days=10), now]
+    with session() as s:
+        rows = (
+            s.query(AdminAuditLog)
+            .filter(AdminAuditLog.tenant_id == "acme")
+            .order_by(AdminAuditLog.id.asc())
+            .all()
+        )
+        for row, dt in zip(rows[-3:], backdates):
+            row.created_at = dt
+        s.commit()
+
+    client = TestClient(create_app())
+
+    # Wide-open window picks up all three.
+    r_all = client.get(
+        "/v1/admin/audit/admin?action=token.mint&tenant=acme&limit=50",
+        headers={"x-api-key": "adm"},
+    )
+    assert r_all.status_code == 200, r_all.text
+    assert len(r_all.json()) == 3
+
+    # since cuts off the oldest row.
+    since = (now - timedelta(days=15)).isoformat() + "Z"
+    r_since = client.get(
+        f"/v1/admin/audit/admin?action=token.mint&tenant=acme&since={since}",
+        headers={"x-api-key": "adm"},
+    )
+    assert r_since.status_code == 200, r_since.text
+    assert len(r_since.json()) == 2
+
+    # since + until brackets just the middle row.
+    until = (now - timedelta(days=1)).isoformat() + "Z"
+    r_bracket = client.get(
+        f"/v1/admin/audit/admin?action=token.mint&tenant=acme&since={since}&until={until}",
+        headers={"x-api-key": "adm"},
+    )
+    assert r_bracket.status_code == 200, r_bracket.text
+    bracket = r_bracket.json()
+    assert len(bracket) == 1
+    assert bracket[0]["target"] == "subj-1"
+
+    # Helper accepts plain date strings (no time component).
+    r_date = client.get(
+        "/v1/admin/audit/admin?action=token.mint&tenant=acme"
+        f"&since={(now - timedelta(days=25)).date().isoformat()}",
+        headers={"x-api-key": "adm"},
+    )
+    assert r_date.status_code == 200, r_date.text
+    assert len(r_date.json()) == 3
+
+
+def test_admin_audit_since_until_rejects_bad_input(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    from adherence_api.app import create_app
+    client = TestClient(create_app())
+
+    r_bad = client.get(
+        "/v1/admin/audit/admin?since=not-a-date",
+        headers={"x-api-key": "adm"},
+    )
+    assert r_bad.status_code == 400
+    assert "since" in r_bad.json()["detail"]
+
+    r_inv = client.get(
+        "/v1/admin/audit/admin?since=2026-02-01&until=2026-01-01",
+        headers={"x-api-key": "adm"},
+    )
+    assert r_inv.status_code == 400
+    assert "until must be after since" in r_inv.json()["detail"]
+
+
+def test_list_admin_actions_since_until_kwargs(tmp_path, monkeypatch):
+    """The common helper accepts since/until kwargs directly."""
+    _setup_env(tmp_path, monkeypatch)
+    from datetime import datetime, timedelta
+
+    from adherence_common.admin_audit import list_admin_actions, record_admin_action
+    from adherence_common.db import AdminAuditLog, session
+
+    principal = {"sub": "adm", "role": "admin", "tenant": "acme"}
+    record_admin_action(
+        action="api_key.create",
+        principal=principal,
+        target="k1",
+        ok=True,
+        request_id="req-a",
+        tenant_id="acme",
+    )
+    record_admin_action(
+        action="api_key.create",
+        principal=principal,
+        target="k2",
+        ok=True,
+        request_id="req-b",
+        tenant_id="acme",
+    )
+    now = datetime.utcnow().replace(microsecond=0)
+    with session() as s:
+        rows = (
+            s.query(AdminAuditLog)
+            .filter(AdminAuditLog.tenant_id == "acme")
+            .order_by(AdminAuditLog.id.asc())
+            .all()
+        )
+        rows[-2].created_at = now - timedelta(days=5)
+        rows[-1].created_at = now
+        s.commit()
+
+    out = list_admin_actions(
+        tenant_id="acme",
+        action="api_key.create",
+        since=now - timedelta(days=1),
+    )
+    assert [r["target"] for r in out] == ["k2"]

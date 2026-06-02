@@ -19,6 +19,7 @@ Design notes:
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -144,11 +145,15 @@ def list_admin_actions(
     action: str | None = None,
     caller: str | None = None,
     limit: int = 100,
+    since: datetime | None = None,
+    until: datetime | None = None,
 ) -> list[dict[str, Any]]:
     """Return the most recent admin audit rows, newest first.
 
     Filters are AND'd. ``tenant_id="*"`` returns rows across tenants and
-    should only be exposed to admins.
+    should only be exposed to admins. ``since`` is inclusive, ``until``
+    is exclusive; both must be naive UTC to match how ``created_at`` is
+    stored.
     """
     limit = max(1, min(int(limit), 1000))
     try:
@@ -160,6 +165,10 @@ def list_admin_actions(
                 q = q.filter(AdminAuditLog.action == action)
             if caller:
                 q = q.filter(AdminAuditLog.caller == caller)
+            if since is not None:
+                q = q.filter(AdminAuditLog.created_at >= since)
+            if until is not None:
+                q = q.filter(AdminAuditLog.created_at < until)
             q = q.order_by(AdminAuditLog.id.desc()).limit(limit)
             return [
                 {
