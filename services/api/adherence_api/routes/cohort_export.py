@@ -10,6 +10,7 @@ Filters:
   min_probability: minimum miss_probability to include (inclusive)
   max_probability: maximum miss_probability to include (inclusive)
   dose_class: comma-separated subset of dose classes
+  time_bucket: comma-separated subset of time-of-day buckets
   user_ids: comma-separated allowlist of user ids
 
 The request body matches /v1/cohort/risk so the two endpoints are
@@ -28,6 +29,8 @@ from fastapi.responses import StreamingResponse
 
 from adherence_api.deps import require_service
 from adherence_common.constants import DEFAULT_RISK_THRESHOLDS, DOSE_CLASSES, TIME_BUCKETS
+
+_VALID_BUCKETS = set(TIME_BUCKETS)
 from adherence_common.csv_safe import safe_row
 from adherence_common.errors import ModelNotFoundError
 from adherence_common.logging import get_logger
@@ -80,6 +83,7 @@ def _stream(
     min_prob: float,
     max_prob: float,
     class_filter: set[str] | None,
+    bucket_filter: set[str] | None,
     user_filter: set[str] | None,
     limit: int | None,
 ) -> Iterator[bytes]:
@@ -106,12 +110,15 @@ def _stream(
         dose_class = class_decode.get(int(row.dose_class_idx), "unknown")
         if class_filter is not None and dose_class not in class_filter:
             continue
+        time_bucket = bucket_decode.get(int(row.time_bucket_idx), "unknown")
+        if bucket_filter is not None and time_bucket not in bucket_filter:
+            continue
         record: dict[str, Any] = {
             "kind": "row",
             "user_id": uid,
             "dose_id": getattr(row, "dose_id", None),
             "dose_class": dose_class,
-            "time_bucket": bucket_decode.get(int(row.time_bucket_idx), "unknown"),
+            "time_bucket": time_bucket,
             "miss_probability": round(prob, 6),
             "risk_tier": tier,
         }
@@ -131,6 +138,7 @@ def _stream_csv(
     min_prob: float,
     max_prob: float,
     class_filter: set[str] | None,
+    bucket_filter: set[str] | None,
     user_filter: set[str] | None,
     limit: int | None,
 ) -> Iterator[bytes]:
@@ -161,13 +169,16 @@ def _stream_csv(
         dose_class = class_decode.get(int(row.dose_class_idx), "unknown")
         if class_filter is not None and dose_class not in class_filter:
             continue
+        time_bucket = bucket_decode.get(int(row.time_bucket_idx), "unknown")
+        if bucket_filter is not None and time_bucket not in bucket_filter:
+            continue
         writer.writerow(
             safe_row(
                 [
                     uid,
                     getattr(row, "dose_id", "") or "",
                     dose_class,
-                    bucket_decode.get(int(row.time_bucket_idx), "unknown"),
+                    time_bucket,
                     f"{round(prob, 6):.6f}",
                     tier,
                     model_name,
@@ -204,6 +215,15 @@ def cohort_risk_export(
     ),
     dose_class: str | None = Query(
         None, description="Comma-separated dose class allowlist"
+    ),
+    time_bucket: str | None = Query(
+        None,
+        description=(
+            "Comma-separated time-of-day bucket allowlist. Subset of"
+            " early_morning,morning,midday,afternoon,evening,night."
+            " Lets care teams pull, for example, only evening doses for"
+            " a pharmacist call list without post-filtering downstream."
+        ),
     ),
     user_ids: str | None = Query(
         None, description="Comma-separated user_id allowlist"
@@ -262,6 +282,12 @@ def cohort_risk_export(
             status.HTTP_400_BAD_REQUEST,
             detail=f"dose_class must be subset of {DOSE_CLASSES}",
         )
+    bucket_filter = _parse_csv(time_bucket)
+    if bucket_filter is not None and not bucket_filter.issubset(_VALID_BUCKETS):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=f"time_bucket must be subset of {sorted(_VALID_BUCKETS)}",
+        )
     user_filter = _parse_csv(user_ids)
 
     if max_probability < min_probability:
@@ -309,6 +335,7 @@ def cohort_risk_export(
                 min_prob=float(min_probability),
                 max_prob=float(max_probability),
                 class_filter=class_filter,
+                bucket_filter=bucket_filter,
                 user_filter=user_filter,
                 limit=limit,
             ),
@@ -329,6 +356,7 @@ def cohort_risk_export(
             min_prob=float(min_probability),
             max_prob=float(max_probability),
             class_filter=class_filter,
+            bucket_filter=bucket_filter,
             user_filter=user_filter,
             limit=limit,
         ),

@@ -301,3 +301,48 @@ def test_export_rejects_unknown_sort(tmp_path, monkeypatch):
         headers={"x-api-key": "svc"},
     )
     assert r.status_code == 400
+
+
+def test_export_filters_by_time_bucket(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    r = c.post(
+        "/v1/cohort/risk/export",
+        params={"limit": 200},
+        json={"synthetic": {"n_users": 40, "n_days": 5, "seed": 7}},
+        headers={"x-api-key": "svc"},
+    )
+    base_rows = [x for x in _parse_ndjson(r.content) if x["kind"] == "row"]
+    buckets = sorted({row["time_bucket"] for row in base_rows})
+    assert len(buckets) >= 2, "need >=2 buckets in baseline to exercise filter"
+    chosen = buckets[:2]
+
+    r = c.post(
+        "/v1/cohort/risk/export",
+        params={"time_bucket": ",".join(chosen)},
+        json={"synthetic": {"n_users": 40, "n_days": 5, "seed": 7}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200, r.text
+    rows = [x for x in _parse_ndjson(r.content) if x["kind"] == "row"]
+    assert rows
+    for row in rows:
+        assert row["time_bucket"] in set(chosen)
+
+
+def test_export_rejects_bad_time_bucket(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    r = c.post(
+        "/v1/cohort/risk/export",
+        params={"time_bucket": "lunchtime"},
+        json={"synthetic": {"n_users": 10, "n_days": 3, "seed": 1}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 400
