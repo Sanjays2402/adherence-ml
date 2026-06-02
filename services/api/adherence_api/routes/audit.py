@@ -13,7 +13,7 @@ from typing import Any
 
 from adherence_common.audit_chain import verify_chain
 from adherence_common.db import PredictionAudit, init_db, session
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -131,6 +131,34 @@ def shadow_stats(
     )
 
 
+def _parse_iso_dt(name: str, raw: str | None) -> datetime | None:
+    """Parse an ISO-8601 query param to a naive UTC datetime.
+
+    Accepts ``2026-01-31``, ``2026-01-31T12:34:56``, or the same with a
+    trailing ``Z`` / ``+00:00`` offset. Times with a non-UTC offset are
+    normalized to UTC and then stripped of tzinfo so they can be compared
+    against ``PredictionAudit.created_at`` (stored as naive UTC).
+    """
+    if raw is None or raw == "":
+        return None
+    s = raw.strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"invalid {name}: expected ISO-8601 datetime, got {raw!r}",
+        ) from e
+    if dt.tzinfo is not None:
+        # Normalize to UTC then drop tzinfo to match the naive UTC values
+        # stored in PredictionAudit.created_at.
+        offset = dt.utcoffset() or timedelta(0)
+        dt = (dt - offset).replace(tzinfo=None)
+    return dt
+
+
 def _row_to_model(r: PredictionAudit) -> AuditRow:
     return AuditRow(
         id=r.id, request_id=r.request_id, route=r.route,
@@ -153,6 +181,17 @@ def list_audit(
     route: str | None = None,
     model_name: str | None = None,
     only_errors: bool = False,
+    since: str | None = Query(
+        None,
+        description=(
+            "Inclusive lower bound on created_at, ISO-8601 (e.g."
+            " 2026-01-01T00:00:00Z). When omitted, no lower bound is applied."
+        ),
+    ),
+    until: str | None = Query(
+        None,
+        description="Exclusive upper bound on created_at, ISO-8601.",
+    ),
     tenant: str | None = Query(
         None,
         description=(
@@ -165,6 +204,10 @@ def list_audit(
     init_db()
     target = tenant or str(p.get("tenant") or "default")
     require_tenant_access(target, p, request)
+    since_dt = _parse_iso_dt("since", since)
+    until_dt = _parse_iso_dt("until", until)
+    if since_dt and until_dt and until_dt <= since_dt:
+        raise HTTPException(status_code=400, detail="until must be after since")
     with session() as s:
         q = select(PredictionAudit).order_by(PredictionAudit.id.desc()).limit(limit)
         if target != "*":
@@ -177,6 +220,10 @@ def list_audit(
             q = q.where(PredictionAudit.model_name == model_name)
         if only_errors:
             q = q.where(PredictionAudit.ok == 0)
+        if since_dt is not None:
+            q = q.where(PredictionAudit.created_at >= since_dt)
+        if until_dt is not None:
+            q = q.where(PredictionAudit.created_at < until_dt)
         rows = list(s.scalars(q))
     return AuditListResponse(n=len(rows), items=[_row_to_model(r) for r in rows])
 
@@ -376,6 +423,21 @@ def export_csv(
     route: str | None = None,
     model_name: str | None = None,
     only_errors: bool = False,
+    since: str | None = Query(
+        None,
+        description=(
+            "Inclusive lower bound on created_at, ISO-8601 (e.g."
+            " 2026-01-01T00:00:00Z). When set, overrides window_hours so an"
+            " auditor can pull an exact quarter or month."
+        ),
+    ),
+    until: str | None = Query(
+        None,
+        description=(
+            "Exclusive upper bound on created_at, ISO-8601. When omitted,"
+            " rows up to the current time are included."
+        ),
+    ),
     limit: int = Query(50_000, ge=1, le=500_000),
     tenant: str | None = Query(
         None,
@@ -388,18 +450,33 @@ def export_csv(
     Bounded by ``limit`` (default 50k) so a runaway export cannot exhaust
     server memory. Always ordered oldest -> newest so consumers can resume
     on ``id`` if needed.
+
+    Time window: by default the export covers the last ``window_hours`` hours.
+    Passing ``since`` (and optionally ``until``) switches to an absolute
+    range, which is what compliance reviewers typically want ("all rows in
+    Q1 2026", "all rows for the November SOC 2 window"). ``since`` /
+    ``until`` accept ISO-8601 with or without a ``Z`` suffix.
     """
     init_db()
-    cutoff = datetime.utcnow() - timedelta(hours=window_hours)
+    since_dt = _parse_iso_dt("since", since)
+    until_dt = _parse_iso_dt("until", until)
+    if since_dt and until_dt and until_dt <= since_dt:
+        raise HTTPException(status_code=400, detail="until must be after since")
+    if since_dt is not None:
+        lower = since_dt
+    else:
+        lower = datetime.utcnow() - timedelta(hours=window_hours)
     target = tenant or str(p.get("tenant") or "default")
     require_tenant_access(target, p, request)
     with session() as s:
         q = (
             select(PredictionAudit)
-            .where(PredictionAudit.created_at >= cutoff)
+            .where(PredictionAudit.created_at >= lower)
             .order_by(PredictionAudit.id.asc())
             .limit(limit)
         )
+        if until_dt is not None:
+            q = q.where(PredictionAudit.created_at < until_dt)
         if target != "*":
             q = q.where(PredictionAudit.tenant_id == target)
         if user_id:
@@ -411,7 +488,15 @@ def export_csv(
         if only_errors:
             q = q.where(PredictionAudit.ok == 0)
         rows = list(s.scalars(q))
-    filename = f"audit_{cutoff.strftime('%Y%m%dT%H%M%SZ')}.csv"
+    if since_dt is not None and until_dt is not None:
+        filename = (
+            f"audit_{since_dt.strftime('%Y%m%dT%H%M%SZ')}"
+            f"_to_{until_dt.strftime('%Y%m%dT%H%M%SZ')}.csv"
+        )
+    elif since_dt is not None:
+        filename = f"audit_{since_dt.strftime('%Y%m%dT%H%M%SZ')}_onwards.csv"
+    else:
+        filename = f"audit_{lower.strftime('%Y%m%dT%H%M%SZ')}.csv"
     return StreamingResponse(
         _stream_csv(rows),
         media_type="text/csv",
