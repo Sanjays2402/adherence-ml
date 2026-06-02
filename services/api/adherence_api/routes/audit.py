@@ -377,6 +377,56 @@ def _percentile(values: list[float], pct: float) -> float | None:
 def stats(
     request: Request,
     window_hours: int = Query(24, ge=1, le=24 * 30),
+    user_id: str | None = Query(
+        None,
+        description=(
+            "Restrict the rollup to a single end-user id. Lets support pull"
+            " 'error rate and p95 for this patient over the last 24h' without"
+            " first paging through /audit/list."
+        ),
+    ),
+    route: str | None = Query(
+        None,
+        description=(
+            "Restrict the rollup to a single API route (e.g. ``/v1/predict``"
+            " vs ``/v1/predict/batch``) when triaging latency or error spikes"
+            " on one endpoint."
+        ),
+    ),
+    model_name: str | None = Query(
+        None,
+        description=(
+            "Restrict the rollup to a single registered model name. Combine"
+            " with ``model_version`` to scope an on-call summary to a single"
+            " rollout (e.g. 'p95 and error rate for churn-v3.1.0 during the"
+            " canary window')."
+        ),
+    ),
+    model_version: str | None = Query(
+        None,
+        description=(
+            "Restrict the rollup to a single recorded model version. Use with"
+            " ``model_name`` to isolate one deployed version when reviewing a"
+            " suspected regression."
+        ),
+    ),
+    caller: str | None = Query(
+        None,
+        description=(
+            "Restrict the rollup to a single caller principal (e.g."
+            " ``k:abcd1234`` for an API key, ``u:alice@acme.example`` for a"
+            " user). Lets on-call answer 'what is this key's error rate?'"
+            " without exporting CSV."
+        ),
+    ),
+    only_errors: bool = Query(
+        False,
+        description=(
+            "When true, restrict the rollup to failed calls only. Useful for"
+            " 'of the errors in the last hour, which models and routes are"
+            " they hitting?' triage."
+        ),
+    ),
     tenant: str | None = Query(
         None,
         description="Tenant filter. Defaults to caller tenant; admin may pass '*'.",
@@ -391,6 +441,18 @@ def stats(
         q = select(PredictionAudit).where(PredictionAudit.created_at >= cutoff)
         if target != "*":
             q = q.where(PredictionAudit.tenant_id == target)
+        if user_id:
+            q = q.where(PredictionAudit.user_id == user_id)
+        if route:
+            q = q.where(PredictionAudit.route == route)
+        if model_name:
+            q = q.where(PredictionAudit.model_name == model_name)
+        if model_version:
+            q = q.where(PredictionAudit.model_version == model_version)
+        if caller:
+            q = q.where(PredictionAudit.caller == caller)
+        if only_errors:
+            q = q.where(PredictionAudit.ok == 0)
         rows: list[PredictionAudit] = list(s.scalars(q))
         # aggregate group counts in Python (portable across sqlite/postgres)
         by_model: dict[str, int] = {}

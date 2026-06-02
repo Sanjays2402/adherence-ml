@@ -382,3 +382,91 @@ def test_audit_filter_by_model_version(tmp_path, monkeypatch):
     )
     assert r.status_code == 200
     assert r.json()["items"] == []
+
+
+def test_audit_stats_filters(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    _train(tmp_path)
+    from adherence_api.app import create_app
+    client = TestClient(create_app())
+
+    base = {"dose_id": "d1", "scheduled_at": "2026-03-05T08:00:00Z",
+            "dose_class": "cardio", "dose_strength_mg": 10.0}
+    # mix calls from two users via two different api keys so we can
+    # narrow by user_id and by caller principal
+    for _ in range(3):
+        client.post("/v1/predict",
+                    json={"user_id": "u_alpha", "schedule": [base], "top_k_reasons": 1},
+                    headers={"x-api-key": "svc"})
+    for _ in range(2):
+        client.post("/v1/predict",
+                    json={"user_id": "u_beta", "schedule": [base], "top_k_reasons": 1},
+                    headers={"x-api-key": "adm"})
+    # one batch call so we have a second route to filter on
+    client.post(
+        "/v1/predict/batch",
+        json={"items": [{"user_id": "u_alpha", "schedule": [base], "top_k_reasons": 1}]},
+        headers={"x-api-key": "svc"},
+    )
+
+    # baseline: no filter sees everything
+    r = client.get("/v1/audit/stats?window_hours=1", headers={"x-api-key": "adm"})
+    assert r.status_code == 200
+    total = r.json()["n_calls"]
+    assert total >= 6
+
+    # filter by user_id
+    r = client.get("/v1/audit/stats?window_hours=1&user_id=u_alpha",
+                   headers={"x-api-key": "adm"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["n_calls"] == 4  # 3 predict + 1 batch
+    assert set(body["by_route"].keys()) <= {"/v1/predict", "/v1/predict/batch"}
+
+    # filter by route narrows to predict only
+    r = client.get(
+        "/v1/audit/stats?window_hours=1&user_id=u_alpha&route=/v1/predict",
+        headers={"x-api-key": "adm"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["n_calls"] == 3
+    assert body["by_route"] == {"/v1/predict": 3}
+
+    # filter by caller principal: discover the svc caller, then filter
+    r = client.get("/v1/audit/list?user_id=u_alpha&limit=10",
+                   headers={"x-api-key": "adm"})
+    svc_caller = next(it["caller"] for it in r.json()["items"]
+                      if it["caller_role"] == "service")
+    r = client.get(f"/v1/audit/stats?window_hours=1&caller={svc_caller}",
+                   headers={"x-api-key": "adm"})
+    assert r.status_code == 200
+    body = r.json()
+    # svc made 3 predicts for u_alpha plus 1 batch = 4 calls
+    assert body["n_calls"] == 4
+    assert body["error_rate"] == 0.0
+
+    # filter by model_name + model_version, scoped to the deployed default
+    r = client.get("/v1/audit/list?limit=1", headers={"x-api-key": "adm"})
+    sample = r.json()["items"][0]
+    mv = sample["model_version"]
+    r = client.get(
+        f"/v1/audit/stats?window_hours=1&model_name=default&model_version={mv}",
+        headers={"x-api-key": "adm"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["n_calls"] == total
+    assert body["by_model"] == {"default": total}
+
+    # unknown model_version returns an empty rollup, not a crash
+    r = client.get(
+        "/v1/audit/stats?window_hours=1&model_version=does-not-exist",
+        headers={"x-api-key": "adm"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["n_calls"] == 0
+    assert body["error_rate"] == 0.0
+    assert body["p50_latency_ms"] is None
+    assert body["by_model"] == {}
