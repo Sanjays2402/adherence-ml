@@ -100,3 +100,42 @@ def test_cohort_risk_synthetic(tmp_path, monkeypatch):
     for b in body["by_dose_class"]:
         assert 0.0 <= b["pct_high_risk"] <= 1.0
         assert b["n_doses"] >= 1
+
+
+def test_cohort_risk_min_doses_filter(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    _train_tiny()
+    from adherence_api.app import create_app
+    client = TestClient(create_app())
+
+    payload = {"synthetic": {"n_users": 80, "n_days": 10, "seed": 21}}
+    base = client.post(
+        "/v1/cohort/risk?top_users=50&min_doses=1",
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert base.status_code == 200, base.text
+    base_users = base.json()["top_users"]
+    assert base_users, "expected at least one user in the baseline ranking"
+
+    threshold = max(b["n_doses"] for b in base_users)
+    filtered = client.post(
+        f"/v1/cohort/risk?top_users=50&min_doses={threshold}",
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert filtered.status_code == 200, filtered.text
+    filtered_users = filtered.json()["top_users"]
+    # Every surviving user must meet the dose threshold.
+    assert all(b["n_doses"] >= threshold for b in filtered_users)
+    # Filter must actually drop somebody (some user in baseline had < threshold doses).
+    assert len(filtered_users) < len(base_users)
+
+    # Absurd threshold should empty the leaderboard rather than 500.
+    empty = client.post(
+        "/v1/cohort/risk?top_users=5&min_doses=10000",
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert empty.status_code == 200, empty.text
+    assert empty.json()["top_users"] == []

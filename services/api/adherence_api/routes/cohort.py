@@ -73,6 +73,16 @@ def cohort_risk(
     payload: dict[str, Any] = Body(default_factory=dict),
     model_name: str = Query("default"),
     top_users: int = Query(10, ge=1, le=100),
+    min_doses: int = Query(
+        1,
+        ge=1,
+        le=10_000,
+        description=(
+            "Minimum dose count required for a user to appear in top_users. "
+            "Filters out low-volume users whose mean risk is statistically noisy "
+            "(e.g. one missed dose at p=0.99 dominating the leaderboard)."
+        ),
+    ),
     _p=Depends(require_service),
 ) -> CohortRiskResponse:
     """Aggregate miss-risk over a cohort.
@@ -122,11 +132,14 @@ def cohort_risk(
     high = DEFAULT_RISK_THRESHOLDS["high"]
     med = DEFAULT_RISK_THRESHOLDS["medium"]
     for uid, g in df.groupby("user_id"):
+        n = int(len(g))
+        if n < min_doses:
+            continue
         p = g["miss_probability"].to_numpy(dtype=float)
         user_rows.append(
             CohortBucket(
                 key=str(uid),
-                n_doses=int(len(g)),
+                n_doses=n,
                 mean_miss_probability=float(np.mean(p)),
                 pct_high_risk=float((p >= high).mean()),
                 pct_medium_risk=float(((p >= med) & (p < high)).mean()),
