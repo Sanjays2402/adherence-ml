@@ -139,3 +139,27 @@ def test_cohort_risk_min_doses_filter(tmp_path, monkeypatch):
     )
     assert empty.status_code == 200, empty.text
     assert empty.json()["top_users"] == []
+
+
+def test_cohort_risk_probability_stats(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    _train_tiny()
+    from adherence_api.app import create_app
+    client = TestClient(create_app())
+
+    payload = {"synthetic": {"n_users": 80, "n_days": 10, "seed": 21}}
+    r = client.post(
+        "/v1/cohort/risk?top_users=5",
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    stats = body["probability_stats"]
+    assert set(stats.keys()) == {"min", "max", "mean", "p50", "p95"}
+    for v in stats.values():
+        assert 0.0 <= v <= 1.0
+    assert stats["min"] <= stats["p50"] <= stats["p95"] <= stats["max"]
+    assert stats["min"] <= stats["mean"] <= stats["max"]
+    # overall_mean_risk and probability_stats.mean are the same aggregation.
+    assert abs(stats["mean"] - body["overall_mean_risk"]) < 1e-9

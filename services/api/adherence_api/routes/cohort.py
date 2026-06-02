@@ -33,11 +33,26 @@ class CohortBucket(BaseModel):
     pct_medium_risk: float
 
 
+class ProbabilityStats(BaseModel):
+    min: float
+    max: float
+    mean: float
+    p50: float
+    p95: float
+
+
 class CohortRiskResponse(BaseModel):
     model_name: str
     model_version: str
     total_doses: int
     overall_mean_risk: float
+    probability_stats: ProbabilityStats = Field(
+        description=(
+            "Dose-level miss_probability distribution across the full cohort "
+            "(min/max/mean/p50/p95). Lets dashboards size risk bands and pick "
+            "thresholds without pulling every row via /export."
+        )
+    )
     by_dose_class: list[CohortBucket]
     by_time_bucket: list[CohortBucket]
     top_users: list[CohortBucket] = Field(
@@ -147,11 +162,21 @@ def cohort_risk(
         )
     user_rows.sort(key=lambda b: b.mean_miss_probability, reverse=True)
 
+    probs = df["miss_probability"].to_numpy(dtype=float)
+    stats = ProbabilityStats(
+        min=float(np.min(probs)),
+        max=float(np.max(probs)),
+        mean=float(np.mean(probs)),
+        p50=float(np.percentile(probs, 50)),
+        p95=float(np.percentile(probs, 95)),
+    )
+
     return CohortRiskResponse(
         model_name=model_name,
         model_version=art.version,
         total_doses=int(len(df)),
         overall_mean_risk=float(df["miss_probability"].mean()),
+        probability_stats=stats,
         by_dose_class=by_class,
         by_time_bucket=by_time,
         top_users=user_rows[:top_users],
