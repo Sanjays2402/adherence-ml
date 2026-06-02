@@ -457,6 +457,13 @@ def cohort_risk_export(
     elif sort_mode == "risk_asc":
         df = df.sort_values("miss_probability", ascending=True, kind="mergesort")
 
+    # Date stamp in filename so nightly snapshot downloads (e.g. via
+    # browser / curl -OJ / Airflow HttpOperator) don't overwrite each
+    # other in the destination folder. Uses the same scored_at the
+    # response headers advertise so the file on disk matches the
+    # X-Scored-At header byte-for-byte (date portion).
+    file_date = scored_at[:10]  # YYYY-MM-DD from ISO-8601
+
     if fmt == "csv":
         return StreamingResponse(
             _stream_csv(
@@ -476,7 +483,9 @@ def cohort_risk_export(
             media_type="text/csv; charset=utf-8",
             headers={
                 "Content-Disposition": (
-                    f'attachment; filename="cohort_risk_{model_name}_{art.version}.csv"'
+                    'attachment; filename="'
+                    f"cohort_risk_{model_name}_{art.version}_{file_date}.csv"
+                    '"'
                 ),
                 "X-Scored-At": scored_at,
                 "X-Model-Name": model_name,
@@ -504,7 +513,9 @@ def cohort_risk_export(
         media_type="application/x-ndjson",
         headers={
             "Content-Disposition": (
-                f'attachment; filename="cohort_risk_{model_name}_{art.version}.ndjson"'
+                'attachment; filename="'
+                f"cohort_risk_{model_name}_{art.version}_{file_date}.ndjson"
+                '"'
             ),
             "X-Scored-At": scored_at,
             "X-Model-Name": model_name,

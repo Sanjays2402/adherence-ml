@@ -751,3 +751,35 @@ def test_export_response_header_exposes_total_candidates(tmp_path, monkeypatch):
     )
     assert r.status_code == 200, r.text
     assert int(r.headers["x-total-candidates"]) == r.json()["total_candidates"]
+
+
+def test_export_filename_includes_scored_at_date(tmp_path, monkeypatch):
+    """Content-Disposition filename embeds the scored_at date (YYYY-MM-DD).
+
+    Nightly snapshot pipelines and ops users that download successive
+    exports through a browser or `curl -OJ` would otherwise overwrite
+    yesterday's file with today's, losing the historical snapshot. The
+    filename now carries the same date the X-Scored-At header advertises
+    so files on disk sort chronologically and never collide across runs.
+    """
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    payload = {"synthetic": {"n_users": 10, "n_days": 3, "seed": 4}}
+
+    for fmt, ext in (("ndjson", "ndjson"), ("csv", "csv")):
+        r = c.post(
+            "/v1/cohort/risk/export",
+            params={"format": fmt, "limit": 3},
+            json=payload,
+            headers={"x-api-key": "svc"},
+        )
+        assert r.status_code == 200, r.text
+        scored_at = r.headers["x-scored-at"]
+        date_part = scored_at[:10]
+        # YYYY-MM-DD shape
+        assert len(date_part) == 10 and date_part[4] == "-" and date_part[7] == "-"
+        cd = r.headers["content-disposition"]
+        assert f"_{date_part}.{ext}" in cd, cd
