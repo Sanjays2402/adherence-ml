@@ -1092,3 +1092,68 @@ def test_worst_per_user_count_only_equals_distinct_users(tmp_path, monkeypatch):
     assert payload["count"] == distinct_users
     # total_candidates is the pre-dedupe cohort size and stays >= count
     assert payload["total_candidates"] >= payload["count"]
+
+
+def test_export_footer_includes_probability_stats(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    payload = {"synthetic": {"n_users": 60, "n_days": 6, "seed": 21}}
+
+    r_stream = c.post(
+        "/v1/cohort/risk/export",
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r_stream.status_code == 200
+    rows = _parse_ndjson(r_stream.content)
+    body_rows = [x for x in rows if x["kind"] == "row"]
+    footer = rows[-1]
+    assert footer["kind"] == "footer"
+    assert "probability_stats" in footer
+    stats = footer["probability_stats"]
+    assert stats is not None
+    probs = sorted(x["miss_probability"] for x in body_rows)
+    assert stats["min"] == round(probs[0], 6)
+    assert stats["max"] == round(probs[-1], 6)
+    assert stats["mean"] == round(sum(probs) / len(probs), 6)
+    n = len(probs)
+    p50_idx = max(1, min(n, -(-50 * n // 100))) - 1
+    p95_idx = max(1, min(n, -(-95 * n // 100))) - 1
+    assert stats["p50"] == round(probs[p50_idx], 6)
+    assert stats["p95"] == round(probs[p95_idx], 6)
+    assert stats["min"] <= stats["p50"] <= stats["p95"] <= stats["max"]
+
+    # Parity with count_only: same request, same emitted rows, same stats.
+    r_count = c.post(
+        "/v1/cohort/risk/export",
+        params={"count_only": "true"},
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r_count.status_code == 200
+    assert r_count.json()["probability_stats"] == stats
+
+
+def test_export_footer_probability_stats_null_when_no_rows(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    payload = {"synthetic": {"n_users": 20, "n_days": 4, "seed": 7}}
+
+    r = c.post(
+        "/v1/cohort/risk/export",
+        params={"user_ids": "definitely-not-a-real-user"},
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200
+    rows = _parse_ndjson(r.content)
+    footer = rows[-1]
+    assert footer["kind"] == "footer"
+    assert footer["emitted"] == 0
+    assert footer["probability_stats"] is None

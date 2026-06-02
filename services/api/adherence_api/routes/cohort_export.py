@@ -117,6 +117,7 @@ def _stream(
     by_tier = {"low": 0, "medium": 0, "high": 0}
     by_dose_class: dict[str, int] = {}
     by_time_bucket: dict[str, int] = {}
+    probs: list[float] = []
     header = {
         "kind": "header",
         "model_name": model_name,
@@ -160,11 +161,32 @@ def _stream(
         by_tier[tier] += 1
         by_dose_class[dose_class] = by_dose_class.get(dose_class, 0) + 1
         by_time_bucket[time_bucket] = by_time_bucket.get(time_bucket, 0) + 1
+        probs.append(prob)
         if limit is not None and emitted >= limit:
             break
     # Include by_dose_class / by_time_bucket in the footer so streaming
     # consumers get the same one-pass breakdown count_only already returns,
     # without re-reading the NDJSON to tally per-class / per-bucket volume.
+    # probability_stats mirrors count_only so streaming consumers can write
+    # a manifest row (min/max/mean/p50/p95 of emitted miss_probability)
+    # straight from the footer without a second pass over the NDJSON.
+    probability_stats: dict[str, float] | None = None
+    if probs:
+        probs_sorted = sorted(probs)
+        n = len(probs_sorted)
+
+        def _pct(p: float) -> float:
+            # nearest-rank percentile, 1-indexed, matches count_only
+            k = max(1, min(n, int(-(-p * n // 1))))  # ceil(p*n)
+            return probs_sorted[k - 1]
+
+        probability_stats = {
+            "min": round(probs_sorted[0], 6),
+            "max": round(probs_sorted[-1], 6),
+            "mean": round(sum(probs_sorted) / n, 6),
+            "p50": round(_pct(0.50), 6),
+            "p95": round(_pct(0.95), 6),
+        }
     yield (
         json.dumps(
             {
@@ -173,6 +195,7 @@ def _stream(
                 "by_tier": by_tier,
                 "by_dose_class": dict(sorted(by_dose_class.items())),
                 "by_time_bucket": dict(sorted(by_time_bucket.items())),
+                "probability_stats": probability_stats,
                 "scored_at": scored_at,
             }
         )
