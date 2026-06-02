@@ -420,6 +420,7 @@ def cohort_risk_export(
         counts = {"low": 0, "medium": 0, "high": 0}
         by_dose_class: dict[str, int] = {}
         by_time_bucket: dict[str, int] = {}
+        probs: list[float] = []
         total = 0
         for row in df.itertuples(index=False):
             uid = str(row.user_id)
@@ -442,7 +443,31 @@ def cohort_risk_export(
             counts[tier] += 1
             by_dose_class[dose_class] = by_dose_class.get(dose_class, 0) + 1
             by_time_bucket[tb] = by_time_bucket.get(tb, 0) + 1
+            probs.append(prob)
             total += 1
+        # Distribution of miss_probability across post-filter rows so
+        # staffing planners can see, in one call, both `how many` and
+        # `how risky` without streaming the full export. p50/p95 use
+        # nearest-rank on the sorted array (no numpy dependency, no
+        # interpolation surprises). All values rounded to 6 decimals
+        # to match the row-level miss_probability precision.
+        probability_stats: dict[str, float] | None = None
+        if probs:
+            probs_sorted = sorted(probs)
+            n = len(probs_sorted)
+
+            def _pct(p: float) -> float:
+                # nearest-rank percentile, 1-indexed
+                k = max(1, min(n, int(-(-p * n // 1))))  # ceil(p*n)
+                return probs_sorted[k - 1]
+
+            probability_stats = {
+                "min": round(probs_sorted[0], 6),
+                "max": round(probs_sorted[-1], 6),
+                "mean": round(sum(probs_sorted) / n, 6),
+                "p50": round(_pct(0.50), 6),
+                "p95": round(_pct(0.95), 6),
+            }
         return JSONResponse(
             {
                 "model_name": model_name,
@@ -453,6 +478,7 @@ def cohort_risk_export(
                 "by_tier": counts,
                 "by_dose_class": dict(sorted(by_dose_class.items())),
                 "by_time_bucket": dict(sorted(by_time_bucket.items())),
+                "probability_stats": probability_stats,
             },
             headers={
                 "X-Scored-At": scored_at,

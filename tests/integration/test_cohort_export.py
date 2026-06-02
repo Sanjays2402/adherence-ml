@@ -625,6 +625,69 @@ def test_export_count_only_breakdown_respects_filters(tmp_path, monkeypatch):
     assert body["by_dose_class"][pick] == body["count"]
 
 
+def test_export_count_only_includes_probability_stats(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    payload = {"synthetic": {"n_users": 60, "n_days": 6, "seed": 21}}
+
+    r_stream = c.post(
+        "/v1/cohort/risk/export",
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r_stream.status_code == 200
+    probs = sorted(
+        x["miss_probability"]
+        for x in _parse_ndjson(r_stream.content)
+        if x["kind"] == "row"
+    )
+    assert probs, "expected at least one scored row in synthetic cohort"
+
+    r_count = c.post(
+        "/v1/cohort/risk/export",
+        params={"count_only": "true"},
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r_count.status_code == 200
+    stats = r_count.json()["probability_stats"]
+    assert stats is not None
+    assert stats["min"] == round(probs[0], 6)
+    assert stats["max"] == round(probs[-1], 6)
+    assert stats["mean"] == round(sum(probs) / len(probs), 6)
+    # nearest-rank percentiles, 1-indexed
+    n = len(probs)
+    p50_idx = max(1, min(n, -(-50 * n // 100))) - 1
+    p95_idx = max(1, min(n, -(-95 * n // 100))) - 1
+    assert stats["p50"] == round(probs[p50_idx], 6)
+    assert stats["p95"] == round(probs[p95_idx], 6)
+    assert stats["min"] <= stats["p50"] <= stats["p95"] <= stats["max"]
+
+
+def test_export_count_only_probability_stats_null_when_empty(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    payload = {"synthetic": {"n_users": 20, "n_days": 4, "seed": 7}}
+
+    # filter that matches zero rows: user_ids allowlist with a bogus id
+    r = c.post(
+        "/v1/cohort/risk/export",
+        params={"count_only": "true", "user_ids": "definitely-not-a-real-user"},
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["count"] == 0
+    assert body["probability_stats"] is None
+
+
 def test_export_count_only_ignores_limit_and_offset(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
     _train()
