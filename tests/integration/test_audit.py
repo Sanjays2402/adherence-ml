@@ -619,3 +619,38 @@ def test_audit_filter_by_high_risk_only(tmp_path, monkeypatch):
     assert len(lines) == 3  # header + 2 rows
     for line in lines[1:]:
         assert "req-hi" in line
+
+
+def test_audit_stats_by_caller_rollup(tmp_path, monkeypatch):
+    """`/v1/audit/stats` returns a `by_caller` rollup keyed by caller
+    principal so on-call can spot which API key is driving an error or
+    traffic spike without exporting CSV.
+    """
+    _setup_env(tmp_path, monkeypatch)
+    _train(tmp_path)
+    from adherence_api.app import create_app
+    client = TestClient(create_app())
+
+    base = {"dose_id": "d1", "scheduled_at": "2026-03-05T08:00:00Z",
+            "dose_class": "cardio", "dose_strength_mg": 10.0}
+    # svc makes 3 calls, adm makes 2; both should appear in by_caller
+    for _ in range(3):
+        client.post("/v1/predict",
+                    json={"user_id": "u_x", "schedule": [base], "top_k_reasons": 1},
+                    headers={"x-api-key": "svc"})
+    for _ in range(2):
+        client.post("/v1/predict",
+                    json={"user_id": "u_y", "schedule": [base], "top_k_reasons": 1},
+                    headers={"x-api-key": "adm"})
+
+    r = client.get("/v1/audit/stats?window_hours=1", headers={"x-api-key": "adm"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "by_caller" in body
+    by_caller = body["by_caller"]
+    # the two caller principals are present and counts match the calls made
+    assert sum(by_caller.values()) == body["n_calls"]
+    # at least two distinct callers surfaced
+    assert len(by_caller) >= 2
+    # max caller count is 3 (svc), reflecting the heavier traffic
+    assert max(by_caller.values()) == 3

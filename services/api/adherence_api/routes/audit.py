@@ -63,6 +63,11 @@ class AuditStatsResponse(BaseModel):
     high_risk_calls: int
     by_model: dict[str, int]
     by_route: dict[str, int]
+    # Top callers by call count in the window, capped so a high-cardinality
+    # caller column (e.g. one principal per end-user) can't blow up the
+    # response. Lets on-call answer "which API keys are driving this
+    # error/latency spike?" without exporting CSV.
+    by_caller: dict[str, int]
 
 
 class ShadowStatsRow(BaseModel):
@@ -497,6 +502,7 @@ def stats(
         # aggregate group counts in Python (portable across sqlite/postgres)
         by_model: dict[str, int] = {}
         by_route: dict[str, int] = {}
+        by_caller_all: dict[str, int] = {}
         latencies: list[float] = []
         miss_probs: list[float] = []
         n_errors = 0
@@ -504,6 +510,8 @@ def stats(
         for r in rows:
             by_model[r.model_name] = by_model.get(r.model_name, 0) + 1
             by_route[r.route] = by_route.get(r.route, 0) + 1
+            if r.caller:
+                by_caller_all[r.caller] = by_caller_all.get(r.caller, 0) + 1
             if r.latency_ms is not None:
                 latencies.append(r.latency_ms)
             if r.mean_miss_prob is not None:
@@ -515,6 +523,11 @@ def stats(
         # touch func/select to keep imports meaningful for future sql-side rollups
         _ = func.count
     n = len(rows)
+    # Cap by_caller to the top 25 callers so a noisy tenant with thousands
+    # of distinct principals can't bloat the response. 25 is large enough
+    # to surface the long tail of suspect keys on a single screen.
+    top_callers = sorted(by_caller_all.items(), key=lambda kv: kv[1], reverse=True)[:25]
+    by_caller = dict(top_callers)
     return AuditStatsResponse(
         window_hours=effective_window_hours,
         n_calls=n,
@@ -526,6 +539,7 @@ def stats(
         high_risk_calls=high_risk_calls,
         by_model=by_model,
         by_route=by_route,
+        by_caller=by_caller,
     )
 
 
