@@ -109,6 +109,8 @@ def _stream(
     user_denylist: set[str] | None,
     offset: int,
     limit: int | None,
+    n_users_total: int = 0,
+    n_users_eligible: int = 0,
 ) -> Iterator[bytes]:
     class_decode = {i: c for i, c in enumerate(DOSE_CLASSES)}
     bucket_decode = {i: b for i, b in enumerate(TIME_BUCKETS)}
@@ -219,6 +221,13 @@ def _stream(
                 },
                 "probability_stats": probability_stats,
                 "n_users": len(emitted_user_ids),
+                # Distinct user pool sizes from the underlying cohort,
+                # mirroring /cohort/risk and count_only so streaming
+                # consumers can write 'top N of M users' (and size how
+                # many users the min_doses filter dropped) straight from
+                # the footer without a second pass over the NDJSON.
+                "n_users_total": n_users_total,
+                "n_users_eligible": n_users_eligible,
                 "scored_at": scored_at,
             }
         )
@@ -501,6 +510,11 @@ def cohort_risk_export(
 
     scored_at = _utc_now_iso()
     total_candidates = int(len(df))
+    # Captured before the min_doses filter so consumers can show
+    # 'top N of M users' and size how many users the min_doses filter
+    # dropped (n_users_total - n_users_eligible) without paging the full
+    # export. Symmetric with /cohort/risk's n_users_total / n_users_eligible.
+    n_users_total = int(df["user_id"].nunique())
 
     if min_doses > 1:
         # Count scoreable doses per user from the underlying cohort, before
@@ -629,6 +643,13 @@ def cohort_risk_export(
                 },
                 "probability_stats": probability_stats,
                 "n_users": len(counted_user_ids),
+                # Distinct user pool sizes from the underlying cohort,
+                # mirroring /cohort/risk so dashboards can show
+                # 'top N of M users' and size how many users the
+                # min_doses filter dropped (n_users_total -
+                # n_users_eligible) without paging the full export.
+                "n_users_total": n_users_total,
+                "n_users_eligible": int(df["user_id"].nunique()),
                 # Patient-level tier counts: how many distinct users land in
                 # each band, using their worst post-filter dose. Symmetric
                 # with /cohort/risk's n_users_with_high_risk /
@@ -716,6 +737,8 @@ def cohort_risk_export(
             user_denylist=user_denylist,
             offset=int(offset),
             limit=limit,
+            n_users_total=n_users_total,
+            n_users_eligible=int(df["user_id"].nunique()),
         ),
         media_type="application/x-ndjson",
         headers={
