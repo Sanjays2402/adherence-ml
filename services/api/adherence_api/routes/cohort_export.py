@@ -13,6 +13,7 @@ Filters:
   time_bucket: comma-separated subset of time-of-day buckets
   user_ids: comma-separated allowlist of user ids
   exclude_user_ids: comma-separated denylist of user ids to skip
+  offset: number of post-filter rows to skip before emitting (paging)
 
 The request body matches /v1/cohort/risk so the two endpoints are
 interchangeable from a payload perspective.
@@ -87,11 +88,13 @@ def _stream(
     bucket_filter: set[str] | None,
     user_filter: set[str] | None,
     user_denylist: set[str] | None,
+    offset: int,
     limit: int | None,
 ) -> Iterator[bytes]:
     class_decode = {i: c for i, c in enumerate(DOSE_CLASSES)}
     bucket_decode = {i: b for i, b in enumerate(TIME_BUCKETS)}
     emitted = 0
+    skipped = 0
     header = {
         "kind": "header",
         "model_name": model_name,
@@ -116,6 +119,9 @@ def _stream(
             continue
         time_bucket = bucket_decode.get(int(row.time_bucket_idx), "unknown")
         if bucket_filter is not None and time_bucket not in bucket_filter:
+            continue
+        if skipped < offset:
+            skipped += 1
             continue
         record: dict[str, Any] = {
             "kind": "row",
@@ -145,6 +151,7 @@ def _stream_csv(
     bucket_filter: set[str] | None,
     user_filter: set[str] | None,
     user_denylist: set[str] | None,
+    offset: int,
     limit: int | None,
 ) -> Iterator[bytes]:
     """Stream cohort risk scores as CSV with formula-injection-safe cells.
@@ -161,6 +168,7 @@ def _stream_csv(
     buf.seek(0)
     buf.truncate(0)
     emitted = 0
+    skipped = 0
     for row in df.itertuples(index=False):
         uid = str(row.user_id)
         if user_filter is not None and uid not in user_filter:
@@ -178,6 +186,9 @@ def _stream_csv(
             continue
         time_bucket = bucket_decode.get(int(row.time_bucket_idx), "unknown")
         if bucket_filter is not None and time_bucket not in bucket_filter:
+            continue
+        if skipped < offset:
+            skipped += 1
             continue
         writer.writerow(
             safe_row(
@@ -248,6 +259,17 @@ def cohort_risk_export(
     limit: int | None = Query(
         None, ge=1, le=1_000_000,
         description="Max rows to emit after filtering (None = unlimited).",
+    ),
+    offset: int = Query(
+        0, ge=0, le=10_000_000,
+        description=(
+            "Number of post-filter, post-sort rows to skip before emitting."
+            " Combined with `limit`, gives stable chunked pagination of large"
+            " nightly cohorts (for example offset=0/limit=10000, then"
+            " offset=10000/limit=10000, ...) without holding the full export"
+            " in memory. Applied after `sort` so paging through `risk_desc`"
+            " yields next-N highest-risk doses."
+        ),
     ),
     format: str = Query(
         "ndjson",
@@ -356,6 +378,7 @@ def cohort_risk_export(
                 bucket_filter=bucket_filter,
                 user_filter=user_filter,
                 user_denylist=user_denylist,
+                offset=int(offset),
                 limit=limit,
             ),
             media_type="text/csv; charset=utf-8",
@@ -378,6 +401,7 @@ def cohort_risk_export(
             bucket_filter=bucket_filter,
             user_filter=user_filter,
             user_denylist=user_denylist,
+            offset=int(offset),
             limit=limit,
         ),
         media_type="application/x-ndjson",

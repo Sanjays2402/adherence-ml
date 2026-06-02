@@ -411,3 +411,109 @@ def test_export_denylist_wins_over_allowlist(tmp_path, monkeypatch):
     seen = {row["user_id"] for row in rows}
     assert chosen[0] not in seen
     assert seen.issubset(set(chosen[1:]))
+
+
+def test_export_offset_pages_through_sorted_cohort(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    payload = {"synthetic": {"n_users": 50, "n_days": 7, "seed": 17}}
+
+    # Baseline: top-30 highest-risk doses.
+    r_full = c.post(
+        "/v1/cohort/risk/export",
+        params={"sort": "risk_desc", "limit": 30},
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r_full.status_code == 200
+    full = [x for x in _parse_ndjson(r_full.content) if x["kind"] == "row"]
+    assert len(full) == 30
+
+    # Page 1: offset=0, limit=10. Page 2: offset=10, limit=10. Page 3: offset=20, limit=10.
+    pages = []
+    for off in (0, 10, 20):
+        r = c.post(
+            "/v1/cohort/risk/export",
+            params={"sort": "risk_desc", "offset": off, "limit": 10},
+            json=payload,
+            headers={"x-api-key": "svc"},
+        )
+        assert r.status_code == 200
+        page_rows = [x for x in _parse_ndjson(r.content) if x["kind"] == "row"]
+        assert len(page_rows) == 10
+        pages.extend(page_rows)
+
+    # Paged concatenation matches the single sorted top-30 export.
+    assert [(p["user_id"], p["dose_id"], p["miss_probability"]) for p in pages] == \
+        [(f["user_id"], f["dose_id"], f["miss_probability"]) for f in full]
+
+
+def test_export_offset_past_end_emits_no_rows(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    r = c.post(
+        "/v1/cohort/risk/export",
+        params={"offset": 10_000_000},
+        json={"synthetic": {"n_users": 20, "n_days": 4, "seed": 2}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200
+    rows = _parse_ndjson(r.content)
+    body_rows = [x for x in rows if x["kind"] == "row"]
+    assert body_rows == []
+    assert rows[-1]["kind"] == "footer"
+    assert rows[-1]["emitted"] == 0
+
+
+def test_export_offset_rejects_negative(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    r = c.post(
+        "/v1/cohort/risk/export",
+        params={"offset": -1},
+        json={"synthetic": {"n_users": 10, "n_days": 3, "seed": 5}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 422
+
+
+def test_export_csv_offset_pages_after_sort(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    payload = {"synthetic": {"n_users": 40, "n_days": 6, "seed": 21}}
+
+    r_full = c.post(
+        "/v1/cohort/risk/export",
+        params={"format": "csv", "sort": "risk_desc", "limit": 20},
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r_full.status_code == 200
+    full_lines = r_full.content.decode("utf-8").splitlines()
+    full_header, full_rows = full_lines[0], full_lines[1:]
+    assert len(full_rows) == 20
+
+    r_page = c.post(
+        "/v1/cohort/risk/export",
+        params={"format": "csv", "sort": "risk_desc", "offset": 5, "limit": 10},
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r_page.status_code == 200
+    page_lines = r_page.content.decode("utf-8").splitlines()
+    assert page_lines[0] == full_header
+    page_rows = page_lines[1:]
+    assert len(page_rows) == 10
+    assert page_rows == full_rows[5:15]
