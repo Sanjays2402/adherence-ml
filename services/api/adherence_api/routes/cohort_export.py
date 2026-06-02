@@ -16,6 +16,8 @@ interchangeable from a payload perspective.
 """
 from __future__ import annotations
 
+import csv
+import io
 import json
 from typing import Any, Iterator
 
@@ -25,6 +27,7 @@ from fastapi.responses import StreamingResponse
 
 from adherence_api.deps import require_service
 from adherence_common.constants import DEFAULT_RISK_THRESHOLDS, DOSE_CLASSES, TIME_BUCKETS
+from adherence_common.csv_safe import safe_row
 from adherence_common.errors import ModelNotFoundError
 from adherence_common.logging import get_logger
 from adherence_data import SyntheticConfig, generate_events
@@ -36,6 +39,17 @@ log = get_logger(__name__)
 
 
 _VALID_TIERS = {"low", "medium", "high"}
+_VALID_FORMATS = {"ndjson", "csv"}
+_CSV_COLUMNS = (
+    "user_id",
+    "dose_id",
+    "dose_class",
+    "time_bucket",
+    "miss_probability",
+    "risk_tier",
+    "model_name",
+    "model_version",
+)
 
 
 def _tier(p: float) -> str:
@@ -105,6 +119,68 @@ def _stream(
     yield (json.dumps({"kind": "footer", "emitted": emitted}) + "\n").encode("utf-8")
 
 
+def _stream_csv(
+    df: pd.DataFrame,
+    *,
+    model_name: str,
+    model_version: str,
+    tier_filter: set[str] | None,
+    min_prob: float,
+    class_filter: set[str] | None,
+    user_filter: set[str] | None,
+    limit: int | None,
+) -> Iterator[bytes]:
+    """Stream cohort risk scores as CSV with formula-injection-safe cells.
+
+    Mirrors :func:`_stream` filtering exactly so the two formats produce
+    the same row set for the same request.
+    """
+    class_decode = {i: c for i, c in enumerate(DOSE_CLASSES)}
+    bucket_decode = {i: b for i, b in enumerate(TIME_BUCKETS)}
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(_CSV_COLUMNS)
+    yield buf.getvalue().encode("utf-8")
+    buf.seek(0)
+    buf.truncate(0)
+    emitted = 0
+    for row in df.itertuples(index=False):
+        uid = str(row.user_id)
+        if user_filter is not None and uid not in user_filter:
+            continue
+        prob = float(row.miss_probability)
+        if prob < min_prob:
+            continue
+        tier = _tier(prob)
+        if tier_filter is not None and tier not in tier_filter:
+            continue
+        dose_class = class_decode.get(int(row.dose_class_idx), "unknown")
+        if class_filter is not None and dose_class not in class_filter:
+            continue
+        writer.writerow(
+            safe_row(
+                [
+                    uid,
+                    getattr(row, "dose_id", "") or "",
+                    dose_class,
+                    bucket_decode.get(int(row.time_bucket_idx), "unknown"),
+                    f"{round(prob, 6):.6f}",
+                    tier,
+                    model_name,
+                    model_version,
+                ]
+            )
+        )
+        chunk = buf.getvalue()
+        if chunk:
+            yield chunk.encode("utf-8")
+            buf.seek(0)
+            buf.truncate(0)
+        emitted += 1
+        if limit is not None and emitted >= limit:
+            break
+
+
 @router.post("/risk/export")
 def cohort_risk_export(
     payload: dict[str, Any] = Body(default_factory=dict),
@@ -123,8 +199,24 @@ def cohort_risk_export(
         None, ge=1, le=1_000_000,
         description="Max rows to emit after filtering (None = unlimited).",
     ),
+    format: str = Query(
+        "ndjson",
+        description=(
+            "Output format. `ndjson` (default) streams one JSON object per"
+            " line with header/row/footer envelopes. `csv` streams a flat"
+            " CSV with a header row, suitable for direct Excel / BI ingest."
+            " CSV cells are neutralized against spreadsheet formula"
+            " injection (OWASP CWE-1236)."
+        ),
+    ),
     _p=Depends(require_service),
 ) -> StreamingResponse:
+    fmt = format.lower().strip()
+    if fmt not in _VALID_FORMATS:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=f"format must be one of {sorted(_VALID_FORMATS)}",
+        )
     try:
         art, model = ModelRegistry().latest(model_name)
     except ModelNotFoundError as exc:
@@ -167,6 +259,26 @@ def cohort_risk_export(
     X = df[model.feature_columns]
     df = df.copy()
     df["miss_probability"] = model.predict_proba(X)
+
+    if fmt == "csv":
+        return StreamingResponse(
+            _stream_csv(
+                df,
+                model_name=model_name,
+                model_version=art.version,
+                tier_filter=tier_filter,
+                min_prob=float(min_probability),
+                class_filter=class_filter,
+                user_filter=user_filter,
+                limit=limit,
+            ),
+            media_type="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="cohort_risk_{model_name}_{art.version}.csv"'
+                ),
+            },
+        )
 
     return StreamingResponse(
         _stream(

@@ -142,6 +142,58 @@ def test_export_rejects_bad_tier_and_class(tmp_path, monkeypatch):
     assert r.status_code == 400
 
 
+def test_export_csv_format_streams_with_header_and_safe_cells(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    r = c.post(
+        "/v1/cohort/risk/export",
+        params={"format": "csv", "limit": 25},
+        json={"synthetic": {"n_users": 30, "n_days": 5, "seed": 2}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("text/csv")
+    assert r.headers["content-disposition"].endswith('.csv"')
+
+    import csv as _csv
+    import io as _io
+    rows = list(_csv.reader(_io.StringIO(r.text)))
+    assert rows, "expected at least a header row"
+    header = rows[0]
+    assert header == [
+        "user_id", "dose_id", "dose_class", "time_bucket",
+        "miss_probability", "risk_tier", "model_name", "model_version",
+    ]
+    body = rows[1:]
+    assert body, "expected at least one data row"
+    assert len(body) <= 25
+    for row in body:
+        assert len(row) == len(header)
+        prob = float(row[4])
+        assert 0.0 <= prob <= 1.0
+        assert row[5] in {"low", "medium", "high"}
+        # CSV formula-injection defense: no cell may start with an active prefix.
+        for cell in row:
+            assert not cell or cell[0] not in {"=", "+", "-", "@", "\t", "\r"}
+
+
+def test_export_rejects_unknown_format(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+    r = c.post(
+        "/v1/cohort/risk/export",
+        params={"format": "parquet"},
+        json={"synthetic": {"n_users": 10, "n_days": 3, "seed": 1}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 400
+
+
 def test_export_requires_service_role(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
     _train()
