@@ -120,6 +120,7 @@ def _stream(
     by_tier_dose_class: dict[str, dict[str, int]] = {}
     by_tier_time_bucket: dict[str, dict[str, int]] = {}
     probs: list[float] = []
+    emitted_user_ids: set[str] = set()
     header = {
         "kind": "header",
         "model_name": model_name,
@@ -172,6 +173,7 @@ def _stream(
         )
         tb_tiers[tier] += 1
         probs.append(prob)
+        emitted_user_ids.add(uid)
         if limit is not None and emitted >= limit:
             break
     # Include by_dose_class / by_time_bucket in the footer so streaming
@@ -216,6 +218,7 @@ def _stream(
                     k: by_tier_time_bucket[k] for k in sorted(by_tier_time_bucket)
                 },
                 "probability_stats": probability_stats,
+                "n_users": len(emitted_user_ids),
                 "scored_at": scored_at,
             }
         )
@@ -509,6 +512,7 @@ def cohort_risk_export(
         by_tier_dose_class: dict[str, dict[str, int]] = {}
         by_tier_time_bucket: dict[str, dict[str, int]] = {}
         probs: list[float] = []
+        counted_user_ids: set[str] = set()
         total = 0
         for row in df.itertuples(index=False):
             uid = str(row.user_id)
@@ -540,6 +544,7 @@ def cohort_risk_export(
             )
             tb_tiers[tier] += 1
             probs.append(prob)
+            counted_user_ids.add(uid)
             total += 1
         # Distribution of miss_probability across post-filter rows so
         # staffing planners can see, in one call, both `how many` and
@@ -581,6 +586,7 @@ def cohort_risk_export(
                     k: by_tier_time_bucket[k] for k in sorted(by_tier_time_bucket)
                 },
                 "probability_stats": probability_stats,
+                "n_users": len(counted_user_ids),
             },
             headers={
                 "X-Scored-At": scored_at,

@@ -1213,3 +1213,67 @@ def test_export_footer_includes_tier_cross_tabs(tmp_path, monkeypatch):
         from_tb = sum(t[tier] for t in footer["by_tier_time_bucket"].values())
         assert from_dc == footer["by_tier"][tier]
         assert from_tb == footer["by_tier"][tier]
+
+
+def test_export_count_only_and_footer_include_n_users(tmp_path, monkeypatch):
+    """count_only response and NDJSON footer should expose the distinct
+    post-filter user count so dashboards can size the outreach queue
+    (`this band spans N patients`) without paging the full export."""
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    payload = {"synthetic": {"n_users": 50, "n_days": 6, "seed": 23}}
+
+    r_stream = c.post(
+        "/v1/cohort/risk/export",
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r_stream.status_code == 200
+    parsed = _parse_ndjson(r_stream.content)
+    rows = [x for x in parsed if x["kind"] == "row"]
+    footer = parsed[-1]
+    expected_users = len({r["user_id"] for r in rows})
+    assert "n_users" in footer
+    assert footer["n_users"] == expected_users
+
+    r_count = c.post(
+        "/v1/cohort/risk/export",
+        params={"count_only": "true"},
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r_count.status_code == 200
+    body = r_count.json()
+    assert body.get("n_users") == expected_users
+
+
+def test_export_count_only_n_users_respects_user_filter(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    payload = {"synthetic": {"n_users": 40, "n_days": 5, "seed": 11}}
+
+    r = c.post(
+        "/v1/cohort/risk/export",
+        params={"limit": 500},
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    base_rows = [x for x in _parse_ndjson(r.content) if x["kind"] == "row"]
+    chosen = sorted({row["user_id"] for row in base_rows})[:3]
+    assert len(chosen) == 3
+
+    r_count = c.post(
+        "/v1/cohort/risk/export",
+        params={"count_only": "true", "user_ids": ",".join(chosen)},
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r_count.status_code == 200
+    body = r_count.json()
+    assert body["n_users"] == 3
