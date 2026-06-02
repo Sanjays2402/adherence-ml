@@ -333,9 +333,14 @@ _CSV_COLUMNS = (
 
 
 def _csv_escape(v: Any) -> str:
-    if v is None:
-        return ""
-    s = str(v)
+    # Neutralize spreadsheet formula injection (OWASP CSV Injection /
+    # CWE-1236) before applying RFC 4180 quoting. A user-supplied note or
+    # caller id starting with '=', '+', '-', '@', tab, or CR would
+    # otherwise be evaluated as a formula when the auditor opens the
+    # export in Excel / Google Sheets.
+    from adherence_common.csv_safe import safe_cell
+
+    s = safe_cell(v)
     if any(ch in s for ch in (",", '"', "\n", "\r")):
         return '"' + s.replace('"', '""') + '"'
     return s

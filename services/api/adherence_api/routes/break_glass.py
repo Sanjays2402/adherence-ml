@@ -134,7 +134,14 @@ def break_glass_stats(
 
 
 def _csv_escape(v: object) -> str:
-    s = "" if v is None else str(v)
+    # Neutralize spreadsheet formula injection (OWASP CSV Injection /
+    # CWE-1236) before applying RFC 4180 quoting. Break-glass evidence
+    # exports include caller id, justification, and route, all of which
+    # can begin with '=' or '@' and would otherwise be evaluated as a
+    # formula when the auditor opens the file in Excel / Google Sheets.
+    from adherence_common.csv_safe import safe_cell
+
+    s = safe_cell(v)
     if any(c in s for c in (",", '"', "\n", "\r")):
         return '"' + s.replace('"', '""') + '"'
     return s
