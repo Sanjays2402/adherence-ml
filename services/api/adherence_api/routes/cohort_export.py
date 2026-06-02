@@ -7,7 +7,8 @@ the full cohort in memory.
 
 Filters:
   risk_tier: comma-separated subset of low,medium,high
-  min_probability: minimum miss_probability to include
+  min_probability: minimum miss_probability to include (inclusive)
+  max_probability: maximum miss_probability to include (inclusive)
   dose_class: comma-separated subset of dose classes
   user_ids: comma-separated allowlist of user ids
 
@@ -77,6 +78,7 @@ def _stream(
     model_version: str,
     tier_filter: set[str] | None,
     min_prob: float,
+    max_prob: float,
     class_filter: set[str] | None,
     user_filter: set[str] | None,
     limit: int | None,
@@ -96,7 +98,7 @@ def _stream(
         if user_filter is not None and uid not in user_filter:
             continue
         prob = float(row.miss_probability)
-        if prob < min_prob:
+        if prob < min_prob or prob > max_prob:
             continue
         tier = _tier(prob)
         if tier_filter is not None and tier not in tier_filter:
@@ -127,6 +129,7 @@ def _stream_csv(
     model_version: str,
     tier_filter: set[str] | None,
     min_prob: float,
+    max_prob: float,
     class_filter: set[str] | None,
     user_filter: set[str] | None,
     limit: int | None,
@@ -150,7 +153,7 @@ def _stream_csv(
         if user_filter is not None and uid not in user_filter:
             continue
         prob = float(row.miss_probability)
-        if prob < min_prob:
+        if prob < min_prob or prob > max_prob:
             continue
         tier = _tier(prob)
         if tier_filter is not None and tier not in tier_filter:
@@ -190,6 +193,15 @@ def cohort_risk_export(
         None, description="Comma-separated tier filter: low,medium,high"
     ),
     min_probability: float = Query(0.0, ge=0.0, le=1.0),
+    max_probability: float = Query(
+        1.0, ge=0.0, le=1.0,
+        description=(
+            "Inclusive upper bound on miss_probability. Combined with"
+            " `min_probability`, lets callers carve out a single risk band"
+            " (for example 0.4..0.7 to export only borderline-medium doses"
+            " for nurse review) without post-filtering downstream."
+        ),
+    ),
     dose_class: str | None = Query(
         None, description="Comma-separated dose class allowlist"
     ),
@@ -252,6 +264,12 @@ def cohort_risk_export(
         )
     user_filter = _parse_csv(user_ids)
 
+    if max_probability < min_probability:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="max_probability must be >= min_probability",
+        )
+
     events_payload = payload.get("events")
     if events_payload:
         events = pd.DataFrame(events_payload)
@@ -289,6 +307,7 @@ def cohort_risk_export(
                 model_version=art.version,
                 tier_filter=tier_filter,
                 min_prob=float(min_probability),
+                max_prob=float(max_probability),
                 class_filter=class_filter,
                 user_filter=user_filter,
                 limit=limit,
@@ -308,6 +327,7 @@ def cohort_risk_export(
             model_version=art.version,
             tier_filter=tier_filter,
             min_prob=float(min_probability),
+            max_prob=float(max_probability),
             class_filter=class_filter,
             user_filter=user_filter,
             limit=limit,

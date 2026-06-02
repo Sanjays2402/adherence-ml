@@ -256,6 +256,39 @@ def test_export_sort_risk_asc_orders_ascending(tmp_path, monkeypatch):
     assert probs == sorted(probs)
 
 
+def test_export_filters_by_max_probability_band(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    r = c.post(
+        "/v1/cohort/risk/export",
+        params={"min_probability": 0.2, "max_probability": 0.6},
+        json={"synthetic": {"n_users": 60, "n_days": 7, "seed": 9}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200
+    rows = [x for x in _parse_ndjson(r.content) if x["kind"] == "row"]
+    assert rows, "expected at least one row in the 0.2..0.6 band"
+    for row in rows:
+        assert 0.2 <= row["miss_probability"] <= 0.6
+
+
+def test_export_rejects_inverted_probability_band(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+    r = c.post(
+        "/v1/cohort/risk/export",
+        params={"min_probability": 0.8, "max_probability": 0.2},
+        json={"synthetic": {"n_users": 10, "n_days": 3, "seed": 1}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 400
+
+
 def test_export_rejects_unknown_sort(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
     _train()
