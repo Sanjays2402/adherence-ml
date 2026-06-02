@@ -700,3 +700,54 @@ def test_export_response_headers_expose_snapshot_identity(tmp_path, monkeypatch)
     )
     _check(r)
     assert r.json()["scored_at"] == r.headers["x-scored-at"]
+
+
+def test_export_response_header_exposes_total_candidates(tmp_path, monkeypatch):
+    """X-Total-Candidates on every export shape.
+
+    Snapshot pipelines compute filter selectivity (emitted / total) per
+    run for drift monitoring. NDJSON exposes total_candidates in the
+    header envelope and count_only in the body, but CSV consumers
+    historically had to count rows themselves. Surfacing it as a
+    response header lets every consumer get the cohort denominator
+    identically without parsing the body.
+    """
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    payload = {"synthetic": {"n_users": 20, "n_days": 4, "seed": 7}}
+
+    # NDJSON: header value matches envelope total_candidates
+    r = c.post(
+        "/v1/cohort/risk/export",
+        params={"limit": 5},
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200, r.text
+    total = int(r.headers["x-total-candidates"])
+    assert total > 0
+    env = _parse_ndjson(r.content)[0]
+    assert env["total_candidates"] == total
+
+    # CSV: header value present and positive, no body field to compare to
+    r = c.post(
+        "/v1/cohort/risk/export",
+        params={"format": "csv", "limit": 5},
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200, r.text
+    assert int(r.headers["x-total-candidates"]) == total
+
+    # count_only: header value matches body total_candidates
+    r = c.post(
+        "/v1/cohort/risk/export",
+        params={"count_only": "true"},
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200, r.text
+    assert int(r.headers["x-total-candidates"]) == r.json()["total_candidates"]

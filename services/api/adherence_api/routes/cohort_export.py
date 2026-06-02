@@ -18,10 +18,11 @@ Filters:
 The request body matches /v1/cohort/risk so the two endpoints are
 interchangeable from a payload perspective.
 
-Response headers ``X-Scored-At``, ``X-Model-Name`` and ``X-Model-Version``
-are set on every export shape (NDJSON, CSV, count_only) so reverse
-proxies, audit loggers and snapshot pipelines can partition by run
-without parsing the response body.
+Response headers ``X-Scored-At``, ``X-Model-Name``, ``X-Model-Version``
+and ``X-Total-Candidates`` are set on every export shape (NDJSON, CSV,
+count_only) so reverse proxies, audit loggers and snapshot pipelines
+can partition by run and compute filter selectivity
+(emitted / total_candidates) without parsing the response body.
 """
 from __future__ import annotations
 
@@ -405,6 +406,7 @@ def cohort_risk_export(
     df["miss_probability"] = model.predict_proba(X)
 
     scored_at = _utc_now_iso()
+    total_candidates = int(len(df))
 
     if count_only:
         class_decode = {i: c for i, c in enumerate(DOSE_CLASSES)}
@@ -438,7 +440,7 @@ def cohort_risk_export(
                 "model_name": model_name,
                 "model_version": art.version,
                 "scored_at": scored_at,
-                "total_candidates": int(len(df)),
+                "total_candidates": total_candidates,
                 "count": total,
                 "by_tier": counts,
             },
@@ -446,6 +448,7 @@ def cohort_risk_export(
                 "X-Scored-At": scored_at,
                 "X-Model-Name": model_name,
                 "X-Model-Version": art.version,
+                "X-Total-Candidates": str(total_candidates),
             },
         )
 
@@ -478,6 +481,7 @@ def cohort_risk_export(
                 "X-Scored-At": scored_at,
                 "X-Model-Name": model_name,
                 "X-Model-Version": art.version,
+                "X-Total-Candidates": str(total_candidates),
             },
         )
 
@@ -505,5 +509,6 @@ def cohort_risk_export(
             "X-Scored-At": scored_at,
             "X-Model-Name": model_name,
             "X-Model-Version": art.version,
+            "X-Total-Candidates": str(total_candidates),
         },
     )
