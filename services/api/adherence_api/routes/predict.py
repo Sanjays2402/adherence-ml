@@ -347,6 +347,13 @@ def predict_batch(
                 )
             )
             n_ok += 1
+            # Mirror /v1/predict: count every scored dose in Prometheus so
+            # batch traffic is not invisible on dashboards and SLOs.
+            for pred in res.get("predictions", []):
+                PREDICTIONS.inc(
+                    model=model_name,
+                    tier=str(pred.get("risk_tier", "unknown")),
+                )
             audit_record(
                 request_id=rid, route="/v1/predict/batch", user_id=item.user_id,
                 tenant_id=p.get("tenant", "default"),

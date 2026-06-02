@@ -107,3 +107,37 @@ def test_metrics_records_shadow_divergence(tmp_path, monkeypatch):
     assert (
         'adherence_shadow_divergence_count{shadow_model="challenger"} 1'
     ) in body
+
+
+def test_metrics_counts_batch_predictions(tmp_path, monkeypatch):
+    """Regression: /v1/predict/batch must also increment adherence_predictions_total.
+
+    Without this, Med-Tracker's nightly cron (the documented batch consumer)
+    is invisible on prediction dashboards and SLOs.
+    """
+    _setup(tmp_path, monkeypatch)
+    c = _client()
+    item = {
+        "user_id": "u_000001",
+        "schedule": [
+            {"dose_id": "d1", "scheduled_at": "2026-03-05T08:00:00Z",
+             "dose_class": "cardio", "dose_strength_mg": 10.0},
+            {"dose_id": "d2", "scheduled_at": "2026-03-05T09:00:00Z",
+             "dose_class": "cardio", "dose_strength_mg": 10.0},
+        ],
+        "top_k_reasons": 0,
+    }
+    r = c.post(
+        "/v1/predict/batch",
+        json={"items": [item, {**item, "user_id": "u_000002"}]},
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200, r.text
+    body = c.get("/metrics").text
+    pred_lines = [
+        ln for ln in body.splitlines()
+        if ln.startswith("adherence_predictions_total{")
+    ]
+    total = sum(float(ln.split()[-1]) for ln in pred_lines)
+    # 2 users x 2 doses each = 4 scored doses.
+    assert total == 4.0, body
