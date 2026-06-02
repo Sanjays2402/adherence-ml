@@ -62,6 +62,27 @@ class CohortBucket(BaseModel):
             "campaigns) per (class, bucket, user) without paging /export."
         ),
     )
+    worst_dose_class: str | None = Field(
+        default=None,
+        description=(
+            "Populated on top_users rows only: dose_class of this user's "
+            "single highest-miss_probability dose. Lets a care team's outreach "
+            "queue render 'call patient X about insulin' next to each row "
+            "without a second per-user /predict round trip or paging the full "
+            "export. Null on by_dose_class / by_time_bucket rows since those "
+            "are already keyed by the dimension."
+        ),
+    )
+    worst_time_bucket: str | None = Field(
+        default=None,
+        description=(
+            "Populated on top_users rows only: time_bucket of this user's "
+            "single highest-miss_probability dose. Symmetric with "
+            "worst_dose_class so the outreach queue can render 'call patient "
+            "X about evening insulin' and time the call to the right shift "
+            "without paging the full export."
+        ),
+    )
 
 
 class ProbabilityStats(BaseModel):
@@ -285,6 +306,15 @@ def cohort_risk(
             continue
         p = g["miss_probability"].to_numpy(dtype=float)
         mean_p = float(np.mean(p))
+        # Identify the single worst dose for this user so outreach queues
+        # can render 'call patient X about evening insulin' inline without
+        # a per-user follow-up /predict round trip. Stable on ties: idxmax
+        # returns the first occurrence, matching the natural cohort order
+        # used everywhere else (e.g. cohort_export worst_per_user dedupe).
+        worst_idx = g["miss_probability"].idxmax()
+        worst_row = g.loc[worst_idx]
+        worst_dc = class_decode[int(worst_row["dose_class_idx"])]
+        worst_tb = bucket_decode[int(worst_row["time_bucket_idx"])]
         user_rows.append(
             CohortBucket(
                 key=str(uid),
@@ -295,6 +325,8 @@ def cohort_risk(
                 expected_misses=float(n * mean_p),
                 n_high_risk=int((p >= high).sum()),
                 n_medium_risk=int(((p >= med) & (p < high)).sum()),
+                worst_dose_class=worst_dc,
+                worst_time_bucket=worst_tb,
             )
         )
     if sort_by == "expected_misses":

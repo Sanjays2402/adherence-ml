@@ -269,3 +269,42 @@ def test_cohort_risk_total_expected_misses(tmp_path, monkeypatch):
     sum_bucket = sum(b["expected_misses"] for b in body["by_time_bucket"])
     assert abs(sum_class - tem) < 1e-6
     assert abs(sum_bucket - tem) < 1e-6
+
+
+def test_cohort_risk_top_users_include_worst_dose_class_and_time_bucket(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    from adherence_common.constants import DOSE_CLASSES, TIME_BUCKETS
+    client = TestClient(create_app())
+
+    r = client.post(
+        "/v1/cohort/risk",
+        params={"top_users": 100},
+        json={"synthetic": {"n_users": 40, "n_days": 7, "seed": 1}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    valid_classes = set(DOSE_CLASSES)
+    valid_buckets = set(TIME_BUCKETS)
+
+    # top_users rows must carry the user's worst-dose dimension labels so
+    # outreach queues can render 'call patient X about evening insulin'
+    # without a per-user follow-up /predict. Labels must be drawn from the
+    # canonical DOSE_CLASSES / TIME_BUCKETS vocabularies (no idx leakage).
+    assert body["top_users"], "expected at least one top_users row"
+    for u in body["top_users"]:
+        assert u["worst_dose_class"] in valid_classes, u
+        assert u["worst_time_bucket"] in valid_buckets, u
+
+    # by_dose_class / by_time_bucket rows are already keyed by the
+    # dimension, so the worst_* fields stay null there to avoid implying
+    # a second, contradictory label on the same row.
+    for b in body["by_dose_class"]:
+        assert b["worst_dose_class"] is None
+        assert b["worst_time_bucket"] is None
+    for b in body["by_time_bucket"]:
+        assert b["worst_dose_class"] is None
+        assert b["worst_time_bucket"] is None
