@@ -470,3 +470,91 @@ def test_audit_stats_filters(tmp_path, monkeypatch):
     assert body["error_rate"] == 0.0
     assert body["p50_latency_ms"] is None
     assert body["by_model"] == {}
+
+
+def test_audit_stats_since_until_absolute_window(tmp_path, monkeypatch):
+    """`/v1/audit/stats` accepts ISO-8601 since/until like /list and export.csv,
+    so a compliance reviewer can rollup an exact window (e.g. one calendar
+    day) without back-computing window_hours."""
+    from datetime import datetime, timedelta
+
+    from adherence_common.db import PredictionAudit, init_db, session
+
+    _setup_env(tmp_path, monkeypatch)
+    _train(tmp_path)
+    from adherence_api.app import create_app
+    client = TestClient(create_app())
+
+    base = {"dose_id": "d1", "scheduled_at": "2026-03-05T08:00:00Z",
+            "dose_class": "cardio", "dose_strength_mg": 10.0}
+    # generate a handful of audit rows in the normal flow
+    for _ in range(4):
+        client.post("/v1/predict",
+                    json={"user_id": "u_since", "schedule": [base], "top_k_reasons": 1},
+                    headers={"x-api-key": "adm"})
+
+    # backdate two of them to one week ago so a tight since-window can
+    # exclude them but a wide window includes them
+    init_db()
+    week_ago = datetime.utcnow() - timedelta(days=7)
+    with session() as s:
+        rows = list(s.scalars(
+            __import__("sqlalchemy").select(PredictionAudit)
+            .where(PredictionAudit.user_id == "u_since")
+            .order_by(PredictionAudit.id.asc())
+        ))
+        assert len(rows) >= 4
+        for r in rows[:2]:
+            r.created_at = week_ago
+        s.commit()
+
+    # tight since=now-1h still sees the two recent rows
+    one_hour_ago = (datetime.utcnow() - timedelta(hours=1)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    r = client.get(
+        f"/v1/audit/stats?user_id=u_since&since={one_hour_ago}",
+        headers={"x-api-key": "adm"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["n_calls"] == 2
+
+    # wide since=now-30d sees all four
+    thirty_days_ago = (datetime.utcnow() - timedelta(days=30)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    r = client.get(
+        f"/v1/audit/stats?user_id=u_since&since={thirty_days_ago}",
+        headers={"x-api-key": "adm"},
+    )
+    assert r.status_code == 200
+    assert r.json()["n_calls"] == 4
+
+    # explicit until carves out only the backdated rows
+    eight_days_ago = (datetime.utcnow() - timedelta(days=8)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    six_days_ago = (datetime.utcnow() - timedelta(days=6)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    r = client.get(
+        f"/v1/audit/stats?user_id=u_since&since={eight_days_ago}&until={six_days_ago}",
+        headers={"x-api-key": "adm"},
+    )
+    assert r.status_code == 200
+    assert r.json()["n_calls"] == 2
+
+    # until <= since is a 400, matching /list and /export.csv
+    r = client.get(
+        f"/v1/audit/stats?since={six_days_ago}&until={eight_days_ago}",
+        headers={"x-api-key": "adm"},
+    )
+    assert r.status_code == 400
+
+    # malformed since is a 400 with a useful message
+    r = client.get(
+        "/v1/audit/stats?since=not-a-date",
+        headers={"x-api-key": "adm"},
+    )
+    assert r.status_code == 400
+    assert "since" in r.json()["detail"]

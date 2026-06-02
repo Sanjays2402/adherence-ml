@@ -377,6 +377,23 @@ def _percentile(values: list[float], pct: float) -> float | None:
 def stats(
     request: Request,
     window_hours: int = Query(24, ge=1, le=24 * 30),
+    since: str | None = Query(
+        None,
+        description=(
+            "Inclusive lower bound on created_at, ISO-8601 (e.g."
+            " 2026-01-01T00:00:00Z). When set, overrides ``window_hours`` so a"
+            " compliance reviewer can run the rollup over an exact quarter or"
+            " SOC 2 window without back-computing hours."
+        ),
+    ),
+    until: str | None = Query(
+        None,
+        description=(
+            "Exclusive upper bound on created_at, ISO-8601. When omitted,"
+            " rows up to the current time are included. Only meaningful when"
+            " ``since`` is also set."
+        ),
+    ),
     user_id: str | None = Query(
         None,
         description=(
@@ -436,9 +453,20 @@ def stats(
     init_db()
     target = tenant or str(p.get("tenant") or "default")
     require_tenant_access(target, p, request)
-    cutoff = datetime.utcnow() - timedelta(hours=window_hours)
+    since_dt = _parse_iso_dt("since", since)
+    until_dt = _parse_iso_dt("until", until)
+    if since_dt and until_dt and until_dt <= since_dt:
+        raise HTTPException(status_code=400, detail="until must be after since")
+    if since_dt is not None:
+        lower = since_dt
+        effective_window_hours = window_hours
+    else:
+        lower = datetime.utcnow() - timedelta(hours=window_hours)
+        effective_window_hours = window_hours
     with session() as s:
-        q = select(PredictionAudit).where(PredictionAudit.created_at >= cutoff)
+        q = select(PredictionAudit).where(PredictionAudit.created_at >= lower)
+        if until_dt is not None:
+            q = q.where(PredictionAudit.created_at < until_dt)
         if target != "*":
             q = q.where(PredictionAudit.tenant_id == target)
         if user_id:
@@ -476,7 +504,7 @@ def stats(
         _ = func.count
     n = len(rows)
     return AuditStatsResponse(
-        window_hours=window_hours,
+        window_hours=effective_window_hours,
         n_calls=n,
         n_errors=n_errors,
         error_rate=(n_errors / n) if n else 0.0,
