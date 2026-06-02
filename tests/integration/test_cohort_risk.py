@@ -198,6 +198,32 @@ def test_cohort_risk_top_users_sort_by_n_high_risk(tmp_path, monkeypatch):
         )
 
 
+def test_cohort_risk_top_users_sort_by_n_medium_risk(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    client = TestClient(create_app())
+
+    r = client.post(
+        "/v1/cohort/risk",
+        params={"top_users": 50, "sort_by": "n_medium_risk"},
+        json={"synthetic": {"n_users": 40, "n_days": 7, "seed": 5}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    top = body["top_users"]
+    assert top, "expected at least one eligible user"
+
+    # n_medium_risk descends; ties break on mean_miss_probability descending
+    # so the second-tier (text/nudge) leaderboard is stable for planners.
+    for a, b in zip(top, top[1:]):
+        assert (a["n_medium_risk"], a["mean_miss_probability"]) >= (
+            b["n_medium_risk"],
+            b["mean_miss_probability"],
+        )
+
+
 def test_cohort_risk_rejects_unknown_sort_by(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
     _train()

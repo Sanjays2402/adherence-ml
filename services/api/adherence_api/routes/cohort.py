@@ -195,7 +195,7 @@ def cohort_risk(
     top_users: int = Query(10, ge=1, le=100),
     sort_by: str = Query(
         "mean",
-        pattern="^(mean|expected_misses|n_high_risk)$",
+        pattern="^(mean|expected_misses|n_high_risk|n_medium_risk)$",
         description=(
             "Ordering for top_users. 'mean' (default) ranks by mean_miss_probability "
             "so the most severe per-dose risk surfaces first. 'expected_misses' ranks "
@@ -203,7 +203,10 @@ def cohort_risk(
             "risk (the actual outreach payoff) surface first. 'n_high_risk' ranks by "
             "the count of doses at or above DEFAULT_RISK_THRESHOLDS['high'] per user, "
             "which is the actual nurse outreach unit (one patient with 8 high-risk "
-            "doses is one phone call) and matches how staffing capacity is planned."
+            "doses is one phone call) and matches how staffing capacity is planned. "
+            "'n_medium_risk' ranks by the count of doses in the medium band per user, "
+            "which sizes the second-tier outreach queue (text/nudge per patient) "
+            "symmetric with n_high_risk so the same planner view drives both channels."
         ),
     ),
     min_doses: int = Query(
@@ -291,6 +294,15 @@ def cohort_risk(
         # stable for staffing planners.
         user_rows.sort(
             key=lambda b: (b.n_high_risk, b.mean_miss_probability),
+            reverse=True,
+        )
+    elif sort_by == "n_medium_risk":
+        # Rank by the second-tier outreach unit (count of medium-risk doses
+        # per user). Tie-break on mean_miss_probability so users with the
+        # same medium-risk dose count surface in severity order, which keeps
+        # the text/nudge leaderboard stable for planners.
+        user_rows.sort(
+            key=lambda b: (b.n_medium_risk, b.mean_miss_probability),
             reverse=True,
         )
     else:
