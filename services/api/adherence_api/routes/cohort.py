@@ -31,6 +31,15 @@ class CohortBucket(BaseModel):
     mean_miss_probability: float
     pct_high_risk: float
     pct_medium_risk: float
+    expected_misses: float = Field(
+        default=0.0,
+        description=(
+            "n_doses * mean_miss_probability. The expected count of missed "
+            "doses for this group, which is what outreach capacity actually "
+            "has to absorb. Lets dashboards rank by payoff (a 50-dose user at "
+            "p=0.4 beats a 2-dose user at p=0.95) instead of just severity."
+        ),
+    )
 
 
 class ProbabilityStats(BaseModel):
@@ -98,13 +107,15 @@ def _bucket(df: pd.DataFrame, group_col: str, decode: dict[int, str] | None = No
             continue
         p = g["miss_probability"].to_numpy(dtype=float)
         label = decode[int(key)] if decode is not None else str(key)
+        mean_p = float(np.mean(p))
         out.append(
             CohortBucket(
                 key=label,
                 n_doses=n,
-                mean_miss_probability=float(np.mean(p)),
+                mean_miss_probability=mean_p,
                 pct_high_risk=float((p >= high).mean()),
                 pct_medium_risk=float(((p >= med) & (p < high)).mean()),
+                expected_misses=float(n * mean_p),
             )
         )
     out.sort(key=lambda b: b.mean_miss_probability, reverse=True)
@@ -116,6 +127,16 @@ def cohort_risk(
     payload: dict[str, Any] = Body(default_factory=dict),
     model_name: str = Query("default"),
     top_users: int = Query(10, ge=1, le=100),
+    sort_by: str = Query(
+        "mean",
+        pattern="^(mean|expected_misses)$",
+        description=(
+            "Ordering for top_users. 'mean' (default) ranks by mean_miss_probability "
+            "so the most severe per-dose risk surfaces first. 'expected_misses' ranks "
+            "by n_doses * mean_miss_probability so high-volume users with moderate "
+            "risk (the actual outreach payoff) surface first."
+        ),
+    ),
     min_doses: int = Query(
         1,
         ge=1,
@@ -179,16 +200,21 @@ def cohort_risk(
         if n < min_doses:
             continue
         p = g["miss_probability"].to_numpy(dtype=float)
+        mean_p = float(np.mean(p))
         user_rows.append(
             CohortBucket(
                 key=str(uid),
                 n_doses=n,
-                mean_miss_probability=float(np.mean(p)),
+                mean_miss_probability=mean_p,
                 pct_high_risk=float((p >= high).mean()),
                 pct_medium_risk=float(((p >= med) & (p < high)).mean()),
+                expected_misses=float(n * mean_p),
             )
         )
-    user_rows.sort(key=lambda b: b.mean_miss_probability, reverse=True)
+    if sort_by == "expected_misses":
+        user_rows.sort(key=lambda b: b.expected_misses, reverse=True)
+    else:
+        user_rows.sort(key=lambda b: b.mean_miss_probability, reverse=True)
 
     probs = df["miss_probability"].to_numpy(dtype=float)
     stats = ProbabilityStats(

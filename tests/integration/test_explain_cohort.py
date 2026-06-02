@@ -185,3 +185,49 @@ def test_cohort_risk_by_tier_counts(tmp_path, monkeypatch):
         assert isinstance(v, int) and v >= 0
     # Tier counts partition total_doses exactly.
     assert tiers["low"] + tiers["medium"] + tiers["high"] == body["total_doses"]
+
+
+def test_cohort_risk_sort_by_expected_misses(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    _train_tiny()
+    from adherence_api.app import create_app
+    client = TestClient(create_app())
+
+    payload = {"synthetic": {"n_users": 80, "n_days": 10, "seed": 21}}
+
+    by_mean = client.post(
+        "/v1/cohort/risk?top_users=20&sort_by=mean",
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert by_mean.status_code == 200, by_mean.text
+    mean_users = by_mean.json()["top_users"]
+    assert mean_users
+    mean_scores = [u["mean_miss_probability"] for u in mean_users]
+    assert mean_scores == sorted(mean_scores, reverse=True)
+
+    by_exp = client.post(
+        "/v1/cohort/risk?top_users=20&sort_by=expected_misses",
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert by_exp.status_code == 200, by_exp.text
+    exp_users = by_exp.json()["top_users"]
+    assert exp_users
+    exp_scores = [u["expected_misses"] for u in exp_users]
+    assert exp_scores == sorted(exp_scores, reverse=True)
+    # expected_misses must equal n_doses * mean_miss_probability per row.
+    for u in exp_users:
+        assert abs(u["expected_misses"] - u["n_doses"] * u["mean_miss_probability"]) < 1e-6
+
+    # Buckets also carry expected_misses now.
+    for b in by_mean.json()["by_dose_class"]:
+        assert abs(b["expected_misses"] - b["n_doses"] * b["mean_miss_probability"]) < 1e-6
+
+    # Invalid sort_by must 422, not silently fall back.
+    bad = client.post(
+        "/v1/cohort/risk?sort_by=bogus",
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert bad.status_code == 422
