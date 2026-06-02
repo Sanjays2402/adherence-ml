@@ -193,6 +193,57 @@ def test_audit_filter_by_request_id(tmp_path, monkeypatch):
     assert r.json()["items"] == []
 
 
+def test_audit_filter_by_caller(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    _train(tmp_path)
+    from adherence_api.app import create_app
+    client = TestClient(create_app())
+
+    base = {"dose_id": "d1", "scheduled_at": "2026-03-05T08:00:00Z",
+            "dose_class": "cardio", "dose_strength_mg": 10.0}
+    # mix calls from the svc key and the adm key so we can prove the
+    # filter actually narrows the result set
+    for _ in range(3):
+        client.post("/v1/predict",
+                    json={"user_id": "u_caller", "schedule": [base], "top_k_reasons": 1},
+                    headers={"x-api-key": "svc"})
+    client.post("/v1/predict",
+                json={"user_id": "u_caller", "schedule": [base], "top_k_reasons": 1},
+                headers={"x-api-key": "adm"})
+
+    # discover the caller principal recorded for the svc key by reading
+    # one of its rows back, then filter on it
+    r = client.get("/v1/audit/list?user_id=u_caller",
+                   headers={"x-api-key": "adm"})
+    assert r.status_code == 200
+    items = r.json()["items"]
+    svc_caller = next(it["caller"] for it in items if it["caller_role"] == "service")
+
+    r = client.get(f"/v1/audit/list?caller={svc_caller}",
+                   headers={"x-api-key": "adm"})
+    assert r.status_code == 200, r.text
+    rows = r.json()["items"]
+    assert len(rows) >= 3
+    assert all(row["caller"] == svc_caller for row in rows)
+
+    # CSV export honors the same filter
+    r = client.get(f"/v1/audit/export.csv?caller={svc_caller}",
+                   headers={"x-api-key": "adm"})
+    assert r.status_code == 200, r.text
+    body = r.text.splitlines()
+    assert len(body) >= 2
+    header = body[0].split(",")
+    caller_idx = header.index("caller")
+    for line in body[1:]:
+        assert line.split(",")[caller_idx] == svc_caller
+
+    # unknown caller returns empty
+    r = client.get("/v1/audit/list?caller=k:does-not-exist",
+                   headers={"x-api-key": "adm"})
+    assert r.status_code == 200
+    assert r.json()["items"] == []
+
+
 def test_audit_list_before_id_cursor_pagination(tmp_path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)
     _train(tmp_path)

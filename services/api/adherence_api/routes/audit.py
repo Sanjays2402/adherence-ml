@@ -194,6 +194,15 @@ def list_audit(
     user_id: str | None = None,
     route: str | None = None,
     model_name: str | None = None,
+    caller: str | None = Query(
+        None,
+        description=(
+            "Exact match on the recorded caller principal (e.g. ``k:abcd1234``"
+            " for an API key, ``u:alice@acme.example`` for a user). Lets"
+            " on-call slice the log by who issued the calls when triaging a"
+            " suspected key compromise or runaway service account."
+        ),
+    ),
     request_id: str | None = Query(
         None,
         description=(
@@ -242,6 +251,8 @@ def list_audit(
             q = q.where(PredictionAudit.route == route)
         if model_name:
             q = q.where(PredictionAudit.model_name == model_name)
+        if caller:
+            q = q.where(PredictionAudit.caller == caller)
         if request_id:
             q = q.where(PredictionAudit.request_id == request_id)
         if only_errors:
@@ -457,6 +468,14 @@ def export_csv(
     user_id: str | None = None,
     route: str | None = None,
     model_name: str | None = None,
+    caller: str | None = Query(
+        None,
+        description=(
+            "Exact match on the recorded caller principal (e.g. ``k:abcd1234``)."
+            " Lets an incident responder pull every call made by a single"
+            " suspected API key or user into one CSV for forensics."
+        ),
+    ),
     request_id: str | None = Query(
         None,
         description=(
@@ -528,6 +547,8 @@ def export_csv(
             q = q.where(PredictionAudit.route == route)
         if model_name:
             q = q.where(PredictionAudit.model_name == model_name)
+        if caller:
+            q = q.where(PredictionAudit.caller == caller)
         if request_id:
             q = q.where(PredictionAudit.request_id == request_id)
         if only_errors:
