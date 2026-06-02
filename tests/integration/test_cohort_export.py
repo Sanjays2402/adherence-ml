@@ -1331,3 +1331,70 @@ def test_export_count_only_includes_patient_level_tier_counts(tmp_path, monkeypa
         body["n_users_with_high_risk"] + body["n_users_with_medium_risk"]
         <= body["n_users"]
     )
+
+
+def test_export_min_doses_filters_low_volume_users(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    payload = {"synthetic": {"n_users": 40, "n_days": 7, "seed": 13}}
+
+    # Baseline: full cohort, no min_doses filter.
+    r_all = c.post(
+        "/v1/cohort/risk/export",
+        params={"worst_per_user": "true"},
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r_all.status_code == 200
+    rows_all = [x for x in _parse_ndjson(r_all.content) if x["kind"] == "row"]
+    users_all = {r["user_id"] for r in rows_all}
+    # Per-user dose counts from the underlying scored cohort. Re-stream
+    # without dedupe so we can identify which user_ids carry >= min_doses.
+    r_full = c.post(
+        "/v1/cohort/risk/export",
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    full_rows = [x for x in _parse_ndjson(r_full.content) if x["kind"] == "row"]
+    dose_counts: dict[str, int] = {}
+    for row in full_rows:
+        dose_counts[row["user_id"]] = dose_counts.get(row["user_id"], 0) + 1
+    # Pick a threshold somewhere between min and max so the filter is observable.
+    counts_sorted = sorted(dose_counts.values())
+    assert counts_sorted, "expected at least one scoreable dose"
+    threshold = counts_sorted[len(counts_sorted) // 2] + 1
+    expected_users = {uid for uid, n in dose_counts.items() if n >= threshold}
+
+    r_filt = c.post(
+        "/v1/cohort/risk/export",
+        params={"worst_per_user": "true", "min_doses": threshold},
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r_filt.status_code == 200
+    rows_filt = [x for x in _parse_ndjson(r_filt.content) if x["kind"] == "row"]
+    users_filt = {r["user_id"] for r in rows_filt}
+    assert users_filt == expected_users
+    assert users_filt.issubset(users_all)
+    # If the threshold actually removed someone, the filtered set must shrink.
+    if expected_users != set(dose_counts.keys()):
+        assert len(users_filt) < len(users_all)
+
+
+def test_export_min_doses_404s_when_no_user_qualifies(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    r = c.post(
+        "/v1/cohort/risk/export",
+        params={"min_doses": 9999},
+        json={"synthetic": {"n_users": 20, "n_days": 5, "seed": 4}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 400
+    assert "scoreable doses" in r.json()["detail"]

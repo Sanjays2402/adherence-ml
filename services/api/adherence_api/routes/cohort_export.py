@@ -377,6 +377,22 @@ def cohort_risk_export(
             " top-N highest-risk export. `risk_asc` reverses that."
         ),
     ),
+    min_doses: int = Query(
+        1,
+        ge=1,
+        le=10_000,
+        description=(
+            "Minimum scoreable dose count required for a user_id to appear"
+            " in the export. Filters out low-volume users whose worst dose is"
+            " statistically noisy (one missed dose at p=0.99 dominating an"
+            " outreach list). Counted from the underlying scoreable cohort"
+            " before per-row filters and before `worst_per_user` dedupe, so"
+            " a patient with 12 scoreable doses still qualifies even if only"
+            " their one worst dose survives `risk_tier=high`. Symmetric with"
+            " the `min_doses` filter on `/cohort/risk` top_users so the same"
+            " eligibility rule drives both the leaderboard and the export."
+        ),
+    ),
     worst_per_user: bool = Query(
         False,
         description=(
@@ -485,6 +501,21 @@ def cohort_risk_export(
 
     scored_at = _utc_now_iso()
     total_candidates = int(len(df))
+
+    if min_doses > 1:
+        # Count scoreable doses per user from the underlying cohort, before
+        # per-row filters and before `worst_per_user` dedupe, so a patient
+        # with 12 scoreable doses still qualifies even if only their one
+        # worst dose survives `risk_tier=high`. Matches the semantics of
+        # the `min_doses` filter on `/cohort/risk` top_users.
+        dose_counts = df.groupby("user_id").size()
+        eligible = set(dose_counts[dose_counts >= min_doses].index.astype(str))
+        df = df[df["user_id"].astype(str).isin(eligible)]
+        if df.empty:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"no users with at least {min_doses} scoreable doses",
+            )
 
     if worst_per_user:
         # Stable sort by probability descending, then drop_duplicates keeps
