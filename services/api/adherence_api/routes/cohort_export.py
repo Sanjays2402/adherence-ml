@@ -23,6 +23,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+from datetime import datetime, timezone
 from typing import Any, Iterator
 
 import pandas as pd
@@ -76,11 +77,23 @@ def _parse_csv(v: str | None) -> set[str] | None:
     return out or None
 
 
+def _utc_now_iso() -> str:
+    """Second-precision UTC ISO-8601 timestamp for export envelopes.
+
+    Stamped once per export so every row in an NDJSON/CSV file shares the
+    same scored_at, which is what nightly snapshot pipelines need to
+    partition by run (BigQuery / Snowflake `_PARTITIONTIME`-style) and to
+    do point-in-time joins against the underlying patient table.
+    """
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def _stream(
     df: pd.DataFrame,
     *,
     model_name: str,
     model_version: str,
+    scored_at: str,
     tier_filter: set[str] | None,
     min_prob: float,
     max_prob: float,
@@ -100,6 +113,7 @@ def _stream(
         "kind": "header",
         "model_name": model_name,
         "model_version": model_version,
+        "scored_at": scored_at,
         "total_candidates": int(len(df)),
     }
     yield (json.dumps(header) + "\n").encode("utf-8")
@@ -139,7 +153,14 @@ def _stream(
         if limit is not None and emitted >= limit:
             break
     yield (
-        json.dumps({"kind": "footer", "emitted": emitted, "by_tier": by_tier})
+        json.dumps(
+            {
+                "kind": "footer",
+                "emitted": emitted,
+                "by_tier": by_tier,
+                "scored_at": scored_at,
+            }
+        )
         + "\n"
     ).encode("utf-8")
 
@@ -409,6 +430,7 @@ def cohort_risk_export(
             {
                 "model_name": model_name,
                 "model_version": art.version,
+                "scored_at": _utc_now_iso(),
                 "total_candidates": int(len(df)),
                 "count": total,
                 "by_tier": counts,
@@ -419,6 +441,8 @@ def cohort_risk_export(
         df = df.sort_values("miss_probability", ascending=False, kind="mergesort")
     elif sort_mode == "risk_asc":
         df = df.sort_values("miss_probability", ascending=True, kind="mergesort")
+
+    scored_at = _utc_now_iso()
 
     if fmt == "csv":
         return StreamingResponse(
@@ -449,6 +473,7 @@ def cohort_risk_export(
             df,
             model_name=model_name,
             model_version=art.version,
+            scored_at=scored_at,
             tier_filter=tier_filter,
             min_prob=float(min_probability),
             max_prob=float(max_probability),

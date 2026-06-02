@@ -604,3 +604,40 @@ def test_export_footer_includes_by_tier_breakdown(tmp_path, monkeypatch):
         expected[row["risk_tier"]] += 1
     assert footer["by_tier"] == expected
     assert sum(footer["by_tier"].values()) == footer["emitted"]
+
+
+def test_export_envelopes_include_scored_at_timestamp(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    r = c.post(
+        "/v1/cohort/risk/export",
+        json={"synthetic": {"n_users": 25, "n_days": 5, "seed": 4}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200, r.text
+    rows = _parse_ndjson(r.content)
+    header = rows[0]
+    footer = rows[-1]
+    assert header["kind"] == "header"
+    assert footer["kind"] == "footer"
+    assert "scored_at" in header and header["scored_at"].endswith("Z")
+    assert "scored_at" in footer
+    # one timestamp per export: header and footer agree
+    assert header["scored_at"] == footer["scored_at"]
+    # parses as ISO-8601 UTC
+    from datetime import datetime
+    datetime.fromisoformat(header["scored_at"].replace("Z", "+00:00"))
+
+    # count_only response surfaces the same field
+    r2 = c.post(
+        "/v1/cohort/risk/export",
+        params={"count_only": "true"},
+        json={"synthetic": {"n_users": 25, "n_days": 5, "seed": 4}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r2.status_code == 200, r2.text
+    body = r2.json()
+    assert "scored_at" in body and body["scored_at"].endswith("Z")
