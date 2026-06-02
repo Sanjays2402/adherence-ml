@@ -51,6 +51,28 @@ def test_cohort_risk_buckets_include_n_high_risk(tmp_path, monkeypatch):
     assert sum(b["n_high_risk"] for b in body["by_dose_class"]) == overall_high
     assert sum(b["n_high_risk"] for b in body["by_time_bucket"]) == overall_high
 
+    # User counts let dashboards show 'Top N of M' without paging /export.
+    # With default min_doses=1, every user with any scored dose is eligible,
+    # so n_users_eligible == n_users_total. top_users is bounded by the
+    # requested page size and by the eligible pool.
+    assert body["n_users_total"] >= 1
+    assert body["n_users_eligible"] == body["n_users_total"]
+    assert len(body["top_users"]) == min(5, body["n_users_eligible"])
+
+    # A high min_doses must shrink (or hold) n_users_eligible but never
+    # change n_users_total, since the cohort itself is unchanged.
+    r2 = client.post(
+        "/v1/cohort/risk",
+        params={"top_users": 5, "min_doses": 9999},
+        json={"synthetic": {"n_users": 40, "n_days": 7, "seed": 1}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r2.status_code == 200, r2.text
+    body2 = r2.json()
+    assert body2["n_users_total"] == body["n_users_total"]
+    assert body2["n_users_eligible"] <= body["n_users_eligible"]
+    assert len(body2["top_users"]) == body2["n_users_eligible"]
+
     # Per-bucket invariants: n_high_risk is bounded by n_doses and is
     # consistent with pct_high_risk (no floating-point drift beyond 1 dose).
     for bucket in (

@@ -103,6 +103,24 @@ class CohortRiskResponse(BaseModel):
     )
     by_dose_class: list[CohortBucket]
     by_time_bucket: list[CohortBucket]
+    n_users_total: int = Field(
+        default=0,
+        description=(
+            "Total distinct users in the scored cohort, before any min_doses "
+            "filter. Lets dashboards show 'Top 10 of N users' and compute how "
+            "many users the min_doses filter dropped (n_users_total - "
+            "n_users_eligible) without paging /export."
+        ),
+    )
+    n_users_eligible: int = Field(
+        default=0,
+        description=(
+            "Distinct users with n_doses >= min_doses, i.e. the pool top_users "
+            "was ranked from. Dashboards use this as the denominator for the "
+            "top_users ranking and to size the outreach pool after low-volume "
+            "users are excluded."
+        ),
+    )
     top_users: list[CohortBucket] = Field(
         description="Users sorted by mean miss probability (highest first)."
     )
@@ -276,5 +294,7 @@ def cohort_risk(
         by_tier_time_bucket=by_tier_time_bucket,
         by_dose_class=by_class,
         by_time_bucket=by_time,
+        n_users_total=int(df["user_id"].nunique()),
+        n_users_eligible=len(user_rows),
         top_users=user_rows[:top_users],
     )
