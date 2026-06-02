@@ -1157,3 +1157,59 @@ def test_export_footer_probability_stats_null_when_no_rows(tmp_path, monkeypatch
     assert footer["kind"] == "footer"
     assert footer["emitted"] == 0
     assert footer["probability_stats"] is None
+
+
+def test_export_footer_includes_tier_cross_tabs(tmp_path, monkeypatch):
+    """Streaming consumers get the same (tier x dose_class) and
+    (tier x time_bucket) cross-tabs count_only already returns, so a
+    staffing manifest can be written from the NDJSON footer without a
+    second pass.
+    """
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    r = c.post(
+        "/v1/cohort/risk/export",
+        json={"synthetic": {"n_users": 40, "n_days": 6, "seed": 9}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200, r.text
+    rows = _parse_ndjson(r.content)
+    body_rows = [x for x in rows if x["kind"] == "row"]
+    footer = rows[-1]
+    assert footer["kind"] == "footer"
+    assert "by_tier_dose_class" in footer
+    assert "by_tier_time_bucket" in footer
+
+    expected_dc: dict[str, dict[str, int]] = {}
+    expected_tb: dict[str, dict[str, int]] = {}
+    for row in body_rows:
+        dc = expected_dc.setdefault(
+            row["dose_class"], {"low": 0, "medium": 0, "high": 0}
+        )
+        dc[row["risk_tier"]] += 1
+        tb = expected_tb.setdefault(
+            row["time_bucket"], {"low": 0, "medium": 0, "high": 0}
+        )
+        tb[row["risk_tier"]] += 1
+
+    assert footer["by_tier_dose_class"] == {k: expected_dc[k] for k in sorted(expected_dc)}
+    assert footer["by_tier_time_bucket"] == {k: expected_tb[k] for k in sorted(expected_tb)}
+    # cross-tab keys mirror the flat per-class / per-bucket breakdowns
+    assert set(footer["by_tier_dose_class"].keys()) == set(footer["by_dose_class"].keys())
+    assert set(footer["by_tier_time_bucket"].keys()) == set(footer["by_time_bucket"].keys())
+    # row sums per (class, *) and (bucket, *) reconcile against the flat tallies
+    for cls, tiers in footer["by_tier_dose_class"].items():
+        assert sum(tiers.values()) == footer["by_dose_class"][cls]
+        assert set(tiers.keys()) == {"low", "medium", "high"}
+    for bucket, tiers in footer["by_tier_time_bucket"].items():
+        assert sum(tiers.values()) == footer["by_time_bucket"][bucket]
+        assert set(tiers.keys()) == {"low", "medium", "high"}
+    # tier totals across the cross-tab match the flat by_tier counts
+    for tier in ("low", "medium", "high"):
+        from_dc = sum(t[tier] for t in footer["by_tier_dose_class"].values())
+        from_tb = sum(t[tier] for t in footer["by_tier_time_bucket"].values())
+        assert from_dc == footer["by_tier"][tier]
+        assert from_tb == footer["by_tier"][tier]

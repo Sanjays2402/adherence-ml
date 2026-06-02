@@ -117,6 +117,8 @@ def _stream(
     by_tier = {"low": 0, "medium": 0, "high": 0}
     by_dose_class: dict[str, int] = {}
     by_time_bucket: dict[str, int] = {}
+    by_tier_dose_class: dict[str, dict[str, int]] = {}
+    by_tier_time_bucket: dict[str, dict[str, int]] = {}
     probs: list[float] = []
     header = {
         "kind": "header",
@@ -161,6 +163,14 @@ def _stream(
         by_tier[tier] += 1
         by_dose_class[dose_class] = by_dose_class.get(dose_class, 0) + 1
         by_time_bucket[time_bucket] = by_time_bucket.get(time_bucket, 0) + 1
+        dc_tiers = by_tier_dose_class.setdefault(
+            dose_class, {"low": 0, "medium": 0, "high": 0}
+        )
+        dc_tiers[tier] += 1
+        tb_tiers = by_tier_time_bucket.setdefault(
+            time_bucket, {"low": 0, "medium": 0, "high": 0}
+        )
+        tb_tiers[tier] += 1
         probs.append(prob)
         if limit is not None and emitted >= limit:
             break
@@ -187,6 +197,10 @@ def _stream(
             "p50": round(_pct(0.50), 6),
             "p95": round(_pct(0.95), 6),
         }
+    # Cross-tabs of tier per (dose_class) and per (time_bucket) mirror what
+    # count_only already returns, so streaming consumers can write a
+    # staffing manifest (e.g. high-risk insulin doses in the evening bucket)
+    # straight from the NDJSON footer without a second pass.
     yield (
         json.dumps(
             {
@@ -195,6 +209,12 @@ def _stream(
                 "by_tier": by_tier,
                 "by_dose_class": dict(sorted(by_dose_class.items())),
                 "by_time_bucket": dict(sorted(by_time_bucket.items())),
+                "by_tier_dose_class": {
+                    k: by_tier_dose_class[k] for k in sorted(by_tier_dose_class)
+                },
+                "by_tier_time_bucket": {
+                    k: by_tier_time_bucket[k] for k in sorted(by_tier_time_bucket)
+                },
                 "probability_stats": probability_stats,
                 "scored_at": scored_at,
             }
