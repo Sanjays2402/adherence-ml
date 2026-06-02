@@ -83,6 +83,19 @@ class CohortBucket(BaseModel):
             "without paging the full export."
         ),
     )
+    worst_miss_probability: float | None = Field(
+        default=None,
+        description=(
+            "Populated on top_users rows only: miss_probability of this user's "
+            "single highest-risk dose (the same dose worst_dose_class / "
+            "worst_time_bucket describe). Lets outreach queues render 'call "
+            "patient X about evening insulin (98% miss)' inline so triagers can "
+            "prioritize by peak severity, not just mean_miss_probability, "
+            "without a per-user follow-up /predict round trip. Null on "
+            "by_dose_class / by_time_bucket rows since those aggregate across "
+            "users and the peak there is just max(p) on the group."
+        ),
+    )
 
 
 class ProbabilityStats(BaseModel):
@@ -315,6 +328,7 @@ def cohort_risk(
         worst_row = g.loc[worst_idx]
         worst_dc = class_decode[int(worst_row["dose_class_idx"])]
         worst_tb = bucket_decode[int(worst_row["time_bucket_idx"])]
+        worst_p = float(worst_row["miss_probability"])
         user_rows.append(
             CohortBucket(
                 key=str(uid),
@@ -327,6 +341,7 @@ def cohort_risk(
                 n_medium_risk=int(((p >= med) & (p < high)).sum()),
                 worst_dose_class=worst_dc,
                 worst_time_bucket=worst_tb,
+                worst_miss_probability=worst_p,
             )
         )
     if sort_by == "expected_misses":

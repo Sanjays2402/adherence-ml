@@ -308,3 +308,38 @@ def test_cohort_risk_top_users_include_worst_dose_class_and_time_bucket(tmp_path
     for b in body["by_time_bucket"]:
         assert b["worst_dose_class"] is None
         assert b["worst_time_bucket"] is None
+
+
+def test_cohort_risk_top_users_include_worst_miss_probability(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    client = TestClient(create_app())
+
+    r = client.post(
+        "/v1/cohort/risk",
+        params={"top_users": 100},
+        json={"synthetic": {"n_users": 40, "n_days": 7, "seed": 1}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    # top_users carries the peak miss_probability of the user's worst dose so
+    # outreach queues can prioritize by peak severity (98% miss) instead of
+    # just mean_miss_probability without a per-user /predict round trip.
+    assert body["top_users"], "expected at least one top_users row"
+    for u in body["top_users"]:
+        wp = u["worst_miss_probability"]
+        assert wp is not None, u
+        assert 0.0 <= wp <= 1.0, u
+        # Peak is by definition >= mean over the user's doses.
+        assert wp >= u["mean_miss_probability"] - 1e-9, u
+
+    # Aggregate-keyed rows (by_dose_class / by_time_bucket) leave it null,
+    # symmetric with worst_dose_class / worst_time_bucket, so consumers don't
+    # confuse a single user's peak with a group-level max.
+    for b in body["by_dose_class"]:
+        assert b["worst_miss_probability"] is None
+    for b in body["by_time_bucket"]:
+        assert b["worst_miss_probability"] is None
