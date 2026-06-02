@@ -40,6 +40,7 @@ log = get_logger(__name__)
 
 _VALID_TIERS = {"low", "medium", "high"}
 _VALID_FORMATS = {"ndjson", "csv"}
+_VALID_SORTS = {"none", "risk_desc", "risk_asc"}
 _CSV_COLUMNS = (
     "user_id",
     "dose_id",
@@ -209,6 +210,15 @@ def cohort_risk_export(
             " injection (OWASP CWE-1236)."
         ),
     ),
+    sort: str = Query(
+        "none",
+        description=(
+            "Row ordering before `limit` is applied. `none` (default)"
+            " preserves the natural cohort order. `risk_desc` emits highest"
+            " miss_probability first, which combined with `limit` gives a"
+            " top-N highest-risk export. `risk_asc` reverses that."
+        ),
+    ),
     _p=Depends(require_service),
 ) -> StreamingResponse:
     fmt = format.lower().strip()
@@ -216,6 +226,12 @@ def cohort_risk_export(
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             detail=f"format must be one of {sorted(_VALID_FORMATS)}",
+        )
+    sort_mode = sort.lower().strip()
+    if sort_mode not in _VALID_SORTS:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=f"sort must be one of {sorted(_VALID_SORTS)}",
         )
     try:
         art, model = ModelRegistry().latest(model_name)
@@ -259,6 +275,11 @@ def cohort_risk_export(
     X = df[model.feature_columns]
     df = df.copy()
     df["miss_probability"] = model.predict_proba(X)
+
+    if sort_mode == "risk_desc":
+        df = df.sort_values("miss_probability", ascending=False, kind="mergesort")
+    elif sort_mode == "risk_asc":
+        df = df.sort_values("miss_probability", ascending=True, kind="mergesort")
 
     if fmt == "csv":
         return StreamingResponse(

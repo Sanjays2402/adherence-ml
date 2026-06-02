@@ -205,3 +205,66 @@ def test_export_requires_service_role(tmp_path, monkeypatch):
         headers={"x-api-key": "vwr"},
     )
     assert r.status_code == 403
+
+
+def test_export_sort_risk_desc_returns_top_n(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    # Unsorted baseline at limit=20.
+    r_base = c.post(
+        "/v1/cohort/risk/export",
+        params={"limit": 20},
+        json={"synthetic": {"n_users": 50, "n_days": 7, "seed": 4}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r_base.status_code == 200
+    base_rows = [x for x in _parse_ndjson(r_base.content) if x["kind"] == "row"]
+    assert base_rows
+
+    r = c.post(
+        "/v1/cohort/risk/export",
+        params={"limit": 20, "sort": "risk_desc"},
+        json={"synthetic": {"n_users": 50, "n_days": 7, "seed": 4}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200
+    rows = [x for x in _parse_ndjson(r.content) if x["kind"] == "row"]
+    assert rows
+    probs = [row["miss_probability"] for row in rows]
+    assert probs == sorted(probs, reverse=True)
+    # Top-N by definition: max risk in sorted result >= max risk in unsorted slice.
+    assert max(probs) >= max(row["miss_probability"] for row in base_rows)
+
+
+def test_export_sort_risk_asc_orders_ascending(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+    r = c.post(
+        "/v1/cohort/risk/export",
+        params={"limit": 15, "sort": "risk_asc"},
+        json={"synthetic": {"n_users": 40, "n_days": 6, "seed": 8}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200
+    rows = [x for x in _parse_ndjson(r.content) if x["kind"] == "row"]
+    probs = [row["miss_probability"] for row in rows]
+    assert probs == sorted(probs)
+
+
+def test_export_rejects_unknown_sort(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+    r = c.post(
+        "/v1/cohort/risk/export",
+        params={"sort": "alphabetical"},
+        json={"synthetic": {"n_users": 10, "n_days": 3, "seed": 1}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 400
