@@ -331,6 +331,25 @@ def cohort_risk_export(
             " top-N highest-risk export. `risk_asc` reverses that."
         ),
     ),
+    worst_per_user: bool = Query(
+        False,
+        description=(
+            "If true, collapse the cohort to one row per user_id keeping"
+            " only that user's highest miss_probability dose. Lets care"
+            " teams build a per-patient outreach list (one call per"
+            " patient on their riskiest dose of the day) without"
+            " deduplicating downstream. Ties are broken by the natural"
+            " cohort order. Dedup runs before per-row filters, so a"
+            " patient whose worst dose falls outside `risk_tier` /"
+            " `min_probability` / `max_probability` is dropped entirely"
+            " (which is what an outreach list wants: do not page a"
+            " patient on their second-worst dose). Applied before `sort`,"
+            " `offset`, `limit`, so paging through `risk_desc` with"
+            " `worst_per_user=true` yields the top-N highest-risk"
+            " patients. In `count_only` mode the breakdowns also reflect"
+            " the deduplicated set, so `count` equals distinct users."
+        ),
+    ),
     count_only: bool = Query(
         False,
         description=(
@@ -420,6 +439,16 @@ def cohort_risk_export(
 
     scored_at = _utc_now_iso()
     total_candidates = int(len(df))
+
+    if worst_per_user:
+        # Stable sort by probability descending, then drop_duplicates keeps
+        # the first occurrence per user_id, which is that user's worst dose.
+        # `total_candidates` is captured pre-dedupe so consumers can still
+        # compute filter selectivity against the underlying cohort size.
+        df = (
+            df.sort_values("miss_probability", ascending=False, kind="mergesort")
+              .drop_duplicates(subset=["user_id"], keep="first")
+        )
 
     if count_only:
         class_decode = {i: c for i, c in enumerate(DOSE_CLASSES)}

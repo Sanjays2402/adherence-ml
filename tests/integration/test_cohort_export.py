@@ -1022,3 +1022,73 @@ def test_export_footer_includes_by_dose_class_and_time_bucket(tmp_path, monkeypa
     # keys are sorted for stable downstream diffs
     assert list(footer["by_dose_class"].keys()) == sorted(footer["by_dose_class"].keys())
     assert list(footer["by_time_bucket"].keys()) == sorted(footer["by_time_bucket"].keys())
+
+
+def test_worst_per_user_collapses_to_one_row_per_user(tmp_path, monkeypatch):
+    """worst_per_user keeps the single highest-risk dose per user_id."""
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    body = {"synthetic": {"n_users": 25, "n_days": 7, "seed": 4}}
+
+    # baseline: how many distinct users are in the cohort
+    baseline = c.post(
+        "/v1/cohort/risk/export",
+        json=body,
+        headers={"x-api-key": "svc"},
+    )
+    assert baseline.status_code == 200
+    base_rows = [x for x in _parse_ndjson(baseline.content) if x["kind"] == "row"]
+    distinct_users = {r["user_id"] for r in base_rows}
+    user_to_max = {
+        uid: max(r["miss_probability"] for r in base_rows if r["user_id"] == uid)
+        for uid in distinct_users
+    }
+
+    r = c.post(
+        "/v1/cohort/risk/export",
+        params={"worst_per_user": "true"},
+        json=body,
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200
+    rows = [x for x in _parse_ndjson(r.content) if x["kind"] == "row"]
+    seen_users = [r["user_id"] for r in rows]
+    # one row per user, no duplicates
+    assert len(seen_users) == len(set(seen_users))
+    assert set(seen_users) == distinct_users
+    # each emitted row is that user's max miss_probability
+    for r_ in rows:
+        assert r_["miss_probability"] == user_to_max[r_["user_id"]]
+
+
+def test_worst_per_user_count_only_equals_distinct_users(tmp_path, monkeypatch):
+    """count_only with worst_per_user reports distinct-user count."""
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    body = {"synthetic": {"n_users": 20, "n_days": 6, "seed": 9}}
+
+    baseline = c.post(
+        "/v1/cohort/risk/export",
+        json=body,
+        headers={"x-api-key": "svc"},
+    )
+    base_rows = [x for x in _parse_ndjson(baseline.content) if x["kind"] == "row"]
+    distinct_users = len({r["user_id"] for r in base_rows})
+
+    r = c.post(
+        "/v1/cohort/risk/export",
+        params={"worst_per_user": "true", "count_only": "true"},
+        json=body,
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200
+    payload = r.json()
+    assert payload["count"] == distinct_users
+    # total_candidates is the pre-dedupe cohort size and stays >= count
+    assert payload["total_candidates"] >= payload["count"]
