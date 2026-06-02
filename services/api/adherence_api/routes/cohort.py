@@ -65,6 +65,22 @@ class CohortRiskResponse(BaseModel):
             "Lets dashboards size outreach queues without paging the full cohort via /export."
         )
     )
+    by_tier_dose_class: dict[str, TierCounts] = Field(
+        default_factory=dict,
+        description=(
+            "Cross-tab of dose counts per (dose_class -> tier) using DEFAULT_RISK_THRESHOLDS. "
+            "Mirrors the cohort_export count_only / NDJSON footer so dashboards can size "
+            "severity mix per class (e.g. high-risk insulin doses) without paging /export."
+        ),
+    )
+    by_tier_time_bucket: dict[str, TierCounts] = Field(
+        default_factory=dict,
+        description=(
+            "Cross-tab of dose counts per (time_bucket -> tier) using DEFAULT_RISK_THRESHOLDS. "
+            "Mirrors the cohort_export count_only / NDJSON footer so dashboards can size "
+            "severity mix per bucket (e.g. high-risk evening doses) without paging /export."
+        ),
+    )
     by_dose_class: list[CohortBucket]
     by_time_bucket: list[CohortBucket]
     top_users: list[CohortBucket] = Field(
@@ -188,6 +204,28 @@ def cohort_risk(
         high=int((probs >= high).sum()),
     )
 
+    # Cross-tabs of tier per (dose_class) and per (time_bucket) mirror the
+    # cohort_export count_only / NDJSON footer so dashboards can size severity
+    # mix per (class, bucket) without a second pass via /export.
+    def _tier_counts(group: pd.DataFrame) -> TierCounts:
+        gp = group["miss_probability"].to_numpy(dtype=float)
+        return TierCounts(
+            low=int((gp < med).sum()),
+            medium=int(((gp >= med) & (gp < high)).sum()),
+            high=int((gp >= high).sum()),
+        )
+
+    by_tier_dose_class = {
+        class_decode[int(k)]: _tier_counts(g)
+        for k, g in df.groupby("dose_class_idx")
+    }
+    by_tier_dose_class = dict(sorted(by_tier_dose_class.items()))
+    by_tier_time_bucket = {
+        bucket_decode[int(k)]: _tier_counts(g)
+        for k, g in df.groupby("time_bucket_idx")
+    }
+    by_tier_time_bucket = dict(sorted(by_tier_time_bucket.items()))
+
     return CohortRiskResponse(
         model_name=model_name,
         model_version=art.version,
@@ -195,6 +233,8 @@ def cohort_risk(
         overall_mean_risk=float(df["miss_probability"].mean()),
         probability_stats=stats,
         by_tier=tier_counts,
+        by_tier_dose_class=by_tier_dose_class,
+        by_tier_time_bucket=by_tier_time_bucket,
         by_dose_class=by_class,
         by_time_bucket=by_time,
         top_users=user_rows[:top_users],
