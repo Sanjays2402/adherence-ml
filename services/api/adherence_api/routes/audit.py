@@ -194,6 +194,14 @@ def list_audit(
     user_id: str | None = None,
     route: str | None = None,
     model_name: str | None = None,
+    request_id: str | None = Query(
+        None,
+        description=(
+            "Exact match on the per-request id propagated via the"
+            " ``x-request-id`` header. Lets on-call jump from a log line or"
+            " customer ticket straight to the audit row for that call."
+        ),
+    ),
     only_errors: bool = False,
     since: str | None = Query(
         None,
@@ -234,6 +242,8 @@ def list_audit(
             q = q.where(PredictionAudit.route == route)
         if model_name:
             q = q.where(PredictionAudit.model_name == model_name)
+        if request_id:
+            q = q.where(PredictionAudit.request_id == request_id)
         if only_errors:
             q = q.where(PredictionAudit.ok == 0)
         if since_dt is not None:
@@ -447,6 +457,14 @@ def export_csv(
     user_id: str | None = None,
     route: str | None = None,
     model_name: str | None = None,
+    request_id: str | None = Query(
+        None,
+        description=(
+            "Exact match on the per-request id propagated via the"
+            " ``x-request-id`` header. Useful for pulling a single-row CSV"
+            " for an incident packet."
+        ),
+    ),
     only_errors: bool = False,
     since: str | None = Query(
         None,
@@ -510,6 +528,8 @@ def export_csv(
             q = q.where(PredictionAudit.route == route)
         if model_name:
             q = q.where(PredictionAudit.model_name == model_name)
+        if request_id:
+            q = q.where(PredictionAudit.request_id == request_id)
         if only_errors:
             q = q.where(PredictionAudit.ok == 0)
         rows = list(s.scalars(q))

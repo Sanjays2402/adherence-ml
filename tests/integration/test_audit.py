@@ -146,6 +146,53 @@ def test_batch_predict_writes_per_item_audit(tmp_path, monkeypatch):
     assert len(rows) >= 3
 
 
+def test_audit_filter_by_request_id(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    _train(tmp_path)
+    from adherence_api.app import create_app
+    client = TestClient(create_app())
+
+    base = {"dose_id": "d1", "scheduled_at": "2026-03-05T08:00:00Z",
+            "dose_class": "cardio", "dose_strength_mg": 10.0}
+    # fire a few requests, capture the request id of the middle one
+    for _ in range(2):
+        client.post("/v1/predict",
+                    json={"user_id": "u_rid", "schedule": [base], "top_k_reasons": 1},
+                    headers={"x-api-key": "svc"})
+    target = client.post(
+        "/v1/predict",
+        json={"user_id": "u_rid", "schedule": [base], "top_k_reasons": 1},
+        headers={"x-api-key": "svc", "x-request-id": "req-test-1234"},
+    )
+    assert target.status_code == 200
+    for _ in range(2):
+        client.post("/v1/predict",
+                    json={"user_id": "u_rid", "schedule": [base], "top_k_reasons": 1},
+                    headers={"x-api-key": "svc"})
+
+    r = client.get("/v1/audit/list?request_id=req-test-1234",
+                   headers={"x-api-key": "adm"})
+    assert r.status_code == 200, r.text
+    rows = r.json()["items"]
+    assert len(rows) == 1
+    assert rows[0]["request_id"] == "req-test-1234"
+
+    # CSV export honors the same filter
+    r = client.get("/v1/audit/export.csv?request_id=req-test-1234",
+                   headers={"x-api-key": "adm"})
+    assert r.status_code == 200, r.text
+    assert r.headers.get("X-Row-Count") == "1"
+    body = r.text.splitlines()
+    assert len(body) == 2  # header + 1 row
+    assert "req-test-1234" in body[1]
+
+    # unknown request id returns empty
+    r = client.get("/v1/audit/list?request_id=does-not-exist",
+                   headers={"x-api-key": "adm"})
+    assert r.status_code == 200
+    assert r.json()["items"] == []
+
+
 def test_audit_list_before_id_cursor_pagination(tmp_path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)
     _train(tmp_path)
