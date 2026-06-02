@@ -915,3 +915,73 @@ def test_export_filename_includes_scored_at_date(tmp_path, monkeypatch):
         assert len(date_part) == 10 and date_part[4] == "-" and date_part[7] == "-"
         cd = r.headers["content-disposition"]
         assert f"_{date_part}.{ext}" in cd, cd
+
+
+def test_export_count_only_includes_tier_cross_tabs(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    payload = {"synthetic": {"n_users": 60, "n_days": 6, "seed": 21}}
+
+    r = c.post(
+        "/v1/cohort/risk/export",
+        params={"count_only": "true"},
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+
+    # Cross-tabs are present and shaped correctly.
+    by_tier_dc = body["by_tier_dose_class"]
+    by_tier_tb = body["by_tier_time_bucket"]
+    assert set(by_tier_dc.keys()) == set(body["by_dose_class"].keys())
+    assert set(by_tier_tb.keys()) == set(body["by_time_bucket"].keys())
+
+    # Each cell has the three tier buckets and integer counts.
+    for cls, tiers in by_tier_dc.items():
+        assert set(tiers.keys()) == {"low", "medium", "high"}
+        assert sum(tiers.values()) == body["by_dose_class"][cls]
+    for bucket, tiers in by_tier_tb.items():
+        assert set(tiers.keys()) == {"low", "medium", "high"}
+        assert sum(tiers.values()) == body["by_time_bucket"][bucket]
+
+    # Row totals across both cross-tabs equal the overall count.
+    assert sum(sum(t.values()) for t in by_tier_dc.values()) == body["count"]
+    assert sum(sum(t.values()) for t in by_tier_tb.values()) == body["count"]
+
+    # Per-tier totals across cross-tabs match the flat by_tier breakdown.
+    for tier in ("low", "medium", "high"):
+        assert sum(t[tier] for t in by_tier_dc.values()) == body["by_tier"][tier]
+        assert sum(t[tier] for t in by_tier_tb.values()) == body["by_tier"][tier]
+
+
+def test_export_count_only_tier_cross_tabs_respect_filters(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    payload = {"synthetic": {"n_users": 50, "n_days": 6, "seed": 33}}
+
+    r_all = c.post(
+        "/v1/cohort/risk/export",
+        params={"count_only": "true"},
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r_all.status_code == 200
+    pick = next(iter(r_all.json()["by_dose_class"]))
+
+    r = c.post(
+        "/v1/cohort/risk/export",
+        params={"count_only": "true", "dose_class": pick},
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert list(body["by_tier_dose_class"].keys()) == [pick]
+    assert sum(body["by_tier_dose_class"][pick].values()) == body["count"]

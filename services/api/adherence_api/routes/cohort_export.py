@@ -420,6 +420,13 @@ def cohort_risk_export(
         counts = {"low": 0, "medium": 0, "high": 0}
         by_dose_class: dict[str, int] = {}
         by_time_bucket: dict[str, int] = {}
+        # Cross-tab of risk tier per dose_class and per time_bucket.
+        # Lets staffing planners see, in one call, the severity mix
+        # inside each medication class (e.g. "how many of tonight's
+        # insulin doses are high risk vs low risk") without rerunning
+        # the export per (class, tier) or (bucket, tier) pair.
+        by_tier_dose_class: dict[str, dict[str, int]] = {}
+        by_tier_time_bucket: dict[str, dict[str, int]] = {}
         probs: list[float] = []
         total = 0
         for row in df.itertuples(index=False):
@@ -443,6 +450,14 @@ def cohort_risk_export(
             counts[tier] += 1
             by_dose_class[dose_class] = by_dose_class.get(dose_class, 0) + 1
             by_time_bucket[tb] = by_time_bucket.get(tb, 0) + 1
+            dc_tiers = by_tier_dose_class.setdefault(
+                dose_class, {"low": 0, "medium": 0, "high": 0}
+            )
+            dc_tiers[tier] += 1
+            tb_tiers = by_tier_time_bucket.setdefault(
+                tb, {"low": 0, "medium": 0, "high": 0}
+            )
+            tb_tiers[tier] += 1
             probs.append(prob)
             total += 1
         # Distribution of miss_probability across post-filter rows so
@@ -478,6 +493,12 @@ def cohort_risk_export(
                 "by_tier": counts,
                 "by_dose_class": dict(sorted(by_dose_class.items())),
                 "by_time_bucket": dict(sorted(by_time_bucket.items())),
+                "by_tier_dose_class": {
+                    k: by_tier_dose_class[k] for k in sorted(by_tier_dose_class)
+                },
+                "by_tier_time_bucket": {
+                    k: by_tier_time_bucket[k] for k in sorted(by_tier_time_bucket)
+                },
                 "probability_stats": probability_stats,
             },
             headers={
