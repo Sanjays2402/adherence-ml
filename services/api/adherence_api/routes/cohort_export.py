@@ -513,6 +513,14 @@ def cohort_risk_export(
         by_tier_time_bucket: dict[str, dict[str, int]] = {}
         probs: list[float] = []
         counted_user_ids: set[str] = set()
+        # Track the worst (highest) miss_probability we have seen per user
+        # so we can collapse to one patient-level tier per user_id at the
+        # end. Matches the rule cohort.py uses for n_users_with_high_risk /
+        # n_users_with_medium_risk: a user is `high` if any of their
+        # post-filter doses lands in the high band, `medium` only when
+        # their worst dose is in the medium band (so the two buckets are
+        # disjoint and can be summed without double-counting an outreach).
+        worst_per_user: dict[str, float] = {}
         total = 0
         for row in df.itertuples(index=False):
             uid = str(row.user_id)
@@ -545,6 +553,9 @@ def cohort_risk_export(
             tb_tiers[tier] += 1
             probs.append(prob)
             counted_user_ids.add(uid)
+            prev = worst_per_user.get(uid)
+            if prev is None or prob > prev:
+                worst_per_user[uid] = prob
             total += 1
         # Distribution of miss_probability across post-filter rows so
         # staffing planners can see, in one call, both `how many` and
@@ -587,6 +598,27 @@ def cohort_risk_export(
                 },
                 "probability_stats": probability_stats,
                 "n_users": len(counted_user_ids),
+                # Patient-level tier counts: how many distinct users land in
+                # each band, using their worst post-filter dose. Symmetric
+                # with /cohort/risk's n_users_with_high_risk /
+                # n_users_with_medium_risk so staffing planners sizing the
+                # outreach queue (one phone call per high-risk patient, not
+                # one per dose) get the same number from /cohort/risk and
+                # from /cohort/risk/export?count_only=true. The two counts
+                # are disjoint: a user with any high-risk dose is counted
+                # as high only, never as medium.
+                "n_users_with_high_risk": sum(
+                    1
+                    for v in worst_per_user.values()
+                    if v >= DEFAULT_RISK_THRESHOLDS["high"]
+                ),
+                "n_users_with_medium_risk": sum(
+                    1
+                    for v in worst_per_user.values()
+                    if DEFAULT_RISK_THRESHOLDS["medium"]
+                    <= v
+                    < DEFAULT_RISK_THRESHOLDS["high"]
+                ),
             },
             headers={
                 "X-Scored-At": scored_at,

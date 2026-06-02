@@ -1277,3 +1277,57 @@ def test_export_count_only_n_users_respects_user_filter(tmp_path, monkeypatch):
     assert r_count.status_code == 200
     body = r_count.json()
     assert body["n_users"] == 3
+
+
+def test_export_count_only_includes_patient_level_tier_counts(tmp_path, monkeypatch):
+    """count_only response should expose n_users_with_high_risk and
+    n_users_with_medium_risk so staffing planners can size the patient-level
+    outreach queue (one phone call per high-risk patient, not one per dose)
+    without paging the full /export. Symmetric with /cohort/risk."""
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    from adherence_common.constants import DEFAULT_RISK_THRESHOLDS
+
+    c = TestClient(create_app())
+
+    payload = {"synthetic": {"n_users": 60, "n_days": 7, "seed": 29}}
+
+    # Stream the full export so we can compute the expected patient-level
+    # tier counts from the same rows the count_only path iterates over.
+    r_stream = c.post(
+        "/v1/cohort/risk/export",
+        params={"limit": 100000},
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r_stream.status_code == 200
+    rows = [x for x in _parse_ndjson(r_stream.content) if x["kind"] == "row"]
+    high_t = DEFAULT_RISK_THRESHOLDS["high"]
+    med_t = DEFAULT_RISK_THRESHOLDS["medium"]
+    worst: dict[str, float] = {}
+    for r in rows:
+        uid = r["user_id"]
+        p = float(r["miss_probability"])
+        if uid not in worst or p > worst[uid]:
+            worst[uid] = p
+    expected_high = sum(1 for v in worst.values() if v >= high_t)
+    expected_medium = sum(1 for v in worst.values() if med_t <= v < high_t)
+
+    r_count = c.post(
+        "/v1/cohort/risk/export",
+        params={"count_only": "true"},
+        json=payload,
+        headers={"x-api-key": "svc"},
+    )
+    assert r_count.status_code == 200
+    body = r_count.json()
+    assert body["n_users_with_high_risk"] == expected_high
+    assert body["n_users_with_medium_risk"] == expected_medium
+    # Disjoint: a user with any high-risk dose never lands in the medium
+    # bucket, so the two patient-level counts can be summed without
+    # double-counting an outreach.
+    assert (
+        body["n_users_with_high_risk"] + body["n_users_with_medium_risk"]
+        <= body["n_users"]
+    )
