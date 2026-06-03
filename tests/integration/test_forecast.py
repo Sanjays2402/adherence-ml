@@ -106,6 +106,8 @@ def test_forecast_with_derived_schedule(tmp_path, monkeypatch):
     worst_row = next(d for d in body["by_day"] if d["date"] == expected_worst)
     assert body["worst_day_n_doses"] == worst_row["n_doses"]
     assert abs(body["worst_day_projected_adherence_rate"] - worst_row["projected_adherence_rate"]) < 1e-9
+    assert body["worst_day_high_risk_count"] == worst_row["high_risk_count"]
+    assert body["worst_day_medium_risk_count"] == worst_row["medium_risk_count"]
     rate = body["overall_projected_adherence_rate"]
     assert 0.0 <= rate <= 1.0
     assert body["overall_adherence_ci_low"] <= rate <= body["overall_adherence_ci_high"]

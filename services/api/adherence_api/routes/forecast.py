@@ -77,6 +77,8 @@ class ForecastResponse(BaseModel):
     worst_day_expected_misses: float  # expected_misses on `worst_day` so the outreach planner can render 'check in Thursday, ~3.2 projected misses' without iterating by_day client-side
     worst_day_n_doses: int  # n_doses on `worst_day` so the outreach planner can render '5 doses on Thursday' (the denominator the projected miss count is drawn from) without iterating by_day client-side, 0 only if no doses were scored
     worst_day_projected_adherence_rate: float  # projected_adherence_rate on `worst_day` so the outreach planner can render '~3.2 projected misses out of 5 doses (64% adherence) on Thursday' inline without iterating by_day client-side, 0.0 only if no doses were scored
+    worst_day_high_risk_count: int  # high_risk_count on `worst_day` so the outreach planner can size the nurse-call queue for the peak day ('Thursday: 3 high-risk doses to call about') without iterating by_day client-side, 0 only if no doses were scored
+    worst_day_medium_risk_count: int  # medium_risk_count on `worst_day` so the outreach planner can size the second-tier text/nudge queue for the peak day without iterating by_day client-side, 0 only if no doses were scored
     by_day: list[DailyForecast]
     schedule_source: str  # "supplied" | "derived"
 
@@ -241,12 +243,16 @@ def forecast_user(
     worst_day_expected_misses = 0.0
     worst_day_n_doses = 0
     worst_day_projected_adherence_rate = 0.0
+    worst_day_high_risk_count = 0
+    worst_day_medium_risk_count = 0
     for d in daily:
         if worst_day is None or d.expected_misses > worst_day_expected_misses:
             worst_day = d.date
             worst_day_expected_misses = d.expected_misses
             worst_day_n_doses = d.n_doses
             worst_day_projected_adherence_rate = d.projected_adherence_rate
+            worst_day_high_risk_count = d.high_risk_count
+            worst_day_medium_risk_count = d.medium_risk_count
 
     return ForecastResponse(
         user_id=req.user_id,
@@ -264,6 +270,8 @@ def forecast_user(
         worst_day_expected_misses=worst_day_expected_misses,
         worst_day_n_doses=worst_day_n_doses,
         worst_day_projected_adherence_rate=worst_day_projected_adherence_rate,
+        worst_day_high_risk_count=worst_day_high_risk_count,
+        worst_day_medium_risk_count=worst_day_medium_risk_count,
         by_day=daily,
         schedule_source=source,
     )
