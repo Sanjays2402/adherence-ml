@@ -325,3 +325,45 @@ def test_forecast_bootstrap_zero_collapses_to_point(tmp_path, monkeypatch):
     body = r.json()
     assert abs(body["overall_adherence_ci_low"] - body["overall_projected_adherence_rate"]) < 1e-9
     assert abs(body["overall_adherence_ci_high"] - body["overall_projected_adherence_rate"]) < 1e-9
+
+
+def test_forecast_include_predictions_opt_in(tmp_path, monkeypatch):
+    """include_predictions=true returns per-dose rows; default omits them."""
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    payload = {
+        "user_id": "u_forecast_1",
+        "history": _history_for(),
+        "horizon_days": 3,
+        "starting_at": "2026-05-20T00:00:00+00:00",
+        "bootstrap_iterations": 0,
+    }
+    # Default: predictions omitted (null) to keep payload small.
+    r = c.post("/v1/forecast/user", json=payload, headers={"x-api-key": "svc"})
+    assert r.status_code == 200, r.text
+    assert r.json().get("predictions") is None
+
+    # Opt-in: predictions populated, sorted by scheduled_at then dose_id, and
+    # internally consistent with the aggregates the response already reports.
+    payload["include_predictions"] = True
+    r = c.post("/v1/forecast/user", json=payload, headers={"x-api-key": "svc"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    preds = body["predictions"]
+    assert isinstance(preds, list)
+    assert len(preds) == body["n_doses_scored"] == 6  # 2 doses/day * 3 days
+    keys = [(p["scheduled_at"], p["dose_id"]) for p in preds]
+    assert keys == sorted(keys)
+    for p in preds:
+        assert 0.0 <= p["miss_probability"] <= 1.0
+        assert p["risk_tier"] in ("low", "medium", "high")
+        assert p["dose_class"] is None or p["dose_class"] in ("cardio", "psych")
+    # Aggregates derived from predictions must match the reported totals.
+    assert abs(sum(p["miss_probability"] for p in preds) - body["total_expected_misses"]) < 1e-6
+    assert sum(1 for p in preds if p["risk_tier"] == "high") == body["total_high_risk_count"]
+    # First prediction must match the next_dose pointer.
+    assert preds[0]["dose_id"] == body["next_dose_id"]
+    assert preds[0]["scheduled_at"].startswith(body["next_dose_scheduled_at"][:16])

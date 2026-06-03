@@ -49,6 +49,24 @@ class ForecastRequest(BaseModel):
     )
     bootstrap_iterations: int = Field(200, ge=0, le=2000)
     seed: int = Field(11, ge=0)
+    include_predictions: bool = Field(
+        False,
+        description=(
+            "If true, the response includes a `predictions` list with one row per "
+            "scored dose (dose_id, scheduled_at, miss_probability, risk_tier, "
+            "dose_class) sorted by scheduled_at then dose_id, so outreach UIs can "
+            "render the full per-dose nudge queue without a follow-up /predict round "
+            "trip. Off by default to keep the default payload small."
+        ),
+    )
+
+
+class DosePrediction(BaseModel):
+    dose_id: str
+    scheduled_at: datetime
+    miss_probability: float
+    risk_tier: str | None
+    dose_class: str | None
 
 
 class DailyForecast(BaseModel):
@@ -104,6 +122,7 @@ class ForecastResponse(BaseModel):
     peak_risk_dose_dose_class: str | None  # dose_class of `peak_risk_dose_id` so outreach UIs can render 'psych dose at 21:00 Tuesday' inline; null when peak_risk_dose_id is null, symmetric with first_high_risk_dose_dose_class
     peak_risk_dose_days_out: int  # zero-based day offset from the forecast start (starting_at.date()) to `peak_risk_dose_scheduled_at.date()` so outreach UIs can render 'peak-risk dose in 2 days, nudge before then' inline without parsing peak_risk_dose_scheduled_at vs starting_at client-side and absorbing timezone/DST off-by-ones; 0 means same calendar day as starting_at, -1 only when peak_risk_dose_id is null, symmetric with next_dose_days_out and first_high_risk_dose_days_out
     by_day: list[DailyForecast]
+    predictions: list[DosePrediction] | None = None  # per-dose predictions, populated only when the request sets include_predictions=true; sorted by scheduled_at then dose_id
     schedule_source: str  # "supplied" | "derived"
 
 
@@ -427,5 +446,30 @@ def forecast_user(
         peak_risk_dose_dose_class=peak_risk_dose_dose_class,
         peak_risk_dose_days_out=peak_risk_dose_days_out,
         by_day=daily,
+        predictions=(
+            sorted(
+                [
+                    DosePrediction(
+                        dose_id=str(p.get("dose_id", "")),
+                        scheduled_at=(
+                            datetime.fromisoformat(p["scheduled_at"].replace("Z", "+00:00"))
+                            if isinstance(p["scheduled_at"], str)
+                            else (
+                                p["scheduled_at"].replace(tzinfo=timezone.utc)
+                                if p["scheduled_at"].tzinfo is None
+                                else p["scheduled_at"]
+                            )
+                        ),
+                        miss_probability=float(p["miss_probability"]),
+                        risk_tier=p.get("risk_tier"),
+                        dose_class=p.get("dose_class"),
+                    )
+                    for p in preds
+                ],
+                key=lambda d: (d.scheduled_at, d.dose_id),
+            )
+            if req.include_predictions
+            else None
+        ),
         schedule_source=source,
     )
