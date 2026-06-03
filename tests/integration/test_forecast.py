@@ -164,6 +164,10 @@ def test_forecast_with_derived_schedule(tmp_path, monkeypatch):
     assert body["next_dose_scheduled_at"].startswith("2026-05-20T08:00")
     assert 0.0 <= body["next_dose_miss_probability"] <= 1.0
     assert body["next_dose_risk_tier"] in ("low", "medium", "high")
+    # next_dose_days_out is zero-based offset from starting_at.date() to the
+    # earliest scheduled dose's date; should be 0 since 2026-05-20T08:00 is
+    # the same calendar day as the default starting_at=2026-05-20T00:00.
+    assert body["next_dose_days_out"] == 0
     # first_high_risk_dose pointer: earliest scheduled dose in the horizon
     # whose risk_tier == 'high', ties broken by dose_id; null when no dose
     # is high risk. Dose-level analogue of first_high_risk_day.
@@ -175,6 +179,7 @@ def test_forecast_with_derived_schedule(tmp_path, monkeypatch):
         assert body["first_high_risk_dose_scheduled_at"] is None
         assert body["first_high_risk_dose_miss_probability"] == 0.0
         assert body["first_high_risk_dose_dose_class"] is None
+        assert body["first_high_risk_dose_days_out"] == -1
     else:
         assert body["first_high_risk_dose_id"] is not None
         assert body["first_high_risk_dose_scheduled_at"] is not None
@@ -186,6 +191,10 @@ def test_forecast_with_derived_schedule(tmp_path, monkeypatch):
         )
         assert 0.0 <= body["first_high_risk_dose_miss_probability"] <= 1.0
         assert body["first_high_risk_dose_dose_class"] in ("cardio", "psych")
+        # first_high_risk_dose_days_out must match first_high_risk_day_days_out
+        # since the earliest high-risk dose lands on the first high-risk day.
+        assert body["first_high_risk_dose_days_out"] == body["first_high_risk_day_days_out"]
+        assert body["first_high_risk_dose_days_out"] >= 0
 
 
 def test_forecast_with_supplied_schedule(tmp_path, monkeypatch):

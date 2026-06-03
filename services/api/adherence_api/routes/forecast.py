@@ -91,10 +91,12 @@ class ForecastResponse(BaseModel):
     next_dose_scheduled_at: datetime | None  # scheduled_at of `next_dose_id` (UTC, ISO-8601) so outreach UIs can render the wall-clock time without re-resolving from by_day; null when next_dose_id is null
     next_dose_miss_probability: float  # miss_probability of `next_dose_id` so outreach UIs can render '87% miss' for the next upcoming dose without iterating predictions client-side; 0.0 only when next_dose_id is null
     next_dose_risk_tier: str | None  # risk_tier (low|medium|high) of `next_dose_id` so outreach UIs can color the next-dose badge without iterating predictions client-side; null when next_dose_id is null
+    next_dose_days_out: int  # zero-based day offset from the forecast start (starting_at.date()) to `next_dose_scheduled_at.date()` so outreach UIs can render 'next dose in 0 days' / 'next dose tomorrow' inline without parsing next_dose_scheduled_at vs starting_at client-side and absorbing timezone/DST off-by-ones; 0 means same calendar day as starting_at, -1 only when next_dose_id is null (no doses scored), symmetric with worst_day_days_out and first_high_risk_day_days_out
     first_high_risk_dose_id: str | None  # dose_id of the earliest scheduled dose in the horizon whose risk_tier == 'high' (ties broken by dose_id) so outreach UIs can render 'first high-risk dose: 21:00 Tuesday, psych 5mg (87% miss) - nudge now' and link the per-dose nudge action without iterating predictions client-side to find the first high-tier row; null when no horizon dose is high risk, dose-level analogue of first_high_risk_day and symmetric with next_dose_id
     first_high_risk_dose_scheduled_at: datetime | None  # scheduled_at of `first_high_risk_dose_id` (UTC, ISO-8601) so outreach UIs can render the wall-clock time without re-resolving from predictions; null when first_high_risk_dose_id is null, symmetric with next_dose_scheduled_at
     first_high_risk_dose_miss_probability: float  # miss_probability of `first_high_risk_dose_id` so outreach UIs can render '87% miss' for the first upcoming high-risk dose without iterating predictions client-side; 0.0 only when first_high_risk_dose_id is null, symmetric with next_dose_miss_probability
     first_high_risk_dose_dose_class: str | None  # dose_class of `first_high_risk_dose_id` so outreach UIs can render 'psych dose at 21:00 Tuesday' inline; null when first_high_risk_dose_id is null
+    first_high_risk_dose_days_out: int  # zero-based day offset from the forecast start (starting_at.date()) to `first_high_risk_dose_scheduled_at.date()` so outreach UIs can render 'first high-risk dose in 2 days, nudge before then' inline without parsing first_high_risk_dose_scheduled_at vs starting_at client-side and absorbing timezone/DST off-by-ones; 0 means same calendar day as starting_at, -1 only when first_high_risk_dose_id is null (no horizon dose is high risk), symmetric with next_dose_days_out and first_high_risk_day_days_out
     by_day: list[DailyForecast]
     schedule_source: str  # "supplied" | "derived"
 
@@ -332,6 +334,17 @@ def forecast_user(
                 datetime.fromisoformat(d.date).date() - start_date
             ).days
 
+    next_dose_days_out = (
+        (next_dose_scheduled_at.date() - start_date).days
+        if next_dose_scheduled_at is not None
+        else -1
+    )
+    first_high_risk_dose_days_out = (
+        (first_high_risk_dose_scheduled_at.date() - start_date).days
+        if first_high_risk_dose_scheduled_at is not None
+        else -1
+    )
+
     return ForecastResponse(
         user_id=req.user_id,
         model_name=model_name,
@@ -362,10 +375,12 @@ def forecast_user(
         next_dose_scheduled_at=next_dose_scheduled_at,
         next_dose_miss_probability=next_dose_miss_probability,
         next_dose_risk_tier=next_dose_risk_tier,
+        next_dose_days_out=next_dose_days_out,
         first_high_risk_dose_id=first_high_risk_dose_id,
         first_high_risk_dose_scheduled_at=first_high_risk_dose_scheduled_at,
         first_high_risk_dose_miss_probability=first_high_risk_dose_miss_probability,
         first_high_risk_dose_dose_class=first_high_risk_dose_dose_class,
+        first_high_risk_dose_days_out=first_high_risk_dose_days_out,
         by_day=daily,
         schedule_source=source,
     )
