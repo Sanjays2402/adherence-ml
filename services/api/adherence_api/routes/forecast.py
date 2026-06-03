@@ -75,6 +75,8 @@ class ForecastResponse(BaseModel):
     total_medium_risk_count: int
     worst_day: str | None  # date (YYYY-MM-DD) with the highest expected_misses, ties broken by earliest date; null only if no doses were scored
     worst_day_expected_misses: float  # expected_misses on `worst_day` so the outreach planner can render 'check in Thursday, ~3.2 projected misses' without iterating by_day client-side
+    worst_day_n_doses: int  # n_doses on `worst_day` so the outreach planner can render '5 doses on Thursday' (the denominator the projected miss count is drawn from) without iterating by_day client-side, 0 only if no doses were scored
+    worst_day_projected_adherence_rate: float  # projected_adherence_rate on `worst_day` so the outreach planner can render '~3.2 projected misses out of 5 doses (64% adherence) on Thursday' inline without iterating by_day client-side, 0.0 only if no doses were scored
     by_day: list[DailyForecast]
     schedule_source: str  # "supplied" | "derived"
 
@@ -237,10 +239,14 @@ def forecast_user(
     # date so the queue is deterministic across runs.
     worst_day: str | None = None
     worst_day_expected_misses = 0.0
+    worst_day_n_doses = 0
+    worst_day_projected_adherence_rate = 0.0
     for d in daily:
         if worst_day is None or d.expected_misses > worst_day_expected_misses:
             worst_day = d.date
             worst_day_expected_misses = d.expected_misses
+            worst_day_n_doses = d.n_doses
+            worst_day_projected_adherence_rate = d.projected_adherence_rate
 
     return ForecastResponse(
         user_id=req.user_id,
@@ -256,6 +262,8 @@ def forecast_user(
         total_medium_risk_count=total_medium,
         worst_day=worst_day,
         worst_day_expected_misses=worst_day_expected_misses,
+        worst_day_n_doses=worst_day_n_doses,
+        worst_day_projected_adherence_rate=worst_day_projected_adherence_rate,
         by_day=daily,
         schedule_source=source,
     )
