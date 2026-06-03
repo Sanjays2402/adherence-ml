@@ -96,6 +96,16 @@ def test_forecast_with_derived_schedule(tmp_path, monkeypatch):
         total_expected += day["expected_misses"]
     assert body["total_high_risk_count"] == total_high
     assert body["total_medium_risk_count"] == total_medium
+    # n_high_risk_days / n_medium_risk_days count the by_day rows whose
+    # high_risk_count / medium_risk_count are > 0 (days, not doses) so
+    # outreach planners can render '3 of the next 7 days have a high-risk
+    # dose' without iterating by_day client-side.
+    expected_n_high_days = sum(1 for d in body["by_day"] if d["high_risk_count"] > 0)
+    expected_n_medium_days = sum(1 for d in body["by_day"] if d["medium_risk_count"] > 0)
+    assert body["n_high_risk_days"] == expected_n_high_days
+    assert body["n_medium_risk_days"] == expected_n_medium_days
+    assert 0 <= body["n_high_risk_days"] <= len(body["by_day"])
+    assert 0 <= body["n_medium_risk_days"] <= len(body["by_day"])
     assert abs(body["total_expected_misses"] - total_expected) < 1e-6
     # worst_day should point at the by_day row with the largest expected_misses,
     # ties broken by earliest date.
