@@ -438,3 +438,74 @@ def test_forecast_predictions_min_risk_tier_filter(tmp_path, monkeypatch):
     r = c.post("/v1/forecast/user", json=payload, headers={"x-api-key": "svc"})
     assert r.status_code == 200, r.text
     assert r.json().get("predictions") is None
+
+
+def test_forecast_predictions_limit_top_n(tmp_path, monkeypatch):
+    """predictions_limit caps the list to top-N by miss_probability desc; aggregates unchanged."""
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    payload = {
+        "user_id": "u_forecast_1",
+        "history": _history_for(),
+        "horizon_days": 5,
+        "starting_at": "2026-05-20T00:00:00+00:00",
+        "bootstrap_iterations": 0,
+        "include_predictions": True,
+    }
+    r = c.post("/v1/forecast/user", json=payload, headers={"x-api-key": "svc"})
+    assert r.status_code == 200, r.text
+    full = r.json()
+    full_preds = full["predictions"]
+    assert len(full_preds) > 3
+    assert full.get("predictions_truncated") is False
+
+    # Cap at 3 highest-miss_probability doses.
+    payload["predictions_limit"] = 3
+    r = c.post("/v1/forecast/user", json=payload, headers={"x-api-key": "svc"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    capped = body["predictions"]
+    assert len(capped) == 3
+    assert body["predictions_truncated"] is True
+    # Sorted by miss_probability desc.
+    probs = [p["miss_probability"] for p in capped]
+    assert probs == sorted(probs, reverse=True)
+    # Returned rows are exactly the top 3 of the full set.
+    top3_expected = sorted(
+        full_preds,
+        key=lambda p: (-p["miss_probability"], p["scheduled_at"], p["dose_id"]),
+    )[:3]
+    assert [p["dose_id"] for p in capped] == [p["dose_id"] for p in top3_expected]
+    # Roll-up aggregates unaffected by the cap.
+    assert body["n_doses_scored"] == full["n_doses_scored"]
+    assert abs(body["total_expected_misses"] - full["total_expected_misses"]) < 1e-9
+    assert body["total_high_risk_count"] == full["total_high_risk_count"]
+
+    # Cap >= eligible count: predictions_truncated stays false.
+    payload["predictions_limit"] = len(full_preds) + 10
+    r = c.post("/v1/forecast/user", json=payload, headers={"x-api-key": "svc"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert len(body["predictions"]) == len(full_preds)
+    assert body["predictions_truncated"] is False
+
+    # Limit composes with predictions_min_risk_tier: filter first, then cap.
+    payload["predictions_limit"] = 2
+    payload["predictions_min_risk_tier"] = "medium"
+    r = c.post("/v1/forecast/user", json=payload, headers={"x-api-key": "svc"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    n_med_or_high = sum(1 for p in full_preds if p["risk_tier"] in ("medium", "high"))
+    assert len(body["predictions"]) == min(2, n_med_or_high)
+    assert all(p["risk_tier"] in ("medium", "high") for p in body["predictions"])
+    assert body["predictions_truncated"] is (n_med_or_high > 2)
+
+    # Limit is a no-op when include_predictions is false.
+    payload["include_predictions"] = False
+    r = c.post("/v1/forecast/user", json=payload, headers={"x-api-key": "svc"})
+    assert r.status_code == 200, r.text
+    assert r.json().get("predictions") is None
+    assert r.json().get("predictions_truncated") is False

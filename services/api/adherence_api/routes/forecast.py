@@ -72,6 +72,25 @@ class ForecastRequest(BaseModel):
             "always computed against the full horizon and are unaffected by this filter."
         ),
     )
+    predictions_limit: int | None = Field(
+        None,
+        ge=1,
+        le=1000,
+        description=(
+            "Only honored when include_predictions=true. If set, the returned "
+            "`predictions` list is capped at the top N highest-miss_probability doses "
+            "(ties broken by earliest scheduled_at, then dose_id) so an outreach UI can "
+            "fetch a fixed-size nudge queue ('top 20 doses to call about today') without "
+            "paging the full horizon or sorting client-side. Applied after "
+            "predictions_min_risk_tier. When set, the predictions list is sorted by "
+            "miss_probability desc instead of the default scheduled_at asc, since the "
+            "point of capping is to surface peak severity. `predictions_truncated` in the "
+            "response is true iff the cap dropped any rows. Null returns all scored doses "
+            "sorted by scheduled_at then dose_id (current behavior). Roll-up aggregates "
+            "(total_expected_misses, by_day, worst_day, next_dose, etc) are always "
+            "computed against the full horizon and are unaffected by this cap."
+        ),
+    )
 
 
 class DosePrediction(BaseModel):
@@ -138,7 +157,8 @@ class ForecastResponse(BaseModel):
     peak_risk_dose_dose_class: str | None  # dose_class of `peak_risk_dose_id` so outreach UIs can render 'psych dose at 21:00 Tuesday' inline; null when peak_risk_dose_id is null, symmetric with first_high_risk_dose_dose_class
     peak_risk_dose_days_out: int  # zero-based day offset from the forecast start (starting_at.date()) to `peak_risk_dose_scheduled_at.date()` so outreach UIs can render 'peak-risk dose in 2 days, nudge before then' inline without parsing peak_risk_dose_scheduled_at vs starting_at client-side and absorbing timezone/DST off-by-ones; 0 means same calendar day as starting_at, -1 only when peak_risk_dose_id is null, symmetric with next_dose_days_out and first_high_risk_dose_days_out
     by_day: list[DailyForecast]
-    predictions: list[DosePrediction] | None = None  # per-dose predictions, populated only when the request sets include_predictions=true; sorted by scheduled_at then dose_id
+    predictions: list[DosePrediction] | None = None  # per-dose predictions, populated only when the request sets include_predictions=true; sorted by scheduled_at then dose_id by default, or by miss_probability desc (ties: earliest scheduled_at, then dose_id) when predictions_limit is set
+    predictions_truncated: bool = False  # true iff predictions_limit was set and at least one dose was dropped from the returned list (after any predictions_min_risk_tier filter), so outreach UIs know to surface 'showing top N of M' without recomputing the eligible count client-side; always false when predictions is null or predictions_limit is null
     schedule_source: str  # "supplied" | "derived"
 
 
@@ -411,6 +431,51 @@ def forecast_user(
                 datetime.fromisoformat(d.date).date() - start_date
             ).days
 
+    # Build the per-dose predictions list (only when the caller asked for it).
+    # Steps: filter by predictions_min_risk_tier, then either sort by
+    # (scheduled_at, dose_id) asc (default) or by miss_probability desc with
+    # (scheduled_at, dose_id) tiebreakers when predictions_limit is set, then
+    # cap at predictions_limit. predictions_truncated tells the UI whether the
+    # cap dropped any rows so it can render 'showing top N of M'.
+    predictions_out: list[DosePrediction] | None = None
+    predictions_truncated = False
+    if req.include_predictions:
+        def _filter_ok(row: dict[str, Any]) -> bool:
+            tier = row.get("risk_tier")
+            mrt = req.predictions_min_risk_tier
+            if mrt is None or mrt == "low":
+                return True
+            if mrt == "medium":
+                return tier in ("medium", "high")
+            return tier == "high"
+
+        filtered: list[DosePrediction] = []
+        for p in preds:
+            if not _filter_ok(p):
+                continue
+            raw_sched = p["scheduled_at"]
+            if isinstance(raw_sched, str):
+                sched = datetime.fromisoformat(raw_sched.replace("Z", "+00:00"))
+            elif raw_sched.tzinfo is None:
+                sched = raw_sched.replace(tzinfo=timezone.utc)
+            else:
+                sched = raw_sched
+            filtered.append(DosePrediction(
+                dose_id=str(p.get("dose_id", "")),
+                scheduled_at=sched,
+                miss_probability=float(p["miss_probability"]),
+                risk_tier=p.get("risk_tier"),
+                dose_class=p.get("dose_class"),
+            ))
+        if req.predictions_limit is not None:
+            filtered.sort(key=lambda d: (-d.miss_probability, d.scheduled_at, d.dose_id))
+            if len(filtered) > req.predictions_limit:
+                predictions_truncated = True
+                filtered = filtered[: req.predictions_limit]
+        else:
+            filtered.sort(key=lambda d: (d.scheduled_at, d.dose_id))
+        predictions_out = filtered
+
     next_dose_days_out = (
         (next_dose_scheduled_at.date() - start_date).days
         if next_dose_scheduled_at is not None
@@ -473,42 +538,7 @@ def forecast_user(
         peak_risk_dose_dose_class=peak_risk_dose_dose_class,
         peak_risk_dose_days_out=peak_risk_dose_days_out,
         by_day=daily,
-        predictions=(
-            sorted(
-                [
-                    DosePrediction(
-                        dose_id=str(p.get("dose_id", "")),
-                        scheduled_at=(
-                            datetime.fromisoformat(p["scheduled_at"].replace("Z", "+00:00"))
-                            if isinstance(p["scheduled_at"], str)
-                            else (
-                                p["scheduled_at"].replace(tzinfo=timezone.utc)
-                                if p["scheduled_at"].tzinfo is None
-                                else p["scheduled_at"]
-                            )
-                        ),
-                        miss_probability=float(p["miss_probability"]),
-                        risk_tier=p.get("risk_tier"),
-                        dose_class=p.get("dose_class"),
-                    )
-                    for p in preds
-                    if (
-                        req.predictions_min_risk_tier is None
-                        or req.predictions_min_risk_tier == "low"
-                        or (
-                            req.predictions_min_risk_tier == "medium"
-                            and p.get("risk_tier") in ("medium", "high")
-                        )
-                        or (
-                            req.predictions_min_risk_tier == "high"
-                            and p.get("risk_tier") == "high"
-                        )
-                    )
-                ],
-                key=lambda d: (d.scheduled_at, d.dose_id),
-            )
-            if req.include_predictions
-            else None
-        ),
+        predictions=predictions_out,
+        predictions_truncated=predictions_truncated,
         schedule_source=source,
     )
