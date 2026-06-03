@@ -97,6 +97,12 @@ def test_forecast_with_derived_schedule(tmp_path, monkeypatch):
     assert body["total_high_risk_count"] == total_high
     assert body["total_medium_risk_count"] == total_medium
     assert abs(body["total_expected_misses"] - total_expected) < 1e-6
+    # worst_day should point at the by_day row with the largest expected_misses,
+    # ties broken by earliest date.
+    max_em = max(d["expected_misses"] for d in body["by_day"])
+    expected_worst = next(d["date"] for d in body["by_day"] if d["expected_misses"] == max_em)
+    assert body["worst_day"] == expected_worst
+    assert abs(body["worst_day_expected_misses"] - max_em) < 1e-9
     rate = body["overall_projected_adherence_rate"]
     assert 0.0 <= rate <= 1.0
     assert body["overall_adherence_ci_low"] <= rate <= body["overall_adherence_ci_high"]

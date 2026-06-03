@@ -73,6 +73,8 @@ class ForecastResponse(BaseModel):
     total_expected_misses: float  # sum of miss_probability across the full horizon
     total_high_risk_count: int
     total_medium_risk_count: int
+    worst_day: str | None  # date (YYYY-MM-DD) with the highest expected_misses, ties broken by earliest date; null only if no doses were scored
+    worst_day_expected_misses: float  # expected_misses on `worst_day` so the outreach planner can render 'check in Thursday, ~3.2 projected misses' without iterating by_day client-side
     by_day: list[DailyForecast]
     schedule_source: str  # "supplied" | "derived"
 
@@ -230,6 +232,16 @@ def forecast_user(
     overall_mean_miss = sum(all_probs) / len(all_probs) if all_probs else 0.0
     lo, hi = _bootstrap_ci(all_probs, iterations=req.bootstrap_iterations, seed=req.seed)
 
+    # Peak-day pointer for outreach planners: which calendar day in the
+    # horizon has the highest projected miss volume? Ties go to the earliest
+    # date so the queue is deterministic across runs.
+    worst_day: str | None = None
+    worst_day_expected_misses = 0.0
+    for d in daily:
+        if worst_day is None or d.expected_misses > worst_day_expected_misses:
+            worst_day = d.date
+            worst_day_expected_misses = d.expected_misses
+
     return ForecastResponse(
         user_id=req.user_id,
         model_name=model_name,
@@ -242,6 +254,8 @@ def forecast_user(
         total_expected_misses=sum(all_probs),
         total_high_risk_count=total_high,
         total_medium_risk_count=total_medium,
+        worst_day=worst_day,
+        worst_day_expected_misses=worst_day_expected_misses,
         by_day=daily,
         schedule_source=source,
     )
