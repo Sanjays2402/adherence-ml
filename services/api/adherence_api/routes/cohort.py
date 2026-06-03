@@ -241,7 +241,7 @@ def cohort_risk(
     top_users: int = Query(10, ge=1, le=100),
     sort_by: str = Query(
         "mean",
-        pattern="^(mean|expected_misses|n_high_risk|n_medium_risk)$",
+        pattern="^(mean|expected_misses|n_high_risk|n_medium_risk|worst_miss_probability)$",
         description=(
             "Ordering for top_users. 'mean' (default) ranks by mean_miss_probability "
             "so the most severe per-dose risk surfaces first. 'expected_misses' ranks "
@@ -252,7 +252,11 @@ def cohort_risk(
             "doses is one phone call) and matches how staffing capacity is planned. "
             "'n_medium_risk' ranks by the count of doses in the medium band per user, "
             "which sizes the second-tier outreach queue (text/nudge per patient) "
-            "symmetric with n_high_risk so the same planner view drives both channels."
+            "symmetric with n_high_risk so the same planner view drives both channels. "
+            "'worst_miss_probability' ranks by each user's single highest-risk dose "
+            "(peak severity, the same dose worst_dose_class/worst_time_bucket describe) "
+            "so triage queues surface 'whoever has the scariest single dose' even when "
+            "a long tail of low-risk doses drags mean_miss_probability down."
         ),
     ),
     min_doses: int = Query(
@@ -362,6 +366,15 @@ def cohort_risk(
         # the text/nudge leaderboard stable for planners.
         user_rows.sort(
             key=lambda b: (b.n_medium_risk, b.mean_miss_probability),
+            reverse=True,
+        )
+    elif sort_by == "worst_miss_probability":
+        # Rank by peak severity (the user's single highest-risk dose, same
+        # dose worst_dose_class/worst_time_bucket describe). Tie-break on
+        # mean_miss_probability so users with identical peak severity surface
+        # in average-severity order, keeping the triage leaderboard stable.
+        user_rows.sort(
+            key=lambda b: (b.worst_miss_probability or 0.0, b.mean_miss_probability),
             reverse=True,
         )
     else:
