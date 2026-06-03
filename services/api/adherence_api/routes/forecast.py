@@ -82,6 +82,9 @@ class ForecastResponse(BaseModel):
     worst_day_days_out: int  # zero-based day offset from the forecast start (starting_at.date()) to `worst_day` so the outreach planner can render 'peak miss day is in 2 days' inline without parsing worst_day vs starting_at client-side and absorbing timezone/DST off-by-ones; 0 means same day as starting_at, -1 only when worst_day is null (no doses scored), symmetric with first_high_risk_day_days_out
     first_high_risk_day: str | None  # earliest date (YYYY-MM-DD) in the horizon whose high_risk_count > 0 so the outreach planner can render 'first high-risk dose is Tuesday, call before then' and schedule the nurse outreach against the upstream calendar day without iterating by_day client-side; null when no horizon day contains a high-risk dose
     first_high_risk_day_high_risk_count: int  # high_risk_count on `first_high_risk_day` so the outreach planner can render 'Tuesday: 3 high-risk doses to call about (first such day)' inline, 0 only if first_high_risk_day is null
+    first_high_risk_day_medium_risk_count: int  # medium_risk_count on `first_high_risk_day` so the outreach planner can size the second-tier text/nudge queue for the first escalation day inline ('Tuesday: 3 high-risk plus 2 medium-risk doses') without iterating by_day client-side, 0 only if first_high_risk_day is null, symmetric with worst_day_medium_risk_count
+    first_high_risk_day_n_doses: int  # n_doses on `first_high_risk_day` so the outreach planner can render 'Tuesday: 3 of 5 doses are high risk' (the denominator the high_risk_count is drawn from) without iterating by_day client-side, 0 only if first_high_risk_day is null, symmetric with worst_day_n_doses
+    first_high_risk_day_projected_adherence_rate: float  # projected_adherence_rate on `first_high_risk_day` so the outreach planner can render '~2.4 projected misses out of 5 doses (52% adherence) on Tuesday, first high-risk day' inline without iterating by_day client-side, 0.0 only if first_high_risk_day is null, symmetric with worst_day_projected_adherence_rate
     first_high_risk_day_expected_misses: float  # expected_misses on `first_high_risk_day` so the outreach planner can render 'first high-risk dose Tuesday, ~2.4 projected misses' inline without iterating by_day client-side to find the first high-risk row, 0.0 only if first_high_risk_day is null, symmetric with worst_day_expected_misses
     first_high_risk_day_days_out: int  # zero-based day offset from the forecast start (starting_at.date()) to `first_high_risk_day` so the outreach planner can render 'first high-risk dose is in 2 days' inline without parsing first_high_risk_day vs starting_at client-side and absorbing timezone/DST off-by-ones; 0 means same day as starting_at, -1 only when first_high_risk_day is null
     next_dose_id: str | None  # dose_id of the earliest upcoming dose in the horizon (earliest scheduled_at, ties broken by dose_id) so outreach UIs can render 'next dose: 21:00 today, high risk (87% miss)' and link the per-dose nudge action without iterating the full by_day/predictions list client-side; null only when no doses were scored
@@ -301,6 +304,9 @@ def forecast_user(
     worst_day_days_out = -1
     first_high_risk_day: str | None = None
     first_high_risk_day_high_risk_count = 0
+    first_high_risk_day_medium_risk_count = 0
+    first_high_risk_day_n_doses = 0
+    first_high_risk_day_projected_adherence_rate = 0.0
     first_high_risk_day_expected_misses = 0.0
     first_high_risk_day_days_out = -1
     start_date = start.date()
@@ -318,6 +324,9 @@ def forecast_user(
         if first_high_risk_day is None and d.high_risk_count > 0:
             first_high_risk_day = d.date
             first_high_risk_day_high_risk_count = d.high_risk_count
+            first_high_risk_day_medium_risk_count = d.medium_risk_count
+            first_high_risk_day_n_doses = d.n_doses
+            first_high_risk_day_projected_adherence_rate = d.projected_adherence_rate
             first_high_risk_day_expected_misses = d.expected_misses
             first_high_risk_day_days_out = (
                 datetime.fromisoformat(d.date).date() - start_date
@@ -344,6 +353,9 @@ def forecast_user(
         worst_day_days_out=worst_day_days_out,
         first_high_risk_day=first_high_risk_day,
         first_high_risk_day_high_risk_count=first_high_risk_day_high_risk_count,
+        first_high_risk_day_medium_risk_count=first_high_risk_day_medium_risk_count,
+        first_high_risk_day_n_doses=first_high_risk_day_n_doses,
+        first_high_risk_day_projected_adherence_rate=first_high_risk_day_projected_adherence_rate,
         first_high_risk_day_expected_misses=first_high_risk_day_expected_misses,
         first_high_risk_day_days_out=first_high_risk_day_days_out,
         next_dose_id=next_dose_id,

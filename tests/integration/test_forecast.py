@@ -127,11 +127,17 @@ def test_forecast_with_derived_schedule(tmp_path, monkeypatch):
     assert body["first_high_risk_day"] == expected_first_high
     if expected_first_high is None:
         assert body["first_high_risk_day_high_risk_count"] == 0
+        assert body["first_high_risk_day_medium_risk_count"] == 0
+        assert body["first_high_risk_day_n_doses"] == 0
+        assert body["first_high_risk_day_projected_adherence_rate"] == 0.0
         assert body["first_high_risk_day_expected_misses"] == 0.0
         assert body["first_high_risk_day_days_out"] == -1
     else:
         first_row = next(d for d in body["by_day"] if d["date"] == expected_first_high)
         assert body["first_high_risk_day_high_risk_count"] == first_row["high_risk_count"]
+        assert body["first_high_risk_day_medium_risk_count"] == first_row["medium_risk_count"]
+        assert body["first_high_risk_day_n_doses"] == first_row["n_doses"]
+        assert abs(body["first_high_risk_day_projected_adherence_rate"] - first_row["projected_adherence_rate"]) < 1e-9
         assert abs(body["first_high_risk_day_expected_misses"] - first_row["expected_misses"]) < 1e-9
         # days_out is zero-based offset from the earliest by_day row (which is
         # the same calendar day as the default starting_at=now).
