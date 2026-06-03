@@ -11,6 +11,8 @@ day (or the whole horizon).
 """
 from __future__ import annotations
 
+import csv
+import io
 import random
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -18,6 +20,7 @@ from typing import Any, Literal
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from adherence_api.deps import require_service
@@ -541,4 +544,145 @@ def forecast_user(
         predictions=predictions_out,
         predictions_truncated=predictions_truncated,
         schedule_source=source,
+    )
+
+
+@router.post("/user.csv")
+def forecast_user_csv(
+    req: ForecastRequest,
+    response: Response,
+    model_name: str = "default",
+    _p=Depends(require_service),
+) -> StreamingResponse:
+    """Per-dose forecast as CSV for nurse call-list / nudge-queue export.
+
+    Same request body as POST /v1/forecast/user. Returns one row per scored
+    dose with the fields outreach UIs and care-manager spreadsheets actually
+    need: dose_id, scheduled_at (ISO-8601 UTC), days_out (zero-based offset
+    from starting_at), miss_probability (rounded to 4 dp), risk_tier,
+    dose_class. Honors predictions_min_risk_tier (filter to nurse-call /
+    text-nudge queues) and predictions_limit (cap at top-N by
+    miss_probability desc, tie-broken by earliest scheduled_at then dose_id);
+    when no limit is set rows are sorted by (scheduled_at, dose_id) so the
+    file reads as a chronological call list. include_predictions on the
+    request body is ignored (CSV is always the per-dose list).
+    """
+    start = req.starting_at or datetime.now(timezone.utc)
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+
+    if req.schedule is not None:
+        schedule = list(req.schedule)
+        source = "supplied"
+    else:
+        schedule = _derive_schedule(req.history, start=start, horizon_days=req.horizon_days)
+        source = "derived"
+
+    if not schedule:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "no forecast schedule available; supply `schedule` explicitly "
+                "or include enough `history` to derive typical dose times"
+            ),
+        )
+
+    enforce_prediction_quota(
+        _p.get("tenant", "default"), response, cost=max(1, len(schedule)),
+    )
+
+    history_df = None
+    if req.history:
+        history_df = pd.DataFrame([h.model_dump() for h in req.history])
+
+    try:
+        res = predict_doses(
+            req.user_id,
+            [s.model_dump() for s in schedule],
+            history_df,
+            model_name=model_name,
+            top_k=0,
+        )
+    except ModelNotFoundError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc))
+
+    preds = res.get("predictions", [])
+    mrt = req.predictions_min_risk_tier
+
+    def _filter_ok(row: dict[str, Any]) -> bool:
+        tier = row.get("risk_tier")
+        if mrt is None or mrt == "low":
+            return True
+        if mrt == "medium":
+            return tier in ("medium", "high")
+        return tier == "high"
+
+    start_date = start.date()
+    rows: list[tuple[str, datetime, int, float, str, str]] = []
+    for p in preds:
+        if not _filter_ok(p):
+            continue
+        raw_sched = p["scheduled_at"]
+        if isinstance(raw_sched, str):
+            sched = datetime.fromisoformat(raw_sched.replace("Z", "+00:00"))
+        elif raw_sched.tzinfo is None:
+            sched = raw_sched.replace(tzinfo=timezone.utc)
+        else:
+            sched = raw_sched
+        miss_p = float(p["miss_probability"])
+        rows.append((
+            str(p.get("dose_id", "")),
+            sched,
+            (sched.date() - start_date).days,
+            miss_p,
+            str(p.get("risk_tier") or ""),
+            str(p.get("dose_class") or ""),
+        ))
+
+    truncated = False
+    if req.predictions_limit is not None:
+        rows.sort(key=lambda r: (-r[3], r[1], r[0]))
+        if len(rows) > req.predictions_limit:
+            truncated = True
+            rows = rows[: req.predictions_limit]
+    else:
+        rows.sort(key=lambda r: (r[1], r[0]))
+
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow([
+        "dose_id",
+        "scheduled_at",
+        "days_out",
+        "miss_probability",
+        "risk_tier",
+        "dose_class",
+    ])
+    for dose_id, sched, days_out, miss_p, tier, dose_class in rows:
+        w.writerow([
+            dose_id,
+            sched.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            days_out,
+            f"{miss_p:.4f}",
+            tier,
+            dose_class,
+        ])
+    body = buf.getvalue()
+
+    filename = (
+        f"forecast_{req.user_id}_{start.strftime('%Y%m%dT%H%M%SZ')}"
+        f"_h{req.horizon_days}.csv"
+    )
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "X-Row-Count": str(len(rows)),
+        "X-Schedule-Source": source,
+        "X-Predictions-Truncated": "true" if truncated else "false",
+        "X-Model-Name": model_name,
+        "X-Model-Version": str(res.get("model_version", "")),
+    }
+    return StreamingResponse(
+        iter([body]),
+        media_type="text/csv",
+        headers=headers,
     )

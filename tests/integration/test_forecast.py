@@ -509,3 +509,78 @@ def test_forecast_predictions_limit_top_n(tmp_path, monkeypatch):
     assert r.status_code == 200, r.text
     assert r.json().get("predictions") is None
     assert r.json().get("predictions_truncated") is False
+
+
+def test_forecast_user_csv_export(tmp_path, monkeypatch):
+    """POST /v1/forecast/user.csv returns one CSV row per scored dose."""
+    import csv as _csv
+    import io as _io
+
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    payload = {
+        "user_id": "u_forecast_csv",
+        "history": _history_for("u_forecast_csv"),
+        "horizon_days": 3,
+        "starting_at": "2026-05-20T00:00:00+00:00",
+        "bootstrap_iterations": 0,
+    }
+    r = c.post("/v1/forecast/user.csv", json=payload, headers={"x-api-key": "svc"})
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("text/csv")
+    assert "attachment;" in r.headers["content-disposition"]
+    assert "u_forecast_csv" in r.headers["content-disposition"]
+    assert r.headers["x-schedule-source"] == "derived"
+    assert r.headers["x-predictions-truncated"] == "false"
+    # 2 doses/day * 3 days = 6
+    assert r.headers["x-row-count"] == "6"
+    assert r.headers.get("x-model-name") == "default"
+    assert r.headers.get("x-model-version")
+
+    reader = _csv.reader(_io.StringIO(r.text))
+    rows = list(reader)
+    assert rows[0] == [
+        "dose_id", "scheduled_at", "days_out", "miss_probability", "risk_tier", "dose_class",
+    ]
+    data = rows[1:]
+    assert len(data) == 6
+    # Sorted chronologically by scheduled_at when no limit set.
+    iso_col = [r[1] for r in data]
+    assert iso_col == sorted(iso_col)
+    # All scheduled_at end with Z (UTC).
+    for row in data:
+        assert row[1].endswith("Z")
+        assert 0 <= int(row[2]) <= 2
+        miss_p = float(row[3])
+        assert 0.0 <= miss_p <= 1.0
+        assert row[4] in {"low", "medium", "high"}
+
+    # predictions_limit caps at top-N by miss_probability desc.
+    payload["predictions_limit"] = 2
+    r = c.post("/v1/forecast/user.csv", json=payload, headers={"x-api-key": "svc"})
+    assert r.status_code == 200, r.text
+    assert r.headers["x-row-count"] == "2"
+    assert r.headers["x-predictions-truncated"] == "true"
+    data = list(_csv.reader(_io.StringIO(r.text)))[1:]
+    assert len(data) == 2
+    # Sorted by miss_probability desc.
+    assert float(data[0][3]) >= float(data[1][3])
+
+
+def test_forecast_user_csv_requires_service_role(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+    payload = {
+        "user_id": "u_forecast_csv",
+        "history": _history_for("u_forecast_csv"),
+        "horizon_days": 2,
+        "starting_at": "2026-05-20T00:00:00+00:00",
+        "bootstrap_iterations": 0,
+    }
+    r = c.post("/v1/forecast/user.csv", json=payload, headers={"x-api-key": "vwr"})
+    assert r.status_code in (401, 403)
