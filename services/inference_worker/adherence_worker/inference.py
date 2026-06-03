@@ -63,6 +63,7 @@ def predict_doses(
         out.append({
             "dose_id": s["dose_id"],
             "scheduled_at": s["scheduled_at"],
+            "dose_class": s.get("dose_class"),
             "miss_probability": p,
             "risk_tier": thr.tier(p),
             "reasons": reasons,

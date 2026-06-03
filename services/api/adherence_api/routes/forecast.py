@@ -109,6 +109,7 @@ class ForecastResponse(BaseModel):
     next_dose_scheduled_at: datetime | None  # scheduled_at of `next_dose_id` (UTC, ISO-8601) so outreach UIs can render the wall-clock time without re-resolving from by_day; null when next_dose_id is null
     next_dose_miss_probability: float  # miss_probability of `next_dose_id` so outreach UIs can render '87% miss' for the next upcoming dose without iterating predictions client-side; 0.0 only when next_dose_id is null
     next_dose_risk_tier: str | None  # risk_tier (low|medium|high) of `next_dose_id` so outreach UIs can color the next-dose badge without iterating predictions client-side; null when next_dose_id is null
+    next_dose_dose_class: str | None  # dose_class of `next_dose_id` so outreach UIs can render 'next dose: 21:00, psych 5mg, high risk' inline without iterating predictions client-side to look up the upcoming dose's class; null when next_dose_id is null, symmetric with first_high_risk_dose_dose_class and peak_risk_dose_dose_class
     next_dose_days_out: int  # zero-based day offset from the forecast start (starting_at.date()) to `next_dose_scheduled_at.date()` so outreach UIs can render 'next dose in 0 days' / 'next dose tomorrow' inline without parsing next_dose_scheduled_at vs starting_at client-side and absorbing timezone/DST off-by-ones; 0 means same calendar day as starting_at, -1 only when next_dose_id is null (no doses scored), symmetric with worst_day_days_out and first_high_risk_day_days_out
     first_high_risk_dose_id: str | None  # dose_id of the earliest scheduled dose in the horizon whose risk_tier == 'high' (ties broken by dose_id) so outreach UIs can render 'first high-risk dose: 21:00 Tuesday, psych 5mg (87% miss) - nudge now' and link the per-dose nudge action without iterating predictions client-side to find the first high-tier row; null when no horizon dose is high risk, dose-level analogue of first_high_risk_day and symmetric with next_dose_id
     first_high_risk_dose_scheduled_at: datetime | None  # scheduled_at of `first_high_risk_dose_id` (UTC, ISO-8601) so outreach UIs can render the wall-clock time without re-resolving from predictions; null when first_high_risk_dose_id is null, symmetric with next_dose_scheduled_at
@@ -257,6 +258,7 @@ def forecast_user(
     next_dose_scheduled_at: datetime | None = None
     next_dose_miss_probability = 0.0
     next_dose_risk_tier: str | None = None
+    next_dose_dose_class: str | None = None
     first_high_risk_dose_id: str | None = None
     first_high_risk_dose_scheduled_at: datetime | None = None
     first_high_risk_dose_miss_probability = 0.0
@@ -284,6 +286,7 @@ def forecast_user(
             next_dose_id = pid
             next_dose_miss_probability = float(p["miss_probability"])
             next_dose_risk_tier = p.get("risk_tier")
+            next_dose_dose_class = p.get("dose_class")
         # Earliest high-risk dose in the horizon, ties broken by dose_id.
         # Dose-level analogue of first_high_risk_day so outreach UIs can
         # link the per-dose nudge action without iterating predictions.
@@ -433,6 +436,7 @@ def forecast_user(
         next_dose_scheduled_at=next_dose_scheduled_at,
         next_dose_miss_probability=next_dose_miss_probability,
         next_dose_risk_tier=next_dose_risk_tier,
+        next_dose_dose_class=next_dose_dose_class,
         next_dose_days_out=next_dose_days_out,
         first_high_risk_dose_id=first_high_risk_dose_id,
         first_high_risk_dose_scheduled_at=first_high_risk_dose_scheduled_at,

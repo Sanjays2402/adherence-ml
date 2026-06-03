@@ -164,6 +164,11 @@ def test_forecast_with_derived_schedule(tmp_path, monkeypatch):
     assert body["next_dose_scheduled_at"].startswith("2026-05-20T08:00")
     assert 0.0 <= body["next_dose_miss_probability"] <= 1.0
     assert body["next_dose_risk_tier"] in ("low", "medium", "high")
+    # next_dose_dose_class mirrors the upcoming dose's class so the outreach
+    # UI can render 'next dose: 21:00, psych 5mg, high risk' inline without
+    # iterating predictions client-side. Derived schedule carries dose_class
+    # through from history, so it should not be None here.
+    assert body["next_dose_dose_class"] in ("cardio", "psych")
     # next_dose_days_out is zero-based offset from starting_at.date() to the
     # earliest scheduled dose's date; should be 0 since 2026-05-20T08:00 is
     # the same calendar day as the default starting_at=2026-05-20T00:00.
