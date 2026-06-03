@@ -79,6 +79,7 @@ class ForecastResponse(BaseModel):
     worst_day_projected_adherence_rate: float  # projected_adherence_rate on `worst_day` so the outreach planner can render '~3.2 projected misses out of 5 doses (64% adherence) on Thursday' inline without iterating by_day client-side, 0.0 only if no doses were scored
     worst_day_high_risk_count: int  # high_risk_count on `worst_day` so the outreach planner can size the nurse-call queue for the peak day ('Thursday: 3 high-risk doses to call about') without iterating by_day client-side, 0 only if no doses were scored
     worst_day_medium_risk_count: int  # medium_risk_count on `worst_day` so the outreach planner can size the second-tier text/nudge queue for the peak day without iterating by_day client-side, 0 only if no doses were scored
+    worst_day_days_out: int  # zero-based day offset from the forecast start (starting_at.date()) to `worst_day` so the outreach planner can render 'peak miss day is in 2 days' inline without parsing worst_day vs starting_at client-side and absorbing timezone/DST off-by-ones; 0 means same day as starting_at, -1 only when worst_day is null (no doses scored), symmetric with first_high_risk_day_days_out
     first_high_risk_day: str | None  # earliest date (YYYY-MM-DD) in the horizon whose high_risk_count > 0 so the outreach planner can render 'first high-risk dose is Tuesday, call before then' and schedule the nurse outreach against the upstream calendar day without iterating by_day client-side; null when no horizon day contains a high-risk dose
     first_high_risk_day_high_risk_count: int  # high_risk_count on `first_high_risk_day` so the outreach planner can render 'Tuesday: 3 high-risk doses to call about (first such day)' inline, 0 only if first_high_risk_day is null
     first_high_risk_day_days_out: int  # zero-based day offset from the forecast start (starting_at.date()) to `first_high_risk_day` so the outreach planner can render 'first high-risk dose is in 2 days' inline without parsing first_high_risk_day vs starting_at client-side and absorbing timezone/DST off-by-ones; 0 means same day as starting_at, -1 only when first_high_risk_day is null
@@ -254,6 +255,7 @@ def forecast_user(
     worst_day_projected_adherence_rate = 0.0
     worst_day_high_risk_count = 0
     worst_day_medium_risk_count = 0
+    worst_day_days_out = -1
     first_high_risk_day: str | None = None
     first_high_risk_day_high_risk_count = 0
     first_high_risk_day_days_out = -1
@@ -266,6 +268,9 @@ def forecast_user(
             worst_day_projected_adherence_rate = d.projected_adherence_rate
             worst_day_high_risk_count = d.high_risk_count
             worst_day_medium_risk_count = d.medium_risk_count
+            worst_day_days_out = (
+                datetime.fromisoformat(d.date).date() - start_date
+            ).days
         if first_high_risk_day is None and d.high_risk_count > 0:
             first_high_risk_day = d.date
             first_high_risk_day_high_risk_count = d.high_risk_count
@@ -291,6 +296,7 @@ def forecast_user(
         worst_day_projected_adherence_rate=worst_day_projected_adherence_rate,
         worst_day_high_risk_count=worst_day_high_risk_count,
         worst_day_medium_risk_count=worst_day_medium_risk_count,
+        worst_day_days_out=worst_day_days_out,
         first_high_risk_day=first_high_risk_day,
         first_high_risk_day_high_risk_count=first_high_risk_day_high_risk_count,
         first_high_risk_day_days_out=first_high_risk_day_days_out,

@@ -108,6 +108,16 @@ def test_forecast_with_derived_schedule(tmp_path, monkeypatch):
     assert abs(body["worst_day_projected_adherence_rate"] - worst_row["projected_adherence_rate"]) < 1e-9
     assert body["worst_day_high_risk_count"] == worst_row["high_risk_count"]
     assert body["worst_day_medium_risk_count"] == worst_row["medium_risk_count"]
+    # worst_day_days_out is zero-based offset from the earliest by_day row (the
+    # same calendar day as the default starting_at=now), symmetric with
+    # first_high_risk_day_days_out.
+    from datetime import date as _date_wd
+    earliest_date_wd = body["by_day"][0]["date"]
+    expected_worst_days_out = (
+        _date_wd.fromisoformat(expected_worst) - _date_wd.fromisoformat(earliest_date_wd)
+    ).days
+    assert body["worst_day_days_out"] == expected_worst_days_out
+    assert body["worst_day_days_out"] >= 0
     # first_high_risk_day is the earliest by_day with high_risk_count > 0,
     # or null when no horizon day has any high-risk dose.
     expected_first_high = next(
