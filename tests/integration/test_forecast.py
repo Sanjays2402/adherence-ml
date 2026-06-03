@@ -192,6 +192,37 @@ def test_forecast_requires_service_role(tmp_path, monkeypatch):
     assert r.status_code == 403
 
 
+def test_forecast_derived_schedule_skips_past_doses_on_day_zero(tmp_path, monkeypatch):
+    """A forecast requested mid-day must not include dose times that have
+    already passed on day zero (e.g. an 08:00 dose when called at 15:00).
+    Those events can no longer be acted on and would pollute the projection."""
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    # Caller wakes up at 15:00 UTC; history has doses at 08:00 (already past)
+    # and 21:00 (still to come). Day zero should only carry the 21:00 dose.
+    payload = {
+        "user_id": "u_forecast_midday",
+        "history": _history_for("u_forecast_midday"),
+        "horizon_days": 3,
+        "starting_at": "2026-05-20T15:00:00+00:00",
+        "bootstrap_iterations": 0,
+    }
+    r = c.post("/v1/forecast/user", json=payload, headers={"x-api-key": "svc"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["schedule_source"] == "derived"
+    # 2 doses/day across days 1 and 2, plus only the 21:00 dose on day 0 = 5
+    assert body["n_doses_scored"] == 5
+    day_zero = body["by_day"][0]
+    assert day_zero["date"] == "2026-05-20"
+    assert day_zero["n_doses"] == 1
+    for day in body["by_day"][1:]:
+        assert day["n_doses"] == 2
+
+
 def test_forecast_bootstrap_zero_collapses_to_point(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
     _train()

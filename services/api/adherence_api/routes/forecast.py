@@ -127,6 +127,12 @@ def _derive_schedule(
                 date.year, date.month, date.day, hour, minute,
                 tzinfo=timezone.utc,
             )
+            # Skip dose times that already passed at the moment the forecast
+            # was requested. Otherwise a call at noon would include this
+            # morning's 08:00 dose in the projection and pollute day-zero
+            # adherence with an event the user can no longer act on.
+            if sched_dt < start:
+                continue
             out.append(ScheduledDose(
                 dose_id=f"fc-{day_offset:02d}-{idx:02d}",
                 scheduled_at=sched_dt,
