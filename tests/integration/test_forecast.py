@@ -145,6 +145,19 @@ def test_forecast_with_derived_schedule(tmp_path, monkeypatch):
     rate = body["overall_projected_adherence_rate"]
     assert 0.0 <= rate <= 1.0
     assert body["overall_adherence_ci_low"] <= rate <= body["overall_adherence_ci_high"]
+    # next_dose pointer set: earliest scheduled dose in the horizon, with
+    # its miss_probability and risk_tier surfaced inline for the outreach UI.
+    sched_times = []
+    for day in body["by_day"]:
+        # day has aggregates only; next_dose comes from the actual scored doses.
+        pass
+    assert body["next_dose_id"] is not None
+    assert body["next_dose_scheduled_at"] is not None
+    # The earliest scheduled dose for the derived schedule starting at
+    # 2026-05-20T00:00 with daily 08:00 and 21:00 doses is 2026-05-20T08:00.
+    assert body["next_dose_scheduled_at"].startswith("2026-05-20T08:00")
+    assert 0.0 <= body["next_dose_miss_probability"] <= 1.0
+    assert body["next_dose_risk_tier"] in ("low", "medium", "high")
 
 
 def test_forecast_with_supplied_schedule(tmp_path, monkeypatch):
@@ -233,6 +246,9 @@ def test_forecast_derived_schedule_skips_past_doses_on_day_zero(tmp_path, monkey
     assert day_zero["n_doses"] == 1
     for day in body["by_day"][1:]:
         assert day["n_doses"] == 2
+    # next_dose should be the day-zero 21:00 dose, not the morning 08:00 dose
+    # that already passed before the 15:00 call.
+    assert body["next_dose_scheduled_at"].startswith("2026-05-20T21:00")
 
 
 def test_forecast_bootstrap_zero_collapses_to_point(tmp_path, monkeypatch):

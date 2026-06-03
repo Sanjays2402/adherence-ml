@@ -84,6 +84,10 @@ class ForecastResponse(BaseModel):
     first_high_risk_day_high_risk_count: int  # high_risk_count on `first_high_risk_day` so the outreach planner can render 'Tuesday: 3 high-risk doses to call about (first such day)' inline, 0 only if first_high_risk_day is null
     first_high_risk_day_expected_misses: float  # expected_misses on `first_high_risk_day` so the outreach planner can render 'first high-risk dose Tuesday, ~2.4 projected misses' inline without iterating by_day client-side to find the first high-risk row, 0.0 only if first_high_risk_day is null, symmetric with worst_day_expected_misses
     first_high_risk_day_days_out: int  # zero-based day offset from the forecast start (starting_at.date()) to `first_high_risk_day` so the outreach planner can render 'first high-risk dose is in 2 days' inline without parsing first_high_risk_day vs starting_at client-side and absorbing timezone/DST off-by-ones; 0 means same day as starting_at, -1 only when first_high_risk_day is null
+    next_dose_id: str | None  # dose_id of the earliest upcoming dose in the horizon (earliest scheduled_at, ties broken by dose_id) so outreach UIs can render 'next dose: 21:00 today, high risk (87% miss)' and link the per-dose nudge action without iterating the full by_day/predictions list client-side; null only when no doses were scored
+    next_dose_scheduled_at: datetime | None  # scheduled_at of `next_dose_id` (UTC, ISO-8601) so outreach UIs can render the wall-clock time without re-resolving from by_day; null when next_dose_id is null
+    next_dose_miss_probability: float  # miss_probability of `next_dose_id` so outreach UIs can render '87% miss' for the next upcoming dose without iterating predictions client-side; 0.0 only when next_dose_id is null
+    next_dose_risk_tier: str | None  # risk_tier (low|medium|high) of `next_dose_id` so outreach UIs can color the next-dose badge without iterating predictions client-side; null when next_dose_id is null
     by_day: list[DailyForecast]
     schedule_source: str  # "supplied" | "derived"
 
@@ -215,13 +219,28 @@ def forecast_user(
     preds = res.get("predictions", [])
     by_day: dict[str, list[dict[str, Any]]] = defaultdict(list)
     all_probs: list[float] = []
+    next_dose_id: str | None = None
+    next_dose_scheduled_at: datetime | None = None
+    next_dose_miss_probability = 0.0
+    next_dose_risk_tier: str | None = None
     for p in preds:
         sched_at = p["scheduled_at"]
         if isinstance(sched_at, str):
             sched_at = datetime.fromisoformat(sched_at.replace("Z", "+00:00"))
+        if sched_at.tzinfo is None:
+            sched_at = sched_at.replace(tzinfo=timezone.utc)
         date_str = sched_at.date().isoformat()
         by_day[date_str].append(p)
         all_probs.append(float(p["miss_probability"]))
+        # Earliest upcoming dose, ties broken by dose_id for determinism.
+        pid = str(p.get("dose_id", ""))
+        if next_dose_scheduled_at is None or sched_at < next_dose_scheduled_at or (
+            sched_at == next_dose_scheduled_at and pid < (next_dose_id or "")
+        ):
+            next_dose_scheduled_at = sched_at
+            next_dose_id = pid
+            next_dose_miss_probability = float(p["miss_probability"])
+            next_dose_risk_tier = p.get("risk_tier")
 
     daily: list[DailyForecast] = []
     total_high = 0
@@ -304,6 +323,10 @@ def forecast_user(
         first_high_risk_day_high_risk_count=first_high_risk_day_high_risk_count,
         first_high_risk_day_expected_misses=first_high_risk_day_expected_misses,
         first_high_risk_day_days_out=first_high_risk_day_days_out,
+        next_dose_id=next_dose_id,
+        next_dose_scheduled_at=next_dose_scheduled_at,
+        next_dose_miss_probability=next_dose_miss_probability,
+        next_dose_risk_tier=next_dose_risk_tier,
         by_day=daily,
         schedule_source=source,
     )
