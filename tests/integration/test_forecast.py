@@ -108,6 +108,18 @@ def test_forecast_with_derived_schedule(tmp_path, monkeypatch):
     assert abs(body["worst_day_projected_adherence_rate"] - worst_row["projected_adherence_rate"]) < 1e-9
     assert body["worst_day_high_risk_count"] == worst_row["high_risk_count"]
     assert body["worst_day_medium_risk_count"] == worst_row["medium_risk_count"]
+    # first_high_risk_day is the earliest by_day with high_risk_count > 0,
+    # or null when no horizon day has any high-risk dose.
+    expected_first_high = next(
+        (d["date"] for d in body["by_day"] if d["high_risk_count"] > 0),
+        None,
+    )
+    assert body["first_high_risk_day"] == expected_first_high
+    if expected_first_high is None:
+        assert body["first_high_risk_day_high_risk_count"] == 0
+    else:
+        first_row = next(d for d in body["by_day"] if d["date"] == expected_first_high)
+        assert body["first_high_risk_day_high_risk_count"] == first_row["high_risk_count"]
     rate = body["overall_projected_adherence_rate"]
     assert 0.0 <= rate <= 1.0
     assert body["overall_adherence_ci_low"] <= rate <= body["overall_adherence_ci_high"]
