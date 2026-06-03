@@ -205,6 +205,21 @@ class CohortRiskResponse(BaseModel):
     top_users: list[CohortBucket] = Field(
         description="Users sorted by mean miss probability (highest first)."
     )
+    top_users_expected_misses_coverage: float = Field(
+        default=0.0,
+        description=(
+            "Fraction of total_expected_misses that lands on the returned "
+            "top_users rows (sum(top_users.expected_misses) / "
+            "total_expected_misses). Lets dashboards render the Pareto "
+            "headline 'top N patients cover X% of expected misses' so "
+            "outreach planners know whether a fixed-capacity queue (e.g. "
+            "10 nurse calls/day) is enough to meaningfully bend the cohort "
+            "miss count or whether the long tail dominates and a different "
+            "channel is needed. 0.0 when total_expected_misses is 0 (nothing "
+            "to cover) or when top_users is empty (e.g. min_doses filtered "
+            "everyone out)."
+        ),
+    )
 
 
 def _bucket(df: pd.DataFrame, group_col: str, decode: dict[int, str] | None = None) -> list[CohortBucket]:
@@ -444,4 +459,10 @@ def cohort_risk(
             .sum()
         ),
         top_users=user_rows[:top_users],
+        top_users_expected_misses_coverage=(
+            float(sum(b.expected_misses for b in user_rows[:top_users])
+                  / float(df["miss_probability"].sum()))
+            if float(df["miss_probability"].sum()) > 0.0 and user_rows[:top_users]
+            else 0.0
+        ),
     )
