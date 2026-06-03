@@ -195,6 +195,24 @@ def test_forecast_with_derived_schedule(tmp_path, monkeypatch):
         # since the earliest high-risk dose lands on the first high-risk day.
         assert body["first_high_risk_dose_days_out"] == body["first_high_risk_day_days_out"]
         assert body["first_high_risk_dose_days_out"] >= 0
+    # peak_risk_dose pointer: single highest-miss_probability dose across the
+    # horizon, ties broken by earliest scheduled_at then dose_id. Dose-level
+    # analogue of worst_day (peak miss volume per day).
+    assert body["peak_risk_dose_id"] is not None
+    assert body["peak_risk_dose_scheduled_at"] is not None
+    assert 0.0 <= body["peak_risk_dose_miss_probability"] <= 1.0
+    assert body["peak_risk_dose_risk_tier"] in ("low", "medium", "high")
+    assert body["peak_risk_dose_dose_class"] is None or body["peak_risk_dose_dose_class"] in ("cardio", "psych")
+    assert body["peak_risk_dose_days_out"] >= 0
+    # peak must be at least as high as next_dose and first_high_risk_dose
+    # miss_probability; if a high-risk dose exists, peak must be high tier.
+    assert body["peak_risk_dose_miss_probability"] >= body["next_dose_miss_probability"]
+    if body["first_high_risk_dose_id"] is not None:
+        assert body["peak_risk_dose_risk_tier"] == "high"
+        assert (
+            body["peak_risk_dose_miss_probability"]
+            >= body["first_high_risk_dose_miss_probability"]
+        )
 
 
 def test_forecast_with_supplied_schedule(tmp_path, monkeypatch):

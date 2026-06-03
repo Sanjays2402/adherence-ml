@@ -97,6 +97,12 @@ class ForecastResponse(BaseModel):
     first_high_risk_dose_miss_probability: float  # miss_probability of `first_high_risk_dose_id` so outreach UIs can render '87% miss' for the first upcoming high-risk dose without iterating predictions client-side; 0.0 only when first_high_risk_dose_id is null, symmetric with next_dose_miss_probability
     first_high_risk_dose_dose_class: str | None  # dose_class of `first_high_risk_dose_id` so outreach UIs can render 'psych dose at 21:00 Tuesday' inline; null when first_high_risk_dose_id is null
     first_high_risk_dose_days_out: int  # zero-based day offset from the forecast start (starting_at.date()) to `first_high_risk_dose_scheduled_at.date()` so outreach UIs can render 'first high-risk dose in 2 days, nudge before then' inline without parsing first_high_risk_dose_scheduled_at vs starting_at client-side and absorbing timezone/DST off-by-ones; 0 means same calendar day as starting_at, -1 only when first_high_risk_dose_id is null (no horizon dose is high risk), symmetric with next_dose_days_out and first_high_risk_day_days_out
+    peak_risk_dose_id: str | None  # dose_id of the single highest-miss_probability dose in the horizon (ties broken by earliest scheduled_at, then by dose_id) so outreach UIs can render 'the one dose to absolutely nudge: 21:00 Tuesday psych 5mg (94% miss)' without iterating predictions client-side to find the peak; null only when no doses were scored, dose-level analogue of worst_day (which points at peak miss volume per day) and symmetric with first_high_risk_dose_id (which is the earliest high-tier dose, not the peak)
+    peak_risk_dose_scheduled_at: datetime | None  # scheduled_at of `peak_risk_dose_id` (UTC, ISO-8601) so outreach UIs can render the wall-clock time of the peak-severity dose inline; null when peak_risk_dose_id is null, symmetric with next_dose_scheduled_at and first_high_risk_dose_scheduled_at
+    peak_risk_dose_miss_probability: float  # miss_probability of `peak_risk_dose_id` so outreach UIs can render '94% miss' for the peak-severity dose without iterating predictions client-side; 0.0 only when peak_risk_dose_id is null, symmetric with next_dose_miss_probability and first_high_risk_dose_miss_probability
+    peak_risk_dose_risk_tier: str | None  # risk_tier (low|medium|high) of `peak_risk_dose_id` so outreach UIs can color the peak-dose badge without iterating predictions client-side; null when peak_risk_dose_id is null, symmetric with next_dose_risk_tier
+    peak_risk_dose_dose_class: str | None  # dose_class of `peak_risk_dose_id` so outreach UIs can render 'psych dose at 21:00 Tuesday' inline; null when peak_risk_dose_id is null, symmetric with first_high_risk_dose_dose_class
+    peak_risk_dose_days_out: int  # zero-based day offset from the forecast start (starting_at.date()) to `peak_risk_dose_scheduled_at.date()` so outreach UIs can render 'peak-risk dose in 2 days, nudge before then' inline without parsing peak_risk_dose_scheduled_at vs starting_at client-side and absorbing timezone/DST off-by-ones; 0 means same calendar day as starting_at, -1 only when peak_risk_dose_id is null, symmetric with next_dose_days_out and first_high_risk_dose_days_out
     by_day: list[DailyForecast]
     schedule_source: str  # "supplied" | "derived"
 
@@ -236,6 +242,11 @@ def forecast_user(
     first_high_risk_dose_scheduled_at: datetime | None = None
     first_high_risk_dose_miss_probability = 0.0
     first_high_risk_dose_dose_class: str | None = None
+    peak_risk_dose_id: str | None = None
+    peak_risk_dose_scheduled_at: datetime | None = None
+    peak_risk_dose_miss_probability = 0.0
+    peak_risk_dose_risk_tier: str | None = None
+    peak_risk_dose_dose_class: str | None = None
     for p in preds:
         sched_at = p["scheduled_at"]
         if isinstance(sched_at, str):
@@ -269,6 +280,29 @@ def forecast_user(
             first_high_risk_dose_id = pid
             first_high_risk_dose_miss_probability = float(p["miss_probability"])
             first_high_risk_dose_dose_class = p.get("dose_class")
+        # Peak-severity dose: single highest miss_probability across the
+        # horizon. Ties broken by earliest scheduled_at, then by dose_id, so
+        # the pointer is deterministic across runs. Dose-level analogue of
+        # worst_day (peak miss volume per day).
+        miss_p = float(p["miss_probability"])
+        if (
+            peak_risk_dose_id is None
+            or miss_p > peak_risk_dose_miss_probability
+            or (
+                miss_p == peak_risk_dose_miss_probability
+                and sched_at < (peak_risk_dose_scheduled_at or sched_at)
+            )
+            or (
+                miss_p == peak_risk_dose_miss_probability
+                and sched_at == peak_risk_dose_scheduled_at
+                and pid < (peak_risk_dose_id or "")
+            )
+        ):
+            peak_risk_dose_id = pid
+            peak_risk_dose_scheduled_at = sched_at
+            peak_risk_dose_miss_probability = miss_p
+            peak_risk_dose_risk_tier = p.get("risk_tier")
+            peak_risk_dose_dose_class = p.get("dose_class")
 
     daily: list[DailyForecast] = []
     total_high = 0
@@ -344,6 +378,11 @@ def forecast_user(
         if first_high_risk_dose_scheduled_at is not None
         else -1
     )
+    peak_risk_dose_days_out = (
+        (peak_risk_dose_scheduled_at.date() - start_date).days
+        if peak_risk_dose_scheduled_at is not None
+        else -1
+    )
 
     return ForecastResponse(
         user_id=req.user_id,
@@ -381,6 +420,12 @@ def forecast_user(
         first_high_risk_dose_miss_probability=first_high_risk_dose_miss_probability,
         first_high_risk_dose_dose_class=first_high_risk_dose_dose_class,
         first_high_risk_dose_days_out=first_high_risk_dose_days_out,
+        peak_risk_dose_id=peak_risk_dose_id,
+        peak_risk_dose_scheduled_at=peak_risk_dose_scheduled_at,
+        peak_risk_dose_miss_probability=peak_risk_dose_miss_probability,
+        peak_risk_dose_risk_tier=peak_risk_dose_risk_tier,
+        peak_risk_dose_dose_class=peak_risk_dose_dose_class,
+        peak_risk_dose_days_out=peak_risk_dose_days_out,
         by_day=daily,
         schedule_source=source,
     )
