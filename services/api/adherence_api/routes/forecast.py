@@ -126,8 +126,10 @@ class ForecastResponse(BaseModel):
     total_expected_misses: float  # sum of miss_probability across the full horizon
     total_high_risk_count: int
     total_medium_risk_count: int
+    total_low_risk_count: int  # count of horizon doses whose risk_tier == 'low' (n_doses_scored - total_high_risk_count - total_medium_risk_count) so outreach planners can render a 'low / medium / high' breakdown ('12 low, 5 medium, 3 high of 20 doses') inline without iterating predictions client-side and without assuming risk_tier is one of three values, 0 only when no doses were scored or every scored dose is medium-or-above, symmetric with total_high_risk_count and total_medium_risk_count
     n_high_risk_days: int  # count of by_day rows whose high_risk_count > 0 so outreach planners can render '3 of the next 7 days have at least one high-risk dose' inline without iterating by_day client-side, 0 only when no horizon day contains a high-risk dose, symmetric with total_high_risk_count (which counts doses, not days)
     n_medium_risk_days: int  # count of by_day rows whose medium_risk_count > 0 so outreach planners can render '5 of the next 7 days have at least one medium-risk dose' inline without iterating by_day client-side, 0 only when no horizon day contains a medium-risk dose, symmetric with n_high_risk_days and total_medium_risk_count
+    n_low_risk_days: int  # count of by_day rows whose n_doses > high_risk_count + medium_risk_count (i.e. at least one low-risk dose lives on that day) so outreach planners can render '6 of the next 7 days have only low-risk doses' or size the 'no nudge needed' lane inline without iterating by_day client-side, 0 only when every horizon day's doses are all medium-or-above (or no doses were scored), symmetric with n_high_risk_days and n_medium_risk_days
     worst_day: str | None  # date (YYYY-MM-DD) with the highest expected_misses, ties broken by earliest date; null only if no doses were scored
     worst_day_expected_misses: float  # expected_misses on `worst_day` so the outreach planner can render 'check in Thursday, ~3.2 projected misses' without iterating by_day client-side
     worst_day_n_doses: int  # n_doses on `worst_day` so the outreach planner can render '5 doses on Thursday' (the denominator the projected miss count is drawn from) without iterating by_day client-side, 0 only if no doses were scored
@@ -407,12 +409,15 @@ def forecast_user(
     first_high_risk_day_days_out = -1
     n_high_risk_days = 0
     n_medium_risk_days = 0
+    n_low_risk_days = 0
     start_date = start.date()
     for d in daily:
         if d.high_risk_count > 0:
             n_high_risk_days += 1
         if d.medium_risk_count > 0:
             n_medium_risk_days += 1
+        if d.n_doses - d.high_risk_count - d.medium_risk_count > 0:
+            n_low_risk_days += 1
         if worst_day is None or d.expected_misses > worst_day_expected_misses:
             worst_day = d.date
             worst_day_expected_misses = d.expected_misses
@@ -507,8 +512,10 @@ def forecast_user(
         total_expected_misses=sum(all_probs),
         total_high_risk_count=total_high,
         total_medium_risk_count=total_medium,
+        total_low_risk_count=max(0, len(preds) - total_high - total_medium),
         n_high_risk_days=n_high_risk_days,
         n_medium_risk_days=n_medium_risk_days,
+        n_low_risk_days=n_low_risk_days,
         worst_day=worst_day,
         worst_day_expected_misses=worst_day_expected_misses,
         worst_day_n_doses=worst_day_n_doses,

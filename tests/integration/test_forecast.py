@@ -102,10 +102,25 @@ def test_forecast_with_derived_schedule(tmp_path, monkeypatch):
     # dose' without iterating by_day client-side.
     expected_n_high_days = sum(1 for d in body["by_day"] if d["high_risk_count"] > 0)
     expected_n_medium_days = sum(1 for d in body["by_day"] if d["medium_risk_count"] > 0)
+    expected_n_low_days = sum(
+        1
+        for d in body["by_day"]
+        if d["n_doses"] - d["high_risk_count"] - d["medium_risk_count"] > 0
+    )
     assert body["n_high_risk_days"] == expected_n_high_days
     assert body["n_medium_risk_days"] == expected_n_medium_days
+    assert body["n_low_risk_days"] == expected_n_low_days
     assert 0 <= body["n_high_risk_days"] <= len(body["by_day"])
     assert 0 <= body["n_medium_risk_days"] <= len(body["by_day"])
+    assert 0 <= body["n_low_risk_days"] <= len(body["by_day"])
+    # total_low_risk_count completes the low/medium/high breakdown so the three
+    # counts sum to n_doses_scored without the UI iterating predictions client-side.
+    assert body["total_low_risk_count"] == (
+        body["n_doses_scored"]
+        - body["total_high_risk_count"]
+        - body["total_medium_risk_count"]
+    )
+    assert body["total_low_risk_count"] >= 0
     assert abs(body["total_expected_misses"] - total_expected) < 1e-6
     # worst_day should point at the by_day row with the largest expected_misses,
     # ties broken by earliest date.
