@@ -82,6 +82,7 @@ class ForecastResponse(BaseModel):
     worst_day_days_out: int  # zero-based day offset from the forecast start (starting_at.date()) to `worst_day` so the outreach planner can render 'peak miss day is in 2 days' inline without parsing worst_day vs starting_at client-side and absorbing timezone/DST off-by-ones; 0 means same day as starting_at, -1 only when worst_day is null (no doses scored), symmetric with first_high_risk_day_days_out
     first_high_risk_day: str | None  # earliest date (YYYY-MM-DD) in the horizon whose high_risk_count > 0 so the outreach planner can render 'first high-risk dose is Tuesday, call before then' and schedule the nurse outreach against the upstream calendar day without iterating by_day client-side; null when no horizon day contains a high-risk dose
     first_high_risk_day_high_risk_count: int  # high_risk_count on `first_high_risk_day` so the outreach planner can render 'Tuesday: 3 high-risk doses to call about (first such day)' inline, 0 only if first_high_risk_day is null
+    first_high_risk_day_expected_misses: float  # expected_misses on `first_high_risk_day` so the outreach planner can render 'first high-risk dose Tuesday, ~2.4 projected misses' inline without iterating by_day client-side to find the first high-risk row, 0.0 only if first_high_risk_day is null, symmetric with worst_day_expected_misses
     first_high_risk_day_days_out: int  # zero-based day offset from the forecast start (starting_at.date()) to `first_high_risk_day` so the outreach planner can render 'first high-risk dose is in 2 days' inline without parsing first_high_risk_day vs starting_at client-side and absorbing timezone/DST off-by-ones; 0 means same day as starting_at, -1 only when first_high_risk_day is null
     by_day: list[DailyForecast]
     schedule_source: str  # "supplied" | "derived"
@@ -258,6 +259,7 @@ def forecast_user(
     worst_day_days_out = -1
     first_high_risk_day: str | None = None
     first_high_risk_day_high_risk_count = 0
+    first_high_risk_day_expected_misses = 0.0
     first_high_risk_day_days_out = -1
     start_date = start.date()
     for d in daily:
@@ -274,6 +276,7 @@ def forecast_user(
         if first_high_risk_day is None and d.high_risk_count > 0:
             first_high_risk_day = d.date
             first_high_risk_day_high_risk_count = d.high_risk_count
+            first_high_risk_day_expected_misses = d.expected_misses
             first_high_risk_day_days_out = (
                 datetime.fromisoformat(d.date).date() - start_date
             ).days
@@ -299,6 +302,7 @@ def forecast_user(
         worst_day_days_out=worst_day_days_out,
         first_high_risk_day=first_high_risk_day,
         first_high_risk_day_high_risk_count=first_high_risk_day_high_risk_count,
+        first_high_risk_day_expected_misses=first_high_risk_day_expected_misses,
         first_high_risk_day_days_out=first_high_risk_day_days_out,
         by_day=daily,
         schedule_source=source,
