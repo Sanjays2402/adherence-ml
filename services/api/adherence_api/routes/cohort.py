@@ -220,6 +220,22 @@ class CohortRiskResponse(BaseModel):
             "everyone out)."
         ),
     )
+    top_users_n_high_risk_coverage: float = Field(
+        default=0.0,
+        description=(
+            "Fraction of the cohort's high-risk doses (by_tier.high) that "
+            "lands on the returned top_users rows (sum(top_users.n_high_risk) "
+            "/ by_tier.high). Symmetric with top_users_expected_misses_coverage "
+            "but answers the nurse-call queue question directly: 'if I call "
+            "my top N patients, what % of the cohort's high-risk doses do "
+            "I cover?'. Lets staffing planners size a fixed-capacity nurse "
+            "queue against the high-tier workload (not just expected misses, "
+            "which blends in low/medium severity) without paging /export and "
+            "counting client-side. 0.0 when by_tier.high is 0 (no high-risk "
+            "doses to cover) or when top_users is empty (e.g. min_doses "
+            "filtered everyone out)."
+        ),
+    )
 
 
 def _bucket(df: pd.DataFrame, group_col: str, decode: dict[int, str] | None = None) -> list[CohortBucket]:
@@ -463,6 +479,12 @@ def cohort_risk(
             float(sum(b.expected_misses for b in user_rows[:top_users])
                   / float(df["miss_probability"].sum()))
             if float(df["miss_probability"].sum()) > 0.0 and user_rows[:top_users]
+            else 0.0
+        ),
+        top_users_n_high_risk_coverage=(
+            float(sum(b.n_high_risk for b in user_rows[:top_users])
+                  / float(tier_counts.high))
+            if tier_counts.high > 0 and user_rows[:top_users]
             else 0.0
         ),
     )

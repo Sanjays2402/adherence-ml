@@ -409,3 +409,49 @@ def test_cohort_risk_top_users_expected_misses_coverage(tmp_path, monkeypatch):
     body2 = r2.json()
     assert body2["n_users_eligible"] <= 100
     assert abs(body2["top_users_expected_misses_coverage"] - 1.0) < 1e-9
+
+
+def test_cohort_risk_top_users_n_high_risk_coverage(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    client = TestClient(create_app())
+
+    # Small top_users window so coverage is meaningfully less than 1 and we
+    # can sanity-check that the nurse-call queue headline 'top N cover X%
+    # of high-risk doses' actually behaves like a fraction.
+    r = client.post(
+        "/v1/cohort/risk",
+        params={"top_users": 5, "sort_by": "n_high_risk"},
+        json={"synthetic": {"n_users": 60, "n_days": 10, "seed": 4}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    cov = body["top_users_n_high_risk_coverage"]
+    assert 0.0 <= cov <= 1.0
+    total_high = body["by_tier"]["high"]
+    if total_high > 0:
+        top_sum = sum(u["n_high_risk"] for u in body["top_users"])
+        assert abs(cov - top_sum / total_high) < 1e-9
+    else:
+        assert cov == 0.0
+
+    # When the window is wider than the eligible user pool, the returned
+    # top_users captures every scored user, so coverage must equal 1 within
+    # float tolerance (every high-risk dose lands on exactly one user) as
+    # long as the cohort has any high-risk doses at all.
+    r2 = client.post(
+        "/v1/cohort/risk",
+        params={"top_users": 100, "sort_by": "n_high_risk"},
+        json={"synthetic": {"n_users": 60, "n_days": 10, "seed": 4}},
+        headers={"x-api-key": "svc"},
+    )
+    assert r2.status_code == 200, r2.text
+    body2 = r2.json()
+    assert body2["n_users_eligible"] <= 100
+    if body2["by_tier"]["high"] > 0:
+        assert abs(body2["top_users_n_high_risk_coverage"] - 1.0) < 1e-9
+    else:
+        assert body2["top_users_n_high_risk_coverage"] == 0.0
