@@ -79,10 +79,24 @@ def test_forecast_with_derived_schedule(tmp_path, monkeypatch):
     # 2 doses/day x 7 days = 14
     assert body["n_doses_scored"] == 14
     assert len(body["by_day"]) == 7
+    total_high = 0
+    total_medium = 0
+    total_expected = 0.0
     for day in body["by_day"]:
         assert day["n_doses"] == 2
         assert 0.0 <= day["mean_miss_probability"] <= 1.0
         assert abs(day["projected_adherence_rate"] + day["mean_miss_probability"] - 1.0) < 1e-9
+        # expected_misses is sum of probs; n_doses * mean = sum.
+        assert abs(day["expected_misses"] - day["n_doses"] * day["mean_miss_probability"]) < 1e-9
+        assert day["high_risk_count"] >= 0
+        assert day["medium_risk_count"] >= 0
+        assert day["high_risk_count"] + day["medium_risk_count"] <= day["n_doses"]
+        total_high += day["high_risk_count"]
+        total_medium += day["medium_risk_count"]
+        total_expected += day["expected_misses"]
+    assert body["total_high_risk_count"] == total_high
+    assert body["total_medium_risk_count"] == total_medium
+    assert abs(body["total_expected_misses"] - total_expected) < 1e-6
     rate = body["overall_projected_adherence_rate"]
     assert 0.0 <= rate <= 1.0
     assert body["overall_adherence_ci_low"] <= rate <= body["overall_adherence_ci_high"]

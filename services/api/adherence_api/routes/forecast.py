@@ -56,7 +56,9 @@ class DailyForecast(BaseModel):
     n_doses: int
     mean_miss_probability: float
     projected_adherence_rate: float
+    expected_misses: float  # sum of miss_probability across the day's doses
     high_risk_count: int
+    medium_risk_count: int
 
 
 class ForecastResponse(BaseModel):
@@ -68,6 +70,9 @@ class ForecastResponse(BaseModel):
     overall_projected_adherence_rate: float
     overall_adherence_ci_low: float
     overall_adherence_ci_high: float
+    total_expected_misses: float  # sum of miss_probability across the full horizon
+    total_high_risk_count: int
+    total_medium_risk_count: int
     by_day: list[DailyForecast]
     schedule_source: str  # "supplied" | "derived"
 
@@ -202,16 +207,24 @@ def forecast_user(
         all_probs.append(float(p["miss_probability"]))
 
     daily: list[DailyForecast] = []
+    total_high = 0
+    total_medium = 0
     for date_str in sorted(by_day):
         rows = by_day[date_str]
         probs = [float(r["miss_probability"]) for r in rows]
         mean_miss = sum(probs) / len(probs)
+        day_high = sum(1 for r in rows if r.get("risk_tier") == "high")
+        day_medium = sum(1 for r in rows if r.get("risk_tier") == "medium")
+        total_high += day_high
+        total_medium += day_medium
         daily.append(DailyForecast(
             date=date_str,
             n_doses=len(rows),
             mean_miss_probability=mean_miss,
             projected_adherence_rate=1.0 - mean_miss,
-            high_risk_count=sum(1 for r in rows if r.get("risk_tier") == "high"),
+            expected_misses=sum(probs),
+            high_risk_count=day_high,
+            medium_risk_count=day_medium,
         ))
 
     overall_mean_miss = sum(all_probs) / len(all_probs) if all_probs else 0.0
@@ -226,6 +239,9 @@ def forecast_user(
         overall_projected_adherence_rate=1.0 - overall_mean_miss,
         overall_adherence_ci_low=lo,
         overall_adherence_ci_high=hi,
+        total_expected_misses=sum(all_probs),
+        total_high_risk_count=total_high,
+        total_medium_risk_count=total_medium,
         by_day=daily,
         schedule_source=source,
     )
