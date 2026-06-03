@@ -88,6 +88,10 @@ class ForecastResponse(BaseModel):
     next_dose_scheduled_at: datetime | None  # scheduled_at of `next_dose_id` (UTC, ISO-8601) so outreach UIs can render the wall-clock time without re-resolving from by_day; null when next_dose_id is null
     next_dose_miss_probability: float  # miss_probability of `next_dose_id` so outreach UIs can render '87% miss' for the next upcoming dose without iterating predictions client-side; 0.0 only when next_dose_id is null
     next_dose_risk_tier: str | None  # risk_tier (low|medium|high) of `next_dose_id` so outreach UIs can color the next-dose badge without iterating predictions client-side; null when next_dose_id is null
+    first_high_risk_dose_id: str | None  # dose_id of the earliest scheduled dose in the horizon whose risk_tier == 'high' (ties broken by dose_id) so outreach UIs can render 'first high-risk dose: 21:00 Tuesday, psych 5mg (87% miss) - nudge now' and link the per-dose nudge action without iterating predictions client-side to find the first high-tier row; null when no horizon dose is high risk, dose-level analogue of first_high_risk_day and symmetric with next_dose_id
+    first_high_risk_dose_scheduled_at: datetime | None  # scheduled_at of `first_high_risk_dose_id` (UTC, ISO-8601) so outreach UIs can render the wall-clock time without re-resolving from predictions; null when first_high_risk_dose_id is null, symmetric with next_dose_scheduled_at
+    first_high_risk_dose_miss_probability: float  # miss_probability of `first_high_risk_dose_id` so outreach UIs can render '87% miss' for the first upcoming high-risk dose without iterating predictions client-side; 0.0 only when first_high_risk_dose_id is null, symmetric with next_dose_miss_probability
+    first_high_risk_dose_dose_class: str | None  # dose_class of `first_high_risk_dose_id` so outreach UIs can render 'psych dose at 21:00 Tuesday' inline; null when first_high_risk_dose_id is null
     by_day: list[DailyForecast]
     schedule_source: str  # "supplied" | "derived"
 
@@ -223,6 +227,10 @@ def forecast_user(
     next_dose_scheduled_at: datetime | None = None
     next_dose_miss_probability = 0.0
     next_dose_risk_tier: str | None = None
+    first_high_risk_dose_id: str | None = None
+    first_high_risk_dose_scheduled_at: datetime | None = None
+    first_high_risk_dose_miss_probability = 0.0
+    first_high_risk_dose_dose_class: str | None = None
     for p in preds:
         sched_at = p["scheduled_at"]
         if isinstance(sched_at, str):
@@ -241,6 +249,21 @@ def forecast_user(
             next_dose_id = pid
             next_dose_miss_probability = float(p["miss_probability"])
             next_dose_risk_tier = p.get("risk_tier")
+        # Earliest high-risk dose in the horizon, ties broken by dose_id.
+        # Dose-level analogue of first_high_risk_day so outreach UIs can
+        # link the per-dose nudge action without iterating predictions.
+        if p.get("risk_tier") == "high" and (
+            first_high_risk_dose_scheduled_at is None
+            or sched_at < first_high_risk_dose_scheduled_at
+            or (
+                sched_at == first_high_risk_dose_scheduled_at
+                and pid < (first_high_risk_dose_id or "")
+            )
+        ):
+            first_high_risk_dose_scheduled_at = sched_at
+            first_high_risk_dose_id = pid
+            first_high_risk_dose_miss_probability = float(p["miss_probability"])
+            first_high_risk_dose_dose_class = p.get("dose_class")
 
     daily: list[DailyForecast] = []
     total_high = 0
@@ -327,6 +350,10 @@ def forecast_user(
         next_dose_scheduled_at=next_dose_scheduled_at,
         next_dose_miss_probability=next_dose_miss_probability,
         next_dose_risk_tier=next_dose_risk_tier,
+        first_high_risk_dose_id=first_high_risk_dose_id,
+        first_high_risk_dose_scheduled_at=first_high_risk_dose_scheduled_at,
+        first_high_risk_dose_miss_probability=first_high_risk_dose_miss_probability,
+        first_high_risk_dose_dose_class=first_high_risk_dose_dose_class,
         by_day=daily,
         schedule_source=source,
     )
