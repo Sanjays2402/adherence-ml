@@ -382,3 +382,59 @@ def test_forecast_include_predictions_opt_in(tmp_path, monkeypatch):
     # First prediction must match the next_dose pointer.
     assert preds[0]["dose_id"] == body["next_dose_id"]
     assert preds[0]["scheduled_at"].startswith(body["next_dose_scheduled_at"][:16])
+
+
+def test_forecast_predictions_min_risk_tier_filter(tmp_path, monkeypatch):
+    """predictions_min_risk_tier filters the per-dose list; aggregates unchanged."""
+    _setup(tmp_path, monkeypatch)
+    _train()
+    from adherence_api.app import create_app
+    c = TestClient(create_app())
+
+    payload = {
+        "user_id": "u_forecast_1",
+        "history": _history_for(),
+        "horizon_days": 3,
+        "starting_at": "2026-05-20T00:00:00+00:00",
+        "bootstrap_iterations": 0,
+        "include_predictions": True,
+    }
+    r = c.post("/v1/forecast/user", json=payload, headers={"x-api-key": "svc"})
+    assert r.status_code == 200, r.text
+    full = r.json()
+    full_preds = full["predictions"]
+    n_high = sum(1 for p in full_preds if p["risk_tier"] == "high")
+    n_med_or_high = sum(1 for p in full_preds if p["risk_tier"] in ("medium", "high"))
+
+    # Filter to high only: list shrinks, aggregates do not.
+    payload["predictions_min_risk_tier"] = "high"
+    r = c.post("/v1/forecast/user", json=payload, headers={"x-api-key": "svc"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert all(p["risk_tier"] == "high" for p in body["predictions"])
+    assert len(body["predictions"]) == n_high
+    # Roll-up aggregates are computed against the full horizon, unaffected by filter.
+    assert body["n_doses_scored"] == full["n_doses_scored"]
+    assert body["total_high_risk_count"] == full["total_high_risk_count"]
+    assert abs(body["total_expected_misses"] - full["total_expected_misses"]) < 1e-9
+
+    # Filter to medium-or-above.
+    payload["predictions_min_risk_tier"] = "medium"
+    r = c.post("/v1/forecast/user", json=payload, headers={"x-api-key": "svc"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert all(p["risk_tier"] in ("medium", "high") for p in body["predictions"])
+    assert len(body["predictions"]) == n_med_or_high
+
+    # 'low' is a no-op (returns all scored doses), matching current behavior.
+    payload["predictions_min_risk_tier"] = "low"
+    r = c.post("/v1/forecast/user", json=payload, headers={"x-api-key": "svc"})
+    assert r.status_code == 200, r.text
+    assert len(r.json()["predictions"]) == len(full_preds)
+
+    # Filter is a no-op when include_predictions is false (predictions stays null).
+    payload["include_predictions"] = False
+    payload["predictions_min_risk_tier"] = "high"
+    r = c.post("/v1/forecast/user", json=payload, headers={"x-api-key": "svc"})
+    assert r.status_code == 200, r.text
+    assert r.json().get("predictions") is None

@@ -14,7 +14,7 @@ from __future__ import annotations
 import random
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -57,6 +57,19 @@ class ForecastRequest(BaseModel):
             "dose_class) sorted by scheduled_at then dose_id, so outreach UIs can "
             "render the full per-dose nudge queue without a follow-up /predict round "
             "trip. Off by default to keep the default payload small."
+        ),
+    )
+    predictions_min_risk_tier: Literal["low", "medium", "high"] | None = Field(
+        None,
+        description=(
+            "Only honored when include_predictions=true. If set to 'medium' or 'high', "
+            "the returned `predictions` list is filtered to doses at or above that risk "
+            "tier, so an outreach UI can fetch just the nudge queue ('high' = nurse-call "
+            "queue, 'medium' = text/nudge queue and above) without iterating low-tier rows "
+            "client-side and without inflating the payload with doses the UI will not "
+            "render. 'low' or null returns all scored doses (current behavior). The roll-up "
+            "aggregates (total_expected_misses, by_day, worst_day, next_dose, etc) are "
+            "always computed against the full horizon and are unaffected by this filter."
         ),
     )
 
@@ -479,6 +492,18 @@ def forecast_user(
                         dose_class=p.get("dose_class"),
                     )
                     for p in preds
+                    if (
+                        req.predictions_min_risk_tier is None
+                        or req.predictions_min_risk_tier == "low"
+                        or (
+                            req.predictions_min_risk_tier == "medium"
+                            and p.get("risk_tier") in ("medium", "high")
+                        )
+                        or (
+                            req.predictions_min_risk_tier == "high"
+                            and p.get("risk_tier") == "high"
+                        )
+                    )
                 ],
                 key=lambda d: (d.scheduled_at, d.dose_id),
             )
