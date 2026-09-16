@@ -281,6 +281,10 @@ def sweep_retention(
     outcomes_days: int = typer.Option(None, "--outcomes-days"),
     webhooks_days: int = typer.Option(None, "--webhooks-days"),
     idem_days: int = typer.Option(None, "--idem-days"),
+    as_json: bool = typer.Option(
+        False, "--json",
+        help="Emit machine-readable JSON instead of a table (for cron/CI parsing).",
+    ),
 ) -> None:
     """Delete rows past TTL across audit / outcomes / webhook tables."""
     from adherence_common import retention
@@ -294,6 +298,26 @@ def sweep_retention(
     if idem_days is not None:
         overrides["idempotency_records"] = idem_days
     rows = retention.sweep(ttls_days=overrides or None, dry_run=dry_run)
+    if as_json:
+        console.print_json(
+            json.dumps(
+                {
+                    "dry_run": dry_run,
+                    "tables": [
+                        {
+                            "table": r.table,
+                            "cutoff": r.cutoff.isoformat(),
+                            "candidates": r.candidates,
+                            "deleted": r.deleted,
+                        }
+                        for r in rows
+                    ],
+                    "total_deleted": sum(r.deleted for r in rows),
+                },
+                indent=2,
+            )
+        )
+        return
     table = Table(title="retention sweep" + (" (dry-run)" if dry_run else ""))
     table.add_column("table")
     table.add_column("cutoff")
